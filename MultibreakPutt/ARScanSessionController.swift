@@ -693,19 +693,26 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #endif
     }
 
-    /// 메시 폴백용: 발·솟은 점 제거 + 볼-홀 복도 밖 대량 정점 축소.
+    /// 메시 폴백용: 발·솟은 blob 제거 + 볼-홀 복도 밖 대량 정점 축소.
     private static func filterMeshVerticesForTerrain(
         _ vertices: [ScanVertex],
         ball: ScanPose,
         hole: ScanPose
     ) -> [ScanVertex] {
+        let points = vertices.map {
+            GroundScanFilter.Point(worldX: $0.worldX, worldY: $0.worldY, worldZ: $0.worldZ)
+        }
+        var reject = GroundScanFilter.footRejectionMask(points)
+        let ceiling = ball.worldY + GroundScanFilter.absoluteAboveBallMeters
+        for (index, point) in points.enumerated() where point.worldY > ceiling {
+            reject[index] = true
+        }
+
         var kept: [ScanVertex] = []
         kept.reserveCapacity(min(vertices.count, 80_000))
         var outsideIndex = 0
-        for vertex in vertices {
-            guard vertex.worldY <= ball.worldY + GroundScanFilter.absoluteAboveBallMeters else {
-                continue
-            }
+        for (index, vertex) in vertices.enumerated() {
+            if reject[index] { continue }
             let inside = Self.isNearPuttCorridor(
                 x: vertex.worldX,
                 z: vertex.worldZ,

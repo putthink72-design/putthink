@@ -78,7 +78,7 @@ final class ScanCoverageTracker {
                 timestamp: now,
                 trackingLimited: trackingLimited
             )
-            // 실제 높이 융합에는 high confidence만 사용한다. 발·다리 근접 돌출은 제외.
+            // 실제 높이 융합에는 high confidence만 사용. 발·다리 국소 돌출은 제거.
             let rawFusion: [GroundScanFilter.Point] = samples.compactMap { point in
                 guard point.confidence >= 2 else { return nil }
                 return GroundScanFilter.Point(
@@ -87,15 +87,13 @@ final class ScanCoverageTracker {
                     worldZ: Double(point.worldZ)
                 )
             }
-            var cleaned = GroundScanFilter.rejectNearProtrusions(
-                points: rawFusion,
+            let cleaned = GroundScanFilter.cleanTerrainPoints(
+                rawFusion,
                 cameraX: Double(cameraPosition.x),
                 cameraY: Double(cameraPosition.y),
-                cameraZ: Double(cameraPosition.z)
+                cameraZ: Double(cameraPosition.z),
+                ballY: ballY
             )
-            if let ballY {
-                cleaned = GroundScanFilter.rejectAboveBallReference(points: cleaned, ballY: ballY)
-            }
             let fusionSamples = cleaned.map {
                 TemporalSurfaceFusion.Sample(
                     worldX: $0.worldX,
@@ -126,7 +124,20 @@ final class ScanCoverageTracker {
                     holeZ: hole.worldZ,
                     heightTolerance: 0.22
                 )
-                continuation.resume(returning: vertices)
+                // 융합 후에도 잔여 발 스파이크를 한 번 더 제거
+                let points = vertices.map {
+                    GroundScanFilter.Point(worldX: $0.worldX, worldY: $0.worldY, worldZ: $0.worldZ)
+                }
+                let cleaned = GroundScanFilter.cleanTerrainPoints(points, ballY: ball.worldY)
+                let result: [ScanVertex] = cleaned.map { point in
+                    ScanVertex(
+                        worldX: point.worldX,
+                        worldY: point.worldY,
+                        worldZ: point.worldZ,
+                        timestamp: 0
+                    )
+                }
+                continuation.resume(returning: result)
             }
         }
     }
