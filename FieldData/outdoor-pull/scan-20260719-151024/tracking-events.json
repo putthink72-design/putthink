@@ -1,0 +1,12 @@
+[
+  {
+    "isLimited" : true,
+    "state" : "제한됨: 초기화 중",
+    "timestamp" : 64971.479655541
+  },
+  {
+    "isLimited" : false,
+    "state" : "정상",
+    "timestamp" : 64972.313054916
+  }
+]

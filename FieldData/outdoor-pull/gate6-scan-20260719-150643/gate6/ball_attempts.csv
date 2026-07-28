@@ -1,0 +1,2 @@
+attempt_id,rgb_candidates,depth_accepted,false_positive_rejected,auto_nx,auto_ny,auto_score,auto_world_x,auto_world_y,auto_world_z,depth_verdict,depth_delta_m,manual_world_x,manual_world_y,manual_world_z,delta_m,outcome
+C55D5E2A,52,Y,51,0.878661,0.659218,0.800000,0.083226,-1.050057,-2.269541,accepted,-0.006836,0.014561,-1.066757,-2.779172,0.514507,shadow_far_from_manual

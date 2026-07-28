@@ -1,0 +1,16 @@
+field,value
+reference_method,ar_raycast
+path_mode,oneWay
+drift_corrected,N
+hole_distance_m,4.558585564996816
+ball_x,-0.04630187153816223
+ball_y,-1.079525351524353
+ball_z,-0.46758967638015747
+ball_tracking_ok,Y
+hole_x,-1.2501806020736694
+hole_y,-0.888456404209137
+hole_z,-4.864336013793945
+hole_tracking_ok,Y
+camera_start_y,0.03987964615225792
+camera_return_y,0.03987964615225792
+drift_m,0.0

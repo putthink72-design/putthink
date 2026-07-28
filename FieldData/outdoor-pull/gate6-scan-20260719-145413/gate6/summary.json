@@ -1,0 +1,9 @@
+{
+  "ball_attempts" : 1,
+  "ball_depth_accepted" : 1,
+  "hole_attempts" : 1,
+  "hole_depth_accepted" : 1,
+  "mode" : "shadow",
+  "note" : "Auto detections are never applied to ballAnchor\/holeAnchor.",
+  "rgb_false_positives_rejected_by_depth" : 425
+}

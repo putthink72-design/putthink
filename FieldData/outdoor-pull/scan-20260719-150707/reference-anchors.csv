@@ -1,0 +1,16 @@
+field,value
+reference_method,ar_raycast
+path_mode,roundTrip
+drift_corrected,Y
+hole_distance_m,0.05394723818191146
+ball_x,0.014560535550117493
+ball_y,-1.066757321357727
+ball_z,-2.77917218208313
+ball_tracking_ok,Y
+hole_x,0.016706645488739014
+hole_y,-1.064565896987915
+hole_z,-2.8330767154693604
+hole_tracking_ok,Y
+camera_start_y,-0.04295565187931061
+camera_return_y,-0.002774129854515195
+drift_m,0.04018152202479541

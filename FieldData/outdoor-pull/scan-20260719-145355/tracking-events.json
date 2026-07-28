@@ -1,0 +1,17 @@
+[
+  {
+    "isLimited" : true,
+    "state" : "사용 불가",
+    "timestamp" : 64095.313207708
+  },
+  {
+    "isLimited" : true,
+    "state" : "제한됨: 초기화 중",
+    "timestamp" : 64095.34653525
+  },
+  {
+    "isLimited" : false,
+    "state" : "정상",
+    "timestamp" : 64096.280021333
+  }
+]

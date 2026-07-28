@@ -1,0 +1,22 @@
+[
+  {
+    "isLimited" : true,
+    "state" : "제한됨: 초기화 중",
+    "timestamp" : 65005.421047083
+  },
+  {
+    "isLimited" : false,
+    "state" : "정상",
+    "timestamp" : 65006.521155041
+  },
+  {
+    "isLimited" : true,
+    "state" : "제한됨: 특징점 부족",
+    "timestamp" : 65011.588303583
+  },
+  {
+    "isLimited" : false,
+    "state" : "정상",
+    "timestamp" : 65012.221694625
+  }
+]

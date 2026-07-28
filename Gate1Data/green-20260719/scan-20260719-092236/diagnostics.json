@@ -1,0 +1,47 @@
+{
+  "driftMillimeters" : -21.5897336602211,
+  "emptyCellRatio" : 0.6372447660894288,
+  "generatedAt" : "2026-07-19T00:22:42Z",
+  "limitedTrackingRatio" : 0.07143412502647328,
+  "noiseStandardDeviationMM" : 14.361157262647875,
+  "repeatScanRMS" : [
+    {
+      "commonCellCount" : 1572,
+      "firstScan" : "scan-20260719-092148",
+      "rmsMillimeters" : 10.700597700998417,
+      "secondScan" : "scan-20260719-092215"
+    },
+    {
+      "commonCellCount" : 1970,
+      "firstScan" : "scan-20260719-092148",
+      "rmsMillimeters" : 24.551249528954493,
+      "secondScan" : "scan-20260719-092236"
+    },
+    {
+      "commonCellCount" : 1575,
+      "firstScan" : "scan-20260719-092215",
+      "rmsMillimeters" : 15.656818417292502,
+      "secondScan" : "scan-20260719-092236"
+    }
+  ],
+  "selectedRegion" : {
+    "maxX" : 0.7,
+    "maxY" : 0.7,
+    "minX" : 0.3,
+    "minY" : 0.3
+  },
+  "sigmaNoiseMeasurements" : [
+    {
+      "detrendedStandardDeviationMM" : 15.13327297773847,
+      "sigma" : 0.75
+    },
+    {
+      "detrendedStandardDeviationMM" : 14.361157262647875,
+      "sigma" : 1.5
+    },
+    {
+      "detrendedStandardDeviationMM" : 13.721850698198484,
+      "sigma" : 2.25
+    }
+  ]
+}

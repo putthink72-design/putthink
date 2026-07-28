@@ -1,0 +1,2 @@
+reference_method,path_mode,drift_corrected,hole_distance_m,ball_x,ball_y,ball_z,ball_tracking_ok,hole_x,hole_y,hole_z,hole_tracking_ok,camera_start_y,camera_return_y,drift_m
+ar_raycast,roundTrip,Y,3.968463,-0.121562,-1.126740,-0.526105,Y,-0.558407,-0.943563,-4.470451,Y,0.040129,0.167529,0.127400

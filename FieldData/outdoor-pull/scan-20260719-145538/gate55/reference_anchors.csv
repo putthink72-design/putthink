@@ -1,0 +1,2 @@
+reference_method,path_mode,drift_corrected,hole_distance_m,ball_x,ball_y,ball_z,ball_tracking_ok,hole_x,hole_y,hole_z,hole_tracking_ok,camera_start_y,camera_return_y,drift_m
+ar_raycast,oneWay,N,4.558586,-0.046302,-1.079525,-0.467590,Y,-1.250181,-0.888456,-4.864336,Y,0.039880,0.039880,0.000000
