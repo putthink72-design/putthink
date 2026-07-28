@@ -33,6 +33,10 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
     public let noiseStandardDeviationMM: Double
     public let sigmaNoiseMeasurements: [SigmaNoiseMeasurement]
     public let repeatScanRMS: [RepeatScanRMS]
+    /// `roundTrip` / `oneWay`. 구버전 로그에는 없을 수 있음.
+    public let pathMode: String?
+    /// `temporal_scene_depth` / `arkit_mesh_fallback` 등.
+    public let surfaceSource: String?
 
     public init(
         generatedAt: Date,
@@ -42,7 +46,9 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
         selectedRegion: NormalizedRegion,
         noiseStandardDeviationMM: Double,
         sigmaNoiseMeasurements: [SigmaNoiseMeasurement],
-        repeatScanRMS: [RepeatScanRMS]
+        repeatScanRMS: [RepeatScanRMS],
+        pathMode: String? = nil,
+        surfaceSource: String? = nil
     ) {
         self.generatedAt = generatedAt
         self.driftMillimeters = driftMillimeters
@@ -52,6 +58,8 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
         self.noiseStandardDeviationMM = noiseStandardDeviationMM
         self.sigmaNoiseMeasurements = sigmaNoiseMeasurements
         self.repeatScanRMS = repeatScanRMS
+        self.pathMode = pathMode
+        self.surfaceSource = surfaceSource
     }
 }
 

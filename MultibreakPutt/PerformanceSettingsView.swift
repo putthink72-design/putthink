@@ -123,7 +123,7 @@ struct PerformanceSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } header: {
-                    Text("AR 오버레이")
+                    Text("AR 오버레이 밀도")
                 } footer: {
                     Text("듬성은 화면에 그리는 선·등고 개수만 줄입니다. LiDAR·높이맵 해상도는 바꾸지 않습니다.")
                 }
@@ -143,7 +143,7 @@ struct PerformanceSettingsView: View {
                             .foregroundStyle(thermalColor)
                     }
                 } footer: {
-                    Text("이 화면을 닫은 뒤 조준에서 「재계산」하거나 등고/격자를 다시 전환하면 새 설정이 반영됩니다.")
+                    Text("이 화면을 닫은 뒤 조준에서 등고/격자를 다시 전환하면 새 설정이 반영됩니다.")
                 }
             }
             .navigationTitle("성능·발열")

@@ -49,6 +49,8 @@ struct Gate55GuidanceView: View {
     @State private var aimRevision = 0
     @State private var greenVizMode: GreenSurfaceVizMode = .contours
     @State private var showPerformanceSettings = false
+    @AppStorage(PerformanceSettings.aimCalcDistanceFloorKey)
+    private var aimCalcDistanceFloorRaw: Double = AimCalcDistanceFloor.cm30.rawValue
 
     var body: some View {
         GeometryReader { geo in
@@ -63,6 +65,7 @@ struct Gate55GuidanceView: View {
             if runID.isEmpty {
                 runID = defaultRunID()
             }
+            model.computeMode = .recommend
             if let scan = controller.completedScan {
                 model.bind(scan: scan)
                 aimRevision += 1
@@ -218,6 +221,14 @@ struct Gate55GuidanceView: View {
     private var infoPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
+                // AR 바로 아래 첫 UI: 실거리·나침반 → Speed Corridor
+                if model.isComputing {
+                    ProgressView("계산 중…")
+                } else {
+                    recommendationCard
+                    speedCorridorSection
+                }
+
                 HStack {
                     Text("게이트 5.5 조준")
                         .font(.headline)
@@ -235,35 +246,7 @@ struct Gate55GuidanceView: View {
                         .font(.caption)
                 }
 
-                Picker("모드", selection: $model.computeMode) {
-                    ForEach(Gate55ComputeMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: model.computeMode) { _, _ in model.recompute() }
-
-                HStack {
-                    Text(String(format: "스 %.1f", model.greenSpeed))
-                        .font(.caption)
-                        .frame(width: 48, alignment: .leading)
-                    Slider(value: $model.greenSpeed, in: 1.5...4.0, step: 0.1)
-                    Button("재계산") { model.recompute() }
-                        .buttonStyle(.bordered)
-                }
-
-                if model.computeMode == .forward {
-                    HStack {
-                        labeledNumber("v0", value: $model.manualV0)
-                        labeledNumber("β°", value: $model.manualBeta)
-                        Button("실행") { model.recompute() }
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
-
-                Text(model.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                aimProximityFloorSection
 
                 if let rec = model.recommendation, rec.primary != nil,
                    abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8 {
@@ -276,13 +259,9 @@ struct Gate55GuidanceView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if model.isComputing {
-                    ProgressView("계산 중…")
-                } else if model.computeMode == .recommend {
-                    recommendationCard
-                } else if let forward = model.forwardResult {
-                    forwardCard(forward)
-                }
+                Divider()
+
+                greenSpeedSection
 
                 Divider()
                 experimentSection
@@ -303,6 +282,166 @@ struct Gate55GuidanceView: View {
             .padding(14)
         }
         .background(.ultraThinMaterial)
+    }
+
+    private var aimProximityFloorSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("조준 근접 하한")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(String(format: "%.0f cm", aimCalcDistanceFloorRaw * 100))
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+
+            HStack(spacing: 4) {
+                ForEach(AimCalcDistanceFloor.allCases) { floor in
+                    let selected = abs(aimCalcDistanceFloorRaw - floor.rawValue) < 0.01
+                    Button(floor.label) {
+                        aimCalcDistanceFloorRaw = floor.rawValue
+                        PerformanceSettings.notifyDidChange()
+                        aimRevision += 1
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(
+                        selected ? Color.orange.opacity(0.5) : Color.white.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .foregroundStyle(.white)
+                }
+            }
+
+            Slider(
+                value: $aimCalcDistanceFloorRaw,
+                in: 0.15...0.60,
+                step: 0.05
+            ) { editing in
+                if !editing {
+                    PerformanceSettings.notifyDidChange()
+                    aimRevision += 1
+                }
+            }
+            Text("가까이 갈수록 퍼팅선을 볼 아래(지면 쪽)로 내립니다. 굵기는 고정입니다. 기본 30cm.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var greenSpeedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("그린스피드")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.1f m", model.greenSpeed))
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+
+            HStack(spacing: 6) {
+                ForEach(Gate55GuidanceModel.greenSpeedPresets, id: \.self) { preset in
+                    let selected = abs(model.greenSpeed - preset) < 0.05
+                    Button(String(format: "%.1f", preset)) {
+                        model.setGreenSpeed(preset)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(
+                        selected ? Color.green.opacity(0.45) : Color.white.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .foregroundStyle(.white)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    model.nudgeGreenSpeed(-0.1)
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title3)
+                }
+                .disabled(model.isComputing || model.greenSpeed <= 1.5)
+
+                Text("±0.1 m")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    model.nudgeGreenSpeed(0.1)
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                }
+                .disabled(model.isComputing || model.greenSpeed >= 4.0)
+
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var speedCorridorSection: some View {
+        let count = model.corridorCandidateCount
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Speed Corridor")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                if count >= 1, let rec = model.recommendation {
+                    Text(
+                        String(
+                            format: "오버런 %.2fm · %d/%d",
+                            rec.overrunDistance,
+                            min(model.corridorIndex + 1, count),
+                            count
+                        )
+                    )
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack {
+                Text("안전")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if count <= 1 {
+                    Slider(value: .constant(0), in: 0...1)
+                        .disabled(true)
+                        .opacity(0.45)
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.corridorIndex) },
+                            set: { model.selectCorridorIndex(Int($0.rounded())) }
+                        ),
+                        in: 0...Double(count - 1),
+                        step: 1
+                    )
+                    .disabled(model.isComputing || model.isApplyingCorridor)
+                }
+                Text("공격적")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if count <= 1 {
+                Text(count == 0 ? "후보 없음" : "이 그린은 후보가 1개뿐")
+                    .font(.caption2)
+                    .foregroundStyle(.orange.opacity(0.9))
+            }
+
+            Text(model.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -346,7 +485,7 @@ struct Gate55GuidanceView: View {
 
                 Text(
                     String(
-                        format: "정지위치 (%.2f, %.2f) · +%.2fm",
+                        format: "정지위치 (%.2f, %.2f) · 오버런 %.2fm",
                         rec.stopPosition.x,
                         rec.stopPosition.y,
                         rec.overrunDistance
@@ -784,6 +923,9 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var lastAimBeta: Double = .nan
         private var lastAimLength: Float = 0
         private var lastAimWidth: Float = 0
+        private var lastAimLift: Float = 0
+        private var lastPathLift: Float = 0
+        private var smoothedCamBallDistance: Float = 1.2
         private var lastZeroHoleDistance: Double = .nan
         private var lastTrajectoryRevision: Int = -1
 
@@ -960,6 +1102,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
                 lastAimWidth = 0
+                lastAimLift = 0
+                lastPathLift = 0
                 lastVizMode = nil
                 return
             }
@@ -990,6 +1134,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
                 lastAimWidth = 0
+                lastAimLift = 0
+                lastPathLift = 0
                 lastVizMode = nil
             }
 
@@ -1055,16 +1201,26 @@ struct Gate55ARAimView: UIViewRepresentable {
             let overlays = ensureOverlayRoot(under: ballEntity)
             let transform = scan.scanTransform
 
-            // 초록 경로(불투명 80%) · 흰 조준은 좌우 4px만 가늘게
+            // 고정 월드 굵기 — 거리 따라 화면폭을 바꾸면 근접 시 굵어지고 매 프레임 흔들림
             let contourLift: Float = 0.006
-            let pathLift: Float = 0.018
-            let aimLift: Float = 0.022
-            let pathPixels: Float = 12
-            let aimPixels: Float = pathPixels - 4
-            let pathWidth = lineScreenSpaceWidth(pixels: pathPixels, in: view, near: ballWorld)
-            let aimWidth = lineScreenSpaceWidth(pixels: aimPixels, in: view, near: ballWorld)
-            // 지렁이: 격자보다 확실히 굵게 (화면 ~9px, 야외 시인성)
-            let wormWidth = lineScreenSpaceWidth(pixels: 9.0, in: view, near: ballWorld)
+            let pathWidth: Float = 0.014
+            let aimWidth: Float = 0.010
+            let wormWidth: Float = 0.012
+            let camBall = cameraBallDistance(ballWorld: ballWorld, in: view)
+            if smoothedCamBallDistance <= 0 {
+                smoothedCamBallDistance = camBall
+            } else {
+                smoothedCamBallDistance += (camBall - smoothedCamBallDistance) * 0.18
+            }
+            let floorMeters = Float(PerformanceSettings.aimCalcDistanceFloor)
+            // 가까이 갈수록 퍼팅선을 볼 아래(지면)로 — t=1이면 거의 지면
+            let proximityT = max(
+                0,
+                min(1, (floorMeters - smoothedCamBallDistance) / max(floorMeters, 0.05))
+            )
+            // 3mm 단위로 양자화해 매 프레임 재생성·흔들림 방지
+            let pathLift = ((0.018 - proximityT * 0.014) / 0.003).rounded() * 0.003
+            let aimLift = ((0.022 - proximityT * 0.018) / 0.003).rounded() * 0.003
 
             updateTerrainViz(
                 mode: greenVizMode,
@@ -1075,7 +1231,10 @@ struct Gate55ARAimView: UIViewRepresentable {
                 wormWidth: wormWidth
             )
 
-            if zeroLineEntity == nil || abs(lastZeroHoleDistance - scan.holeDistance) > 1e-4 {
+            let zeroNeedsRebuild = zeroLineEntity == nil
+                || abs(lastZeroHoleDistance - scan.holeDistance) > 1e-4
+                || abs(lastPathLift - pathLift) > 0.0015
+            if zeroNeedsRebuild {
                 placeBallLocalSegment(
                     toLocalX: 0,
                     toLocalY: scan.holeDistance,
@@ -1088,6 +1247,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     entity: &zeroLineEntity
                 )
                 lastZeroHoleDistance = scan.holeDistance
+                lastPathLift = pathLift
             }
 
             guard visible else {
@@ -1097,7 +1257,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 return
             }
 
-            let trajSig = trajectorySignature(trajectory, pathWidth: pathWidth)
+            let trajSig = trajectorySignature(trajectory, pathWidth: pathWidth, lift: pathLift)
             var trajectoryRebuilt = false
             if trajSig != lastTrajectoryRevision {
                 updateTrajectory(
@@ -1116,7 +1276,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 || aimEntity == nil
                 || abs(lastAimBeta - betaDegrees) > 0.05
                 || abs(lastAimLength - Float(length)) > 1e-3
-                || abs(lastAimWidth - aimWidth) > 0.0008 {
+                || abs(lastAimLift - aimLift) > 0.0015 {
                 let beta = betaDegrees * .pi / 180
                 placeBallLocalSegment(
                     toLocalX: sin(beta) * length,
@@ -1132,6 +1292,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimBeta = betaDegrees
                 lastAimLength = Float(length)
                 lastAimWidth = aimWidth
+                lastAimLift = aimLift
             }
         }
 
@@ -1204,35 +1365,21 @@ struct Gate55ARAimView: UIViewRepresentable {
             )
         }
 
-        private func lineScreenSpaceWidth(
-            pixels: Float,
-            in view: ARView,
-            near point: SIMD3<Float>
+        private func cameraBallDistance(
+            ballWorld: SIMD3<Float>,
+            in view: ARView
         ) -> Float {
-            guard let frame = view.session.currentFrame else {
-                return max(pixels * 0.001, 0.004)
-            }
+            guard let frame = view.session.currentFrame else { return 1.0 }
             let cam = frame.camera.transform.columns.3
             let camPos = SIMD3<Float>(cam.x, cam.y, cam.z)
-            let distance = simd_length(point - camPos)
-            let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
-            let projection = frame.camera.projectionMatrix(
-                for: orientation,
-                viewportSize: view.bounds.size,
-                zNear: 0.01,
-                zFar: 100
-            )
-            let projectionYScale = max(abs(projection[1][1]), 0.001)
-            let viewportPixelHeight = max(Float(view.bounds.height * view.contentScaleFactor), 1)
-            return ARReferenceMarkers.worldWidth(
-                forScreenPixels: pixels,
-                distanceMeters: distance,
-                viewportPixelHeight: viewportPixelHeight,
-                projectionYScale: projectionYScale
-            )
+            return simd_length(ballWorld - camPos)
         }
 
-        private func trajectorySignature(_ samples: [TrajectorySample], pathWidth: Float) -> Int {
+        private func trajectorySignature(
+            _ samples: [TrajectorySample],
+            pathWidth: Float,
+            lift: Float
+        ) -> Int {
             guard let first = samples.first, let last = samples.last else { return 0 }
             var hasher = Hasher()
             hasher.combine(samples.count)
@@ -1241,6 +1388,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             hasher.combine(last.position.x)
             hasher.combine(last.position.y)
             hasher.combine(Int((pathWidth * 10_000).rounded()))
+            hasher.combine(Int((lift * 10_000).rounded()))
             return hasher.finalize()
         }
 

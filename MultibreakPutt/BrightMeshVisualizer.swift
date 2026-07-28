@@ -3,11 +3,11 @@ import Foundation
 import PuttPhysicsKit
 import RealityKit
 import simd
+import UIKit
 
-/// ARKit 원본 삼각 메시를 그대로 표시(수직 벽면 포함).
-/// 끊김·진동 방지: 프레임마다 transform만 갱신하고, 무거운 지오메트리 재생성은
-/// 앵커당 스로틀 + 프레임당 1개(라운드로빈) + 백그라운드에서 처리한다.
-/// 미확정=파란 선(100%)+파란 면(50%), 안정=흰 선. 물리/앵커에는 주입하지 않는다.
+/// ARKit 메시 + sceneDepth 근접 그리드 표시.
+/// 메시 융합이 먼 곳부터 채워지는 ARKit 특성을 보완해, 바닥을 수직·근접으로 비춰도
+/// depth 그리드가 즉시 보이게 한다. 물리/앵커에는 주입하지 않는다.
 final class BrightMeshVisualizer {
     private final class AnchorEntities {
         let fill: ModelEntity
@@ -25,22 +25,31 @@ final class BrightMeshVisualizer {
 
     private var rootAnchor: AnchorEntity?
     private var entities: [UUID: AnchorEntities] = [:]
+    private var depthGridEntity: ModelEntity?
     private var rebuildCursor = 0
     private var lastGlobalRebuildTime: TimeInterval = 0
+    private var lastDepthRebuildTime: TimeInterval = 0
+    private var depthBuilding = false
     private var enabled = false
 
     private static let tentativeColor = UIColor.systemBlue
     private static let tentativeFillOpacity: Float = 0.5
     private static let stableColor = UIColor.white
-    /// 앵커별 재생성 최소 간격. 프레임당 1개만 처리해 히칭을 분산.
-    private static let perAnchorRebuildInterval: TimeInterval = 2.2
-    /// 전체 재생성 최소 간격. SwiftUI 리렌더와 분리된 DisplayLink에서도 충분.
-    private static let globalRebuildInterval: TimeInterval = 0.5
+    private static let depthGridColor = UIColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 0.95)
+    /// 앵커별 재생성 최소 간격.
+    private static let perAnchorRebuildInterval: TimeInterval = 1.0
+    private static let globalRebuildInterval: TimeInterval = 0.18
+    private static let depthRebuildInterval: TimeInterval = 0.12
     private static let maxEdgesPerAnchor = 8_000
-    /// 면 채움은 GPU·빌드 비용이 커서 끄고 선만 그린다(커버리지 피드백은 선 색으로 충분).
     private static let enableFillMesh = false
-    /// 너무 큰 메시 앵커 면 다운샘플 기준.
-    private static let maxSourceVerticesPerAnchor = 12_000
+    /// 거리 무관 고정 반폭(m). 너무 굵으면 바닥을 가림.
+    private static let ribbonHalfWidth: Float = 0.0010
+    private static let depthGridHalfWidth: Float = 0.0008
+    private static let depthSampleCols = 28
+    private static let depthSampleRows = 36
+    /// depth 유효 거리 (LiDAR 실용 범위).
+    private static let depthMinMeters: Float = 0.12
+    private static let depthMaxMeters: Float = 4.5
 
     private let buildQueue = DispatchQueue(label: "trueputt.mesh-build", qos: .utility)
 
@@ -65,9 +74,11 @@ final class BrightMeshVisualizer {
         }
         rootAnchor = nil
         entities.removeAll()
+        depthGridEntity = nil
         rebuildCursor = 0
         enabled = false
         coverageSnapshot = .empty
+        depthBuilding = false
     }
 
     func update(in view: ARView) {
@@ -76,7 +87,7 @@ final class BrightMeshVisualizer {
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         let now = frame.timestamp
 
-        // 1) 매 프레임: transform만 갱신 → 지오메트리가 조금 낡아도 부드럽게 따라감.
+        // 1) 매 프레임: transform만 갱신
         var liveIDs = Set<UUID>()
         for anchor in meshAnchors {
             liveIDs.insert(anchor.identifier)
@@ -97,45 +108,44 @@ final class BrightMeshVisualizer {
             entities.removeValue(forKey: id)
         }
 
-        // 2) 프레임당 1개 앵커만 백그라운드 재생성 (히칭 분산).
+        // 2) sceneDepth 그리드 — 메시 유무·거리와 무관하게 근접 바닥도 표시
+        updateDepthGrid(frame: frame, now: now, in: rootAnchor)
+
+        // 3) 프레임당 1개 메시 앵커 재생성 (가까운 것 우선)
         guard !meshAnchors.isEmpty else { return }
         guard now - lastGlobalRebuildTime >= Self.globalRebuildInterval else { return }
-        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
-        let projection = frame.camera.projectionMatrix(
-            for: orientation,
-            viewportSize: view.bounds.size,
-            zNear: 0.01,
-            zFar: 100
-        )
-        let projectionYScale = max(abs(projection[1][1]), 0.001)
-        let viewportPixelHeight = max(Float(view.bounds.height * view.contentScaleFactor), 1)
-        let targetPixelWidth = max(lineWidthPixels, 1)
         let cameraWorld = frame.camera.transform
         let snapshot = coverageSnapshot
-
         let count = meshAnchors.count
-        for offset in 0..<count {
-            let index = (rebuildCursor + offset) % count
+        let camPos = SIMD3<Float>(
+            cameraWorld.columns.3.x,
+            cameraWorld.columns.3.y,
+            cameraWorld.columns.3.z
+        )
+        let ranked = meshAnchors.enumerated().map { index, anchor -> (Int, Float) in
+            let t = anchor.transform.columns.3
+            let d = simd_length(SIMD3<Float>(t.x, t.y, t.z) - camPos)
+            return (index, d)
+        }
+        .sorted { $0.1 < $1.1 }
+
+        for rankedEntry in ranked {
+            let index = rankedEntry.0
             let anchor = meshAnchors[index]
             guard let entity = entities[anchor.identifier] else { continue }
-            guard !entity.building, now - entity.lastRebuild >= Self.perAnchorRebuildInterval else { continue }
+            let neverBuilt = entity.lastRebuild <= 0
+            let intervalOK = neverBuilt || now - entity.lastRebuild >= Self.perAnchorRebuildInterval
+            guard !entity.building, intervalOK else { continue }
 
             entity.building = true
             entity.lastRebuild = now
             lastGlobalRebuildTime = now
             rebuildCursor = (index + 1) % count
 
-            // 무거운 버퍼 스냅샷은 메인에서 1개만.
             guard let snapshotGeo = Self.snapshotGeometry(from: anchor) else {
                 entity.building = false
                 break
             }
-            let cameraLocal = anchor.transform.inverse * cameraWorld
-            let cameraLocalPos = SIMD3<Float>(
-                cameraLocal.columns.3.x,
-                cameraLocal.columns.3.y,
-                cameraLocal.columns.3.z
-            )
             let worldTransform = anchor.transform
 
             buildQueue.async { [weak entity] in
@@ -143,10 +153,6 @@ final class BrightMeshVisualizer {
                     positions: snapshotGeo.positions,
                     triangles: snapshotGeo.triangles,
                     worldTransform: worldTransform,
-                    cameraLocalPosition: cameraLocalPos,
-                    targetPixelWidth: targetPixelWidth,
-                    projectionYScale: projectionYScale,
-                    viewportPixelHeight: viewportPixelHeight,
                     snapshot: snapshot
                 )
                 let fillMesh = Self.generateMesh(split.fill, name: "fill")
@@ -160,8 +166,122 @@ final class BrightMeshVisualizer {
                     entity.building = false
                 }
             }
-            break // 프레임당 1개만
+            break
         }
+    }
+
+    // MARK: - Depth grid (거리 무관 즉시 피드백)
+
+    private func updateDepthGrid(frame: ARFrame, now: TimeInterval, in root: AnchorEntity) {
+        guard !depthBuilding else { return }
+        guard now - lastDepthRebuildTime >= Self.depthRebuildInterval else { return }
+        guard let depthData = frame.sceneDepth else { return }
+        let depthMap = depthData.depthMap
+        let camera = frame.camera
+        lastDepthRebuildTime = now
+        depthBuilding = true
+
+        if depthGridEntity == nil {
+            let entity = ModelEntity(
+                mesh: .generateBox(size: 0.001),
+                materials: [Self.makeLineMaterial(color: Self.depthGridColor)]
+            )
+            entity.isEnabled = false
+            root.addChild(entity)
+            depthGridEntity = entity
+        }
+
+        buildQueue.async { [weak self] in
+            let buffers = Self.buildDepthGridBuffers(
+                depthMap: depthMap,
+                camera: camera
+            )
+            let mesh = Self.generateMesh(buffers, name: "depth-grid")
+            DispatchQueue.main.async {
+                guard let self, let entity = self.depthGridEntity else { return }
+                Self.assign(mesh, to: entity)
+                self.depthBuilding = false
+            }
+        }
+    }
+
+    private static func buildDepthGridBuffers(
+        depthMap: CVPixelBuffer,
+        camera: ARCamera
+    ) -> GeometryBuffers {
+        var result = GeometryBuffers()
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        guard width > 8, height > 8,
+              let base = CVPixelBufferGetBaseAddress(depthMap) else { return result }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+        let intrinsics = camera.intrinsics
+        let fx = intrinsics[0, 0]
+        let fy = intrinsics[1, 1]
+        let cx = intrinsics[2, 0]
+        let cy = intrinsics[2, 1]
+        let camToWorld = camera.transform
+
+        let cols = depthSampleCols
+        let rows = depthSampleRows
+        var samples = [SIMD3<Float>?](repeating: nil, count: cols * rows)
+
+        for row in 0..<rows {
+            let v = Int((Float(row) + 0.5) / Float(rows) * Float(height - 1))
+            for col in 0..<cols {
+                let u = Int((Float(col) + 0.5) / Float(cols) * Float(width - 1))
+                let rowPtr = base.advanced(by: v * bytesPerRow)
+                    .assumingMemoryBound(to: Float32.self)
+                let depth = rowPtr[u]
+                guard depth.isFinite,
+                      depth >= depthMinMeters,
+                      depth <= depthMaxMeters else { continue }
+                // depth 카메라: +X 오른쪽, +Y 아래, +Z 전방 → ARKit 카메라(-Z 전방)로 변환
+                let x = (Float(u) - cx) * depth / fx
+                let y = (Float(v) - cy) * depth / fy
+                let camLocal = SIMD4<Float>(x, -y, -depth, 1)
+                let world4 = camToWorld * camLocal
+                samples[row * cols + col] = SIMD3(world4.x, world4.y, world4.z)
+            }
+        }
+
+        func appendSegment(_ a: SIMD3<Float>, _ b: SIMD3<Float>) {
+            let dir = b - a
+            let len = simd_length(dir)
+            guard len > 0.008, len < 0.45 else { return }
+            let tangent = dir / len
+            var sideDir = simd_cross(tangent, SIMD3<Float>(0, 1, 0))
+            if simd_length_squared(sideDir) < 1e-6 {
+                sideDir = simd_cross(tangent, SIMD3<Float>(1, 0, 0))
+            }
+            guard simd_length_squared(sideDir) >= 1e-6 else { return }
+            let side = simd_normalize(sideDir) * depthGridHalfWidth
+            let baseIdx = UInt32(result.positions.count)
+            result.positions.append(a - side)
+            result.positions.append(a + side)
+            result.positions.append(b + side)
+            result.positions.append(b - side)
+            result.indices.append(contentsOf: [
+                baseIdx, baseIdx + 1, baseIdx + 2,
+                baseIdx, baseIdx + 2, baseIdx + 3
+            ])
+        }
+
+        for row in 0..<rows {
+            for col in 0..<cols {
+                guard let p = samples[row * cols + col] else { continue }
+                if col + 1 < cols, let q = samples[row * cols + col + 1] {
+                    appendSegment(p, q)
+                }
+                if row + 1 < rows, let q = samples[(row + 1) * cols + col] {
+                    appendSegment(p, q)
+                }
+            }
+        }
+        return result
     }
 
     private func makeAnchorEntities(transform: Transform, in root: AnchorEntity) -> AnchorEntities {
@@ -246,7 +366,6 @@ final class BrightMeshVisualizer {
         guard vertices.format == .float3 else { return nil }
         guard faces.primitiveType == .triangle else { return nil }
 
-        // 초대형 앵커는 면만 다운샘플 — 선 프리뷰 부하 완화
         var positions = [SIMD3<Float>]()
         positions.reserveCapacity(vertices.count)
         let vBuffer = vertices.buffer.contents()
@@ -286,17 +405,12 @@ final class BrightMeshVisualizer {
         positions: [SIMD3<Float>],
         triangles: [UInt32],
         worldTransform: simd_float4x4,
-        cameraLocalPosition: SIMD3<Float>,
-        targetPixelWidth: Float,
-        projectionYScale: Float,
-        viewportPixelHeight: Float,
         snapshot: ScanCoverageSnapshot
     ) -> SplitBuffers {
         var result = SplitBuffers()
         guard !triangles.isEmpty else { return result }
         let triangleCount = triangles.count / 3
 
-        // 삼각형 상태 분류 + 미확정 면 채움.
         var stableEdgeTriangles: [UInt32] = []
         var tentativeEdgeTriangles: [UInt32] = []
         stableEdgeTriangles.reserveCapacity(triangles.count)
@@ -323,22 +437,26 @@ final class BrightMeshVisualizer {
             }
         }
 
+        // 월드 위쪽을 메시 로컬로 — 카메라 대향 리본(나디르에서 얇아짐) 대신 수평 펼침
+        let inv = worldTransform.inverse
+        let up4 = inv * SIMD4<Float>(0, 1, 0, 0)
+        var upLocal = SIMD3<Float>(up4.x, up4.y, up4.z)
+        if simd_length_squared(upLocal) < 1e-8 {
+            upLocal = SIMD3(0, 1, 0)
+        } else {
+            upLocal = simd_normalize(upLocal)
+        }
+
         buildRibbon(
             triangles: tentativeEdgeTriangles,
             positions: positions,
-            cameraLocalPosition: cameraLocalPosition,
-            targetPixelWidth: targetPixelWidth,
-            projectionYScale: projectionYScale,
-            viewportPixelHeight: viewportPixelHeight,
+            upLocal: upLocal,
             into: &result.tentativeLines
         )
         buildRibbon(
             triangles: stableEdgeTriangles,
             positions: positions,
-            cameraLocalPosition: cameraLocalPosition,
-            targetPixelWidth: targetPixelWidth,
-            projectionYScale: projectionYScale,
-            viewportPixelHeight: viewportPixelHeight,
+            upLocal: upLocal,
             into: &result.stableLines
         )
         return result
@@ -347,16 +465,14 @@ final class BrightMeshVisualizer {
     private static func buildRibbon(
         triangles: [UInt32],
         positions: [SIMD3<Float>],
-        cameraLocalPosition: SIMD3<Float>,
-        targetPixelWidth: Float,
-        projectionYScale: Float,
-        viewportPixelHeight: Float,
+        upLocal: SIMD3<Float>,
         into buffers: inout GeometryBuffers
     ) {
         guard !triangles.isEmpty else { return }
         let edges = uniqueEdges(from: triangles)
         guard !edges.isEmpty else { return }
         let stride = max(1, edges.count / maxEdgesPerAnchor)
+        let halfWidth = ribbonHalfWidth
 
         var index = 0
         for edge in edges {
@@ -368,22 +484,19 @@ final class BrightMeshVisualizer {
             let len = simd_length(dir)
             guard len > 0.01 else { continue }
             let tangent = dir / len
-            let midpoint = (a + b) * 0.5
-            let toCamera = cameraLocalPosition - midpoint
-            let distance = max(simd_length(toCamera), 0.05)
-            var sideDirection = simd_cross(tangent, simd_normalize(toCamera))
+            var sideDirection = simd_cross(tangent, upLocal)
             if simd_length_squared(sideDirection) < 0.0001 {
-                sideDirection = simd_cross(tangent, SIMD3<Float>(0, 1, 0))
+                sideDirection = simd_cross(tangent, SIMD3<Float>(1, 0, 0))
             }
             guard simd_length_squared(sideDirection) >= 0.0001 else { continue }
-            let metersPerPixel = (2 * distance) / (projectionYScale * viewportPixelHeight)
-            let halfWidth = targetPixelWidth * metersPerPixel * 0.5
             let side = simd_normalize(sideDirection) * halfWidth
+            // 바닥 z-fighting 완화: 살짝 띄움
+            let lift = upLocal * 0.004
             let base = UInt32(buffers.positions.count)
-            buffers.positions.append(a - side)
-            buffers.positions.append(a + side)
-            buffers.positions.append(b + side)
-            buffers.positions.append(b - side)
+            buffers.positions.append(a - side + lift)
+            buffers.positions.append(a + side + lift)
+            buffers.positions.append(b + side + lift)
+            buffers.positions.append(b - side + lift)
             buffers.indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
         }
     }

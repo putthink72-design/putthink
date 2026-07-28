@@ -105,7 +105,21 @@ final class ARScanSessionController: NSObject, ObservableObject {
     @Published var placementRequest: PlacementKind?
     @Published var sigma = 1.5
     /// 기본 편도. 왕복은 홀 지정 후 볼로 돌아와 드리프트 보정.
-    @Published var pathMode: ScanPathMode = .oneWay
+    @Published var pathMode: ScanPathMode = .oneWay {
+        didSet {
+            if gate1RetestLockRoundTrip, pathMode != .roundTrip {
+                pathMode = .roundTrip
+            }
+        }
+    }
+    /// 게이트1 전체 스택 재측정용 — 켜면 왕복만 허용.
+    @Published var gate1RetestLockRoundTrip = false {
+        didSet {
+            if gate1RetestLockRoundTrip {
+                pathMode = .roundTrip
+            }
+        }
+    }
     /// 게이트 6 섀도 관측(표시·CSV만). ballAnchor/holeAnchor에 절대 주입하지 않음.
     @Published private(set) var gate6Shadow: Gate6ShadowObservation?
     @Published private(set) var gate6SessionID: String?
@@ -146,7 +160,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     /// 볼 지정 전에 LiDAR 메시가 충분히 형성됐는지. 최소 정점 수 기준.
-    static let meshReadyVertexThreshold = 800
+    static let meshReadyVertexThreshold = 400
 
     /// 볼 기준점을 지정해도 될 만큼 메시가 준비됐는지.
     var meshReady: Bool {
@@ -231,8 +245,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         meshCaptureEnabled = false
         session.run(Self.makeScanConfiguration(), options: [])
         scanConfigActive = true
-        // 워밍업 중 쌓인 메시는 시작 시 지운다.
-        removeMeshAnchorsFromSession()
+        // 워밍업 중에도 메시를 남겨 두면 스캔 시작 직후 바닥 메시가 바로 보인다.
+        // (수집 버퍼는 startScan에서 비움)
 #endif
     }
 
@@ -241,6 +255,19 @@ final class ARScanSessionController: NSObject, ObservableObject {
         for anchor in frame.anchors where anchor is ARMeshAnchor {
             session.remove(anchor: anchor)
         }
+    }
+
+    /// 워밍업으로 이미 있는 메시를 수집 버퍼·카운트에 즉시 반영.
+    private func snapshotExistingMeshAnchors() {
+        guard let frame = session.currentFrame else { return }
+        let meshes = frame.anchors.filter { $0 is ARMeshAnchor }
+        guard !meshes.isEmpty else { return }
+        lastMeshCaptureTime = 0
+        captureMeshAnchors(
+            meshes,
+            frameTimestamp: frame.timestamp,
+            cameraTransform: frame.camera.transform
+        )
     }
 
     func startScan() {
@@ -278,7 +305,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         lastMeshCaptureTime = 0
         lastMeshVertexPublishTime = 0
         pendingMeshVertexCount = 0
-        heavyWorkAllowedAfter = CACurrentMediaTime() + 1.2
+        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.20
 
         // 커버리지는 메인에서 sync 하지 않음 (행업 원인)
         coverageSnapshot = .empty
@@ -309,9 +336,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
         trackingDescription = "스캔 중"
 
         if scanConfigActive {
-            // 파이프라인은 이미 워밍업됨 — run 호출 없이 메시만 비우고 수집 시작
-            removeMeshAnchorsFromSession()
+            // 워밍업된 ARMeshAnchor는 유지 — 지우면 바닥 수직 비출 때 메시가 한참 비어 보임.
+            // 수집 버퍼만 비우고 기존 앵커를 즉시 스냅샷한다.
             meshCaptureEnabled = true
+            snapshotExistingMeshAnchors()
         } else {
             // 워밍업이 아직이면 짧게 양보한 뒤 한 번만 run (콜드 경로)
             let config = Self.makeScanConfiguration()
@@ -1221,7 +1249,6 @@ extension ARScanSessionController: ARSessionDelegate {
         lastMeshCaptureTime = frameTimestamp
 
         let camX = cameraTransform.map { Double($0.columns.3.x) }
-        let camY = cameraTransform.map { Double($0.columns.3.y) }
         let camZ = cameraTransform.map { Double($0.columns.3.z) }
         let ballY = ballAnchor?.worldY
 
@@ -1246,14 +1273,8 @@ extension ARScanSessionController: ARSessionDelegate {
                     )
                 )
             }
-            if let camX, let camY, let camZ {
-                points = GroundScanFilter.rejectNearProtrusions(
-                    points: points,
-                    cameraX: camX,
-                    cameraY: camY,
-                    cameraZ: camZ
-                )
-            }
+            // 발 필터는 depth 융합·최종 지형에만 적용.
+            // 여기(메시 준비/흰화)에 쓰면 발 앞 지면까지 지워져 "멀리 비출 때만 메시"가 됨.
             if let ballY {
                 points = GroundScanFilter.rejectAboveBallReference(points: points, ballY: ballY)
             }

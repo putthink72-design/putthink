@@ -18,7 +18,14 @@ enum Gate55ComputeMode: String, CaseIterable, Identifiable {
 
 @MainActor
 final class Gate55GuidanceModel: ObservableObject {
-    @Published var greenSpeed: Double = 2.5
+    static let greenSpeedKey = "perf.greenSpeed"
+    static let greenSpeedPresets: [Double] = [2.5, 2.8, 3.0, 3.3]
+
+    @Published var greenSpeed: Double {
+        didSet {
+            UserDefaults.standard.set(greenSpeed, forKey: Self.greenSpeedKey)
+        }
+    }
     @Published var computeMode: Gate55ComputeMode = .recommend
     @Published var manualV0: Double = 2.0
     @Published var manualBeta: Double = 0
@@ -28,6 +35,9 @@ final class Gate55GuidanceModel: ObservableObject {
     @Published var forwardResult: Gate55ForwardResult?
     @Published var context: Gate55TerrainContext?
     @Published var thermalLevel: ThermalPerformance.Level = .nominal
+    /// Speed Corridor 이산 인덱스 (안전→공격적).
+    @Published var corridorIndex: Int = 0
+    @Published private(set) var isApplyingCorridor = false
 
     /// AR 조준선에 쓸 현재 β (도).
     var aimBetaDegrees: Double {
@@ -48,9 +58,19 @@ final class Gate55GuidanceModel: ObservableObject {
         }
     }
 
+    var corridorCandidateCount: Int {
+        recommendation?.corridorCandidates.count ?? 0
+    }
+
+    var corridorSliderEnabled: Bool {
+        corridorCandidateCount >= 2
+    }
+
     private var thermalObserver: NSObjectProtocol?
 
     init() {
+        let stored = UserDefaults.standard.object(forKey: Self.greenSpeedKey) as? Double
+        greenSpeed = stored ?? 2.5
         thermalLevel = ThermalPerformance.level
         thermalObserver = NotificationCenter.default.addObserver(
             forName: ThermalPerformance.thermalStateDidChangeNotification,
@@ -87,6 +107,21 @@ final class Gate55GuidanceModel: ObservableObject {
         }
     }
 
+    /// 그린스피드 프리셋/스테퍼 — 즉시 재계산.
+    func setGreenSpeed(_ value: Double, recomputeImmediately: Bool = true) {
+        let clamped = min(max(value, 1.5), 4.0)
+        let rounded = (clamped * 10).rounded() / 10
+        guard abs(greenSpeed - rounded) > 1e-9 else { return }
+        greenSpeed = rounded
+        if recomputeImmediately {
+            recompute()
+        }
+    }
+
+    func nudgeGreenSpeed(_ delta: Double) {
+        setGreenSpeed(greenSpeed + delta)
+    }
+
     func recompute() {
         guard let context else { return }
         isComputing = true
@@ -111,6 +146,7 @@ final class Gate55GuidanceModel: ObservableObject {
                 await MainActor.run {
                     self.recommendation = result
                     self.forwardResult = nil
+                    self.corridorIndex = result.defaultCorridorIndex
                     self.isComputing = false
                     let gridNote = "\(points)×\(points)"
                     if result.primary == nil {
@@ -122,7 +158,7 @@ final class Gate55GuidanceModel: ObservableObject {
                             "반경 완화 · 후보 \(result.candidateCount)개 (\(gridNote))"
                     } else {
                         self.statusMessage =
-                            "후보 \(result.candidateCount)개 · 1순위 (\(gridNote))"
+                            "후보 \(result.candidateCount)개 · 코리도 \(result.corridorCandidates.count)단계 (\(gridNote))"
                     }
                 }
             case .forward:
@@ -142,6 +178,48 @@ final class Gate55GuidanceModel: ObservableObject {
                         result.stopPosition.y
                     )
                 }
+            }
+        }
+    }
+
+    /// Speed Corridor 눈금 변경 — 해당 후보로 v0/β/궤적만 갱신(격자 재탐색 없음).
+    func selectCorridorIndex(_ index: Int) {
+        guard let context, var rec = recommendation else { return }
+        let count = rec.corridorCandidates.count
+        guard count >= 1 else { return }
+        let clamped = min(max(index, 0), count - 1)
+        guard clamped != corridorIndex || abs(rec.initialVelocity - rec.corridorCandidates[clamped].candidate.initialVelocity) > 1e-9 else {
+            corridorIndex = clamped
+            return
+        }
+        corridorIndex = clamped
+        let ranked = rec.corridorCandidates[clamped]
+        isApplyingCorridor = true
+        let greenSpeed = self.greenSpeed
+        let snapshot = context
+        Task.detached(priority: .userInitiated) {
+            let flat = Gate55Validation.flatEquivalentDistance(
+                initialVelocity: ranked.candidate.initialVelocity,
+                greenSpeed: greenSpeed
+            )
+            let forward = Gate55Validation.runForward(
+                context: snapshot,
+                greenSpeed: greenSpeed,
+                initialVelocity: ranked.candidate.initialVelocity,
+                directionDegrees: ranked.candidate.directionDegrees,
+                recordTrajectory: true
+            )
+            await MainActor.run {
+                rec.initialVelocity = ranked.candidate.initialVelocity
+                rec.directionDegrees = ranked.candidate.directionDegrees
+                rec.stopPosition = ranked.overrunStopPosition
+                rec.overrunDistance = ranked.actualOverrunDistance
+                rec.flatEquivalentDistance = flat
+                rec.distanceAdjustment = flat - rec.horizontalDistance
+                rec.trajectory = forward.trajectory
+                rec.primary = ranked
+                self.recommendation = rec
+                self.isApplyingCorridor = false
             }
         }
     }

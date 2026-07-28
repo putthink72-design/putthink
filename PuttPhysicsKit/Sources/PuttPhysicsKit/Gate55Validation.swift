@@ -63,7 +63,7 @@ public struct Gate55ForwardResult: Sendable, Equatable {
     }
 }
 
-/// 모드 2: CandidateSelector 1순위 + 스크린골프식 안내값.
+/// 모드 2: CandidateSelector 1순위 + 스크린골프식 안내값 + Speed Corridor.
 public struct Gate55Recommendation: Sendable, Equatable {
     public var horizontalDistance: Double
     public var flatEquivalentDistance: Double
@@ -72,11 +72,16 @@ public struct Gate55Recommendation: Sendable, Equatable {
     public var initialVelocity: Double
     public var directionDegrees: Double
     public var stopPosition: PuttVector2
+    /// 현재 선택 후보의 실제 오버런 거리(홀 지나 정지, m).
     public var overrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
     public var candidateCount: Int
     public var trajectory: [TrajectorySample]
     public var primary: RankedPuttCandidate?
+    /// 실제 오버런 거리 오름차순(안전→공격적). 이산 코리도 눈금.
+    public var corridorCandidates: [RankedPuttCandidate]
+    /// `corridorCandidates`에서 X=0.35m 목표에 가장 가까운(기존 1순위) 인덱스.
+    public var defaultCorridorIndex: Int
 
     public init(
         horizontalDistance: Double,
@@ -90,7 +95,9 @@ public struct Gate55Recommendation: Sendable, Equatable {
         usedRelaxedCaptureRadius: Bool,
         candidateCount: Int,
         trajectory: [TrajectorySample],
-        primary: RankedPuttCandidate?
+        primary: RankedPuttCandidate?,
+        corridorCandidates: [RankedPuttCandidate] = [],
+        defaultCorridorIndex: Int = 0
     ) {
         self.horizontalDistance = horizontalDistance
         self.flatEquivalentDistance = flatEquivalentDistance
@@ -104,6 +111,8 @@ public struct Gate55Recommendation: Sendable, Equatable {
         self.candidateCount = candidateCount
         self.trajectory = trajectory
         self.primary = primary
+        self.corridorCandidates = corridorCandidates
+        self.defaultCorridorIndex = defaultCorridorIndex
     }
 
     public var strokeGuidance: String {
@@ -250,6 +259,10 @@ public enum Gate55Validation {
             context.field.height(at: context.holeLocal)
             - context.field.height(at: context.ballLocal)
 
+        let corridor = selection.allCandidates.sorted {
+            $0.actualOverrunDistance < $1.actualOverrunDistance
+        }
+
         guard let primary = selection.primary else {
             return Gate55Recommendation(
                 horizontalDistance: horizontal,
@@ -263,9 +276,16 @@ public enum Gate55Validation {
                 usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
                 candidateCount: selection.allCandidates.count,
                 trajectory: [],
-                primary: nil
+                primary: nil,
+                corridorCandidates: corridor,
+                defaultCorridorIndex: 0
             )
         }
+
+        let defaultIndex = corridor.firstIndex(where: {
+            $0.candidate.initialVelocity == primary.candidate.initialVelocity
+                && $0.candidate.directionDegrees == primary.candidate.directionDegrees
+        }) ?? 0
 
         let flat = flatEquivalentDistance(
             initialVelocity: primary.candidate.initialVelocity,
@@ -286,11 +306,13 @@ public enum Gate55Validation {
             initialVelocity: primary.candidate.initialVelocity,
             directionDegrees: primary.candidate.directionDegrees,
             stopPosition: primary.overrunStopPosition,
-            overrunDistance: primary.distanceToOverrunTarget,
+            overrunDistance: primary.actualOverrunDistance,
             usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
             candidateCount: selection.allCandidates.count,
             trajectory: forward.trajectory,
-            primary: primary
+            primary: primary,
+            corridorCandidates: corridor,
+            defaultCorridorIndex: defaultIndex
         )
     }
 

@@ -3,6 +3,7 @@ import simd
 
 /// 스캔 중 발·다리처럼 지면에서 갑자기 솟은 근접 돌출을 제거한다.
 /// 그린은 급격히 솟지 않는다는 가정 — LiDAR 해상도는 유지하고 이상 높이만 버림.
+/// depth 융합·최종 지형에만 사용. 메시 시각화/준비 카운트에는 적용하지 말 것.
 enum GroundScanFilter {
     /// 카메라 근처에서 지면(하위 사분위)보다 이만큼 높으면 발로 간주.
     static let nearRiseMeters = 0.07
@@ -25,17 +26,15 @@ enum GroundScanFilter {
         cameraZ: Double
     ) -> [Point] {
         guard points.count >= 8 else { return points }
+        _ = cameraY // API 호환용(이전 무릎 필터 제거)
         let heights = points.map(\.worldY).sorted()
         let ground = percentile(heights, 0.25)
         return points.filter { point in
             let horiz = hypot(point.worldX - cameraX, point.worldZ - cameraZ)
-            if horiz <= nearRadiusMeters,
+            // 발·신발: 카메라 아주 가까이 + 지면보다 확실히 높음만 제거
+            // (이전 cameraY-0.35 조건은 근거리 지면까지 날려 메시 준비를 막음)
+            if horiz <= nearRadiusMeters * 0.55,
                point.worldY > ground + nearRiseMeters {
-                return false
-            }
-            // 카메라보다 확연히 높은 근접 점도(무릎·다리)
-            if horiz <= nearRadiusMeters * 0.85,
-               point.worldY > cameraY - 0.35 {
                 return false
             }
             return true

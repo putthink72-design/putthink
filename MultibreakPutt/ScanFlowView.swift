@@ -256,6 +256,14 @@ struct ScanFlowView: View {
                 }
             ) {
                 VStack(alignment: .leading, spacing: 8) {
+                    Toggle("재측정(왕복 고정)", isOn: $controller.gate1RetestLockRoundTrip)
+                        .font(.caption.weight(.semibold))
+                    if controller.gate1RetestLockRoundTrip {
+                        Text("게이트1 전체 스택 재측정 모드 — 편도 회차는 시작할 수 없습니다. path_mode=roundTrip만 기록됩니다.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+
                     Text("스캔 경로")
                         .font(.caption.weight(.semibold))
                     Picker("스캔 경로", selection: $controller.pathMode) {
@@ -264,6 +272,7 @@ struct ScanFlowView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(controller.gate1RetestLockRoundTrip)
                     Text(controller.pathMode.detail)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -297,7 +306,7 @@ struct ScanFlowView: View {
                 title: "1. 볼 기준점 지정",
                 message: controller.meshReady
                     ? "십자선을 실제 골프공 중심에 맞춘 뒤 버튼을 누르세요. 흰 구 마커가 그 지점에 고정됩니다."
-                    : "LiDAR 메시를 생성하는 중입니다. 폰을 바닥 쪽으로 향하고 천천히 좌우로 움직이세요.",
+                    : "바닥(볼 주변)을 향해 천천히 좌우로 비추세요. 가까운 지면 메시가 쌓이면 지정할 수 있습니다.",
                 buttonTitle: controller.meshReady ? "볼 기준점 지정" : "메시 준비 중…",
                 action: controller.requestBallPlacement,
                 enabled: controller.meshReady
@@ -305,7 +314,7 @@ struct ScanFlowView: View {
                 if !controller.meshReady {
                     HStack(spacing: 8) {
                         ProgressView()
-                        Text("메시 \(controller.meshVertexCount.formatted())점 수집 중")
+                        Text("메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }

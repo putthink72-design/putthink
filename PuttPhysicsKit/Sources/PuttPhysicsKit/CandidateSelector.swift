@@ -3,18 +3,23 @@ import Foundation
 public struct RankedPuttCandidate: Sendable, Equatable {
     public var candidate: InitialConditionCandidate
     public var overrunStopPosition: PuttVector2
+    /// 고정 오버런 목표점(X, 기본 0.35m)까지의 거리 — 1순위 선정용.
     public var distanceToOverrunTarget: Double
+    /// 홀을 지난 뒤 실제 정지까지 굴러간 거리(퍼트 방향 투영, m). Speed Corridor 정렬용.
+    public var actualOverrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
 
     public init(
         candidate: InitialConditionCandidate,
         overrunStopPosition: PuttVector2,
         distanceToOverrunTarget: Double,
+        actualOverrunDistance: Double,
         usedRelaxedCaptureRadius: Bool
     ) {
         self.candidate = candidate
         self.overrunStopPosition = overrunStopPosition
         self.distanceToOverrunTarget = distanceToOverrunTarget
+        self.actualOverrunDistance = actualOverrunDistance
         self.usedRelaxedCaptureRadius = usedRelaxedCaptureRadius
     }
 }
@@ -145,11 +150,15 @@ public enum CandidateSelector {
                 overrun.finalPosition.x - overrunTarget.x,
                 overrun.finalPosition.y - overrunTarget.y
             )
+            let pastHoleX = overrun.finalPosition.x - holePosition.x
+            let pastHoleY = overrun.finalPosition.y - holePosition.y
+            let actualOverrun = max(0, pastHoleX * direction.x + pastHoleY * direction.y)
             rankedSlots.set(
                 RankedPuttCandidate(
                     candidate: candidate,
                     overrunStopPosition: overrun.finalPosition,
                     distanceToOverrunTarget: distance,
+                    actualOverrunDistance: actualOverrun,
                     usedRelaxedCaptureRadius: usedRelaxed
                 ),
                 at: index

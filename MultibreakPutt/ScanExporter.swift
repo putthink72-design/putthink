@@ -40,7 +40,9 @@ enum ScanExporter {
                 region: region
             ) * 1_000,
             sigmaNoiseMeasurements: sigmaMeasurements,
-            repeatScanRMS: repeatRMS
+            repeatScanRMS: repeatRMS,
+            pathMode: scan.pathMode.rawValue,
+            surfaceSource: scan.surfaceSource
         )
 
         let encoder = JSONEncoder()

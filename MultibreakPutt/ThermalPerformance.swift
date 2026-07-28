@@ -65,6 +65,30 @@ enum WormDashesPerEdge: Int, CaseIterable, Identifiable {
     }
 }
 
+/// AR 조준선 근접 안정화 — 계산용 카메라-공 거리 하한(m).
+enum AimCalcDistanceFloor: Double, CaseIterable, Identifiable {
+    case cm20 = 0.20
+    case cm25 = 0.25
+    case cm30 = 0.30
+    case cm40 = 0.40
+    case cm50 = 0.50
+
+    var id: Double { rawValue }
+
+    var label: String {
+        String(format: "%.0fcm", rawValue * 100)
+    }
+
+    var subtitle: String {
+        switch self {
+        case .cm20: return "아주 가까이에서만 선을 내림"
+        case .cm25: return "약간 여유"
+        case .cm30: return "권장 · 근접 시 선을 볼 아래로"
+        case .cm40, .cm50: return "더 일찍부터 선을 지면 쪽으로"
+        }
+    }
+}
+
 /// AR 등고/격자 밀도.
 enum OverlayDensity: String, CaseIterable, Identifiable {
     case standard
@@ -117,6 +141,7 @@ enum PerformanceSettings {
     static let autoThermalKey = "perf.autoThermalThrottle"
     static let overlayDensityKey = "perf.overlayDensity"
     static let forceMaxBrightnessKey = "perf.forceMaxBrightness"
+    static let aimCalcDistanceFloorKey = "perf.aimCalcDistanceFloor"
     static let didChangeNotification = Notification.Name("PerformanceSettings.didChange")
 
     static var recommendGrid: RecommendScanGrid {
@@ -163,6 +188,21 @@ enum PerformanceSettings {
             return false
         }
         return UserDefaults.standard.bool(forKey: forceMaxBrightnessKey)
+    }
+
+    /// 조준선 렌더링용 카메라-공 거리 하한(m). 기본 0.30.
+    static var aimCalcDistanceFloor: Double {
+        let raw = UserDefaults.standard.object(forKey: aimCalcDistanceFloorKey) as? Double
+            ?? AimCalcDistanceFloor.cm30.rawValue
+        let clamped = min(max(raw, 0.15), 0.80)
+        return clamped
+    }
+
+    static var aimCalcDistanceFloorPreset: AimCalcDistanceFloor {
+        let value = aimCalcDistanceFloor
+        return AimCalcDistanceFloor.allCases.min(by: {
+            abs($0.rawValue - value) < abs($1.rawValue - value)
+        }) ?? .cm30
     }
 
     /// 추천 계산에 쓸 N (자동 발열이 켜져 있으면 기기 온도로만 하향).
