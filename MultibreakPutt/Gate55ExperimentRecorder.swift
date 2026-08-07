@@ -208,6 +208,109 @@ enum Gate55ExperimentRecorder {
         try (header + "\n" + row + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
+    /// 현장 퍼팅 1회 — 추천(스냅샷) + 실측 정지 + 홀인·홀컵 편차를 한 줄로 기록.
+    static func appendFieldPuttResult(
+        scanID: String,
+        pathMode: String,
+        surfaceSource: String,
+        holeDistanceM: Double,
+        greenSpeedM: Double,
+        corridorIndex: Int,
+        corridorCount: Int,
+        runID: String,
+        requestedV0: Double,
+        requestedBeta: Double,
+        predictedStop: PuttVector2,
+        recommendation: Gate55Recommendation?,
+        measuredStop: PuttVector2,
+        executedBeta: Double?,
+        holeIn: Bool,
+        pathMatch: String,
+        trackingStateOK: Bool,
+        notes: String
+    ) throws {
+        let url = try experimentDirectory(for: scanID)
+            .appendingPathComponent("field_putt_results.csv")
+        try ensureHeader(
+            url,
+            header: [
+                "recorded_at",
+                "scan_id",
+                "run_id",
+                "path_mode",
+                "surface_source",
+                "hole_distance_m",
+                "green_speed_m",
+                "corridor_index",
+                "corridor_count",
+                "requested_v0_ms",
+                "requested_beta_deg",
+                "executed_beta_deg",
+                "predicted_stop_x_m",
+                "predicted_stop_y_m",
+                "flat_equivalent_m",
+                "horizontal_m",
+                "elevation_m",
+                "overrun_m",
+                "measured_stop_x_m",
+                "measured_stop_y_m",
+                "stop_error_m",
+                "lateral_miss_m",
+                "along_miss_m",
+                "hole_miss_distance_m",
+                "hole_in",
+                "path_match",
+                "tracking_state_ok",
+                "notes"
+            ].joined(separator: ",")
+        )
+
+        let holeY = holeDistanceM
+        let lateralMiss = measuredStop.x
+        let alongMiss = measuredStop.y - holeY
+        let holeMiss = hypot(measuredStop.x, measuredStop.y - holeY)
+        let stopError = hypot(
+            predictedStop.x - measuredStop.x,
+            predictedStop.y - measuredStop.y
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        try appendRow(
+            url,
+            fields: [
+                formatter.string(from: Date()),
+                scanID,
+                runID,
+                pathMode,
+                surfaceSource,
+                format(holeDistanceM),
+                format(greenSpeedM),
+                "\(corridorIndex)",
+                "\(corridorCount)",
+                format(requestedV0),
+                format(requestedBeta),
+                executedBeta.map(format) ?? "",
+                format(predictedStop.x),
+                format(predictedStop.y),
+                format(recommendation?.flatEquivalentDistance ?? 0),
+                format(recommendation?.horizontalDistance ?? 0),
+                format(recommendation?.elevationDelta ?? 0),
+                format(recommendation?.overrunDistance ?? 0),
+                format(measuredStop.x),
+                format(measuredStop.y),
+                format(stopError),
+                format(lateralMiss),
+                format(alongMiss),
+                holeIn ? "0" : format(holeMiss),
+                holeIn ? "Y" : "N",
+                pathMatch,
+                trackingStateOK ? "Y" : "N",
+                notes
+            ]
+        )
+    }
+
     /// 현재 조준 세션의 요청값 스냅샷을 한 줄로 남긴다.
     static func writeAimSnapshot(
         scanID: String,

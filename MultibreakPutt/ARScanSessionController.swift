@@ -17,7 +17,7 @@ enum ScanFlowState: Equatable {
     case failed(String)
 }
 
-/// 스캔 경로. 기본은 편도(홀까지 한 번). 왕복은 드리프트 보정.
+/// 스캔 경로. 기본은 왕복(볼 복귀·드리프트 보정). 편도는 홀에서 즉시 계산.
 enum ScanPathMode: String, CaseIterable, Identifiable {
     case oneWay
     case roundTrip
@@ -26,8 +26,8 @@ enum ScanPathMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .oneWay: return "편도(기본)"
-        case .roundTrip: return "왕복"
+        case .oneWay: return "편도"
+        case .roundTrip: return "왕복(기본)"
         }
     }
 
@@ -36,7 +36,7 @@ enum ScanPathMode: String, CaseIterable, Identifiable {
         case .oneWay:
             return "홀까지 한 번만. 드리프트 보정 없음(간편)."
         case .roundTrip:
-            return "홀까지 간 뒤 볼로 복귀. 왕복 드리프트 보정 적용."
+            return "홀 지정 후 볼로 돌아와 종료. 볼 재지정 없음 · 드리프트 보정."
         }
     }
 }
@@ -105,7 +105,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     @Published var placementRequest: PlacementKind?
     @Published var sigma = 1.5
     /// 기본 편도. 왕복은 홀 지정 후 볼로 돌아와 드리프트 보정.
-    @Published var pathMode: ScanPathMode = .oneWay {
+    @Published var pathMode: ScanPathMode = .roundTrip {
         didSet {
             if gate1RetestLockRoundTrip, pathMode != .roundTrip {
                 pathMode = .roundTrip
@@ -120,9 +120,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
             }
         }
     }
-    /// 게이트 6 섀도 관측(표시·CSV만). ballAnchor/holeAnchor에 절대 주입하지 않음.
-    @Published private(set) var gate6Shadow: Gate6ShadowObservation?
-    @Published private(set) var gate6SessionID: String?
     /// Polycam형 커버리지 스냅샷 (시각·안내용). 물리/앵커에 주입하지 않음.
     @Published private(set) var coverageSnapshot: ScanCoverageSnapshot = .empty
     @Published private(set) var coverageQualityMessage = ScanCoverageQuality.normal.message
@@ -142,17 +139,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var startedAt = Date()
     private var meshCaptureEnabled = true
     private var guidancePhaseActive = false
-    private var lastGate6ProcessTime: TimeInterval = 0
-    /// 오버레이 좌표 매핑용 실제 AR 뷰 크기(세로). ScanFlowView가 갱신.
-    private var gate6ViewportSize = CGSize(width: 390, height: 844)
-    private var gate6BallAttempts = 0
-    private var gate6HoleAttempts = 0
-    private var gate6BallDepthHits = 0
-    private var gate6HoleDepthHits = 0
-    private var gate6DepthRejectTotal = 0
     private let coverageTracker = ScanCoverageTracker()
     private var lastCoverageHapticStableCount = 0
     private let coverageHaptic = UIImpactFeedbackGenerator(style: .light)
+    /// ARMeshAnchor 정점 복사·필터 전용 직렬 큐 — 메인에서 하면 버튼 탭·스캔 중 히칭.
+    private let meshExtractionQueue = DispatchQueue(label: "trueputt.mesh-extract", qos: .userInitiated)
 
     var currentHoleDistance: Double? {
         guard let ball = ballAnchor, let hole = holeAnchor else { return nil }
@@ -174,22 +165,30 @@ final class ARScanSessionController: NSObject, ObservableObject {
     override init() {
         super.init()
         session.delegate = self
+        // 앱 시작 즉시 카메라·LiDAR 가동 — ARView 부착을 기다리지 않음 (cold start 단축).
+        prewarmCameraPreview()
     }
 
     /// 스캔 구성(트래킹+LiDAR 메시+raw sceneDepth)이 현재 세션에서 돌아가는 중인지.
-    private var scanConfigActive = false
-    /// 스캔 직후 커버리지·메시 시각화 등 무거운 작업을 잠시 미룸.
+    private(set) var scanConfigActive = false
+    /// 스캔 직후 커버리지 등 무거운 작업을 잠시 미룸(메시 수집·표시와 분리).
     private var heavyWorkAllowedAfter: CFTimeInterval = 0
-    private var lidarPrewarmWorkItem: DispatchWorkItem?
+    /// 볼 지정 전까지 메시 정점을 촘촘히 수집.
+    private(set) var meshCaptureBurstActive = false
 
-    /// 메시 오버레이를 켜도 되는지 (시작 직후 짧은 유예).
+    /// 메시 오버레이를 켜도 되는지 (스캔 진행 중만 — idle 워밍업은 화면에 표시하지 않음).
     var meshVisualizationAllowed: Bool {
         switch flowState {
         case .placingBall, .walkingToHole, .placingHole, .returningToBall, .preparing:
-            return CACurrentMediaTime() >= heavyWorkAllowedAfter
+            return true
         default:
             return false
         }
+    }
+
+    /// idle 워밍업 중 — 표시는 숨기고 메시 지오메트리만 미리 빌드해 시작 버튼에서 즉시 공개.
+    var meshWarmupActive: Bool {
+        flowState == .idle && scanConfigActive
     }
 
     /// 스캔용 ARKit 구성. 분류(classification)와 smoothedSceneDepth는 쓰지 않으므로
@@ -202,19 +201,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
         return configuration
     }
 
-    /// 화면 진입 직후: 카메라(+가능하면 depth)만. LiDAR 메시는 백그라운드 예약.
+    /// 화면 진입 직후 LiDAR 메시 파이프라인을 즉시 올린다(정점 수집·표시는 스캔 시작까지 끔).
     func prewarmCameraPreview() {
 #if !targetEnvironment(simulator)
         guard flowState == .idle else { return }
-        if !scanConfigActive {
-            let configuration = ARWorldTrackingConfiguration()
-            configuration.worldAlignment = .gravity
-            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-                configuration.frameSemantics.insert(.sceneDepth)
-            }
-            session.run(configuration, options: [])
-        }
-        scheduleLiDARPrewarm(after: 0.35)
+        prewarmLiDARPipelineIfNeeded()
 #endif
     }
 
@@ -224,29 +215,25 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     /// idle 동안 LiDAR+depth 파이프라인을 미리 올려 둔다(정점 수집·표시는 끔).
     /// 시작 버튼에서는 session.run을 생략해 메인스레드 행업을 피한다.
-    private func scheduleLiDARPrewarm(after delay: TimeInterval) {
-#if !targetEnvironment(simulator)
-        lidarPrewarmWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.prewarmLiDARPipelineIfNeeded()
-        }
-        lidarPrewarmWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-#endif
-    }
-
     private func prewarmLiDARPipelineIfNeeded() {
 #if !targetEnvironment(simulator)
         guard flowState == .idle else { return }
         guard !scanConfigActive else { return }
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
               ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
-        else { return }
+        else {
+            let configuration = ARWorldTrackingConfiguration()
+            configuration.worldAlignment = .gravity
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+                configuration.frameSemantics.insert(.sceneDepth)
+            }
+            session.run(configuration, options: [])
+            return
+        }
         meshCaptureEnabled = false
         session.run(Self.makeScanConfiguration(), options: [])
         scanConfigActive = true
-        // 워밍업 중에도 메시를 남겨 두면 스캔 시작 직후 바닥 메시가 바로 보인다.
-        // (수집 버퍼는 startScan에서 비움)
+        // ARKit이 내부 ARMeshAnchor만 쌓음 — 표시·정점 복사는 스캔 시작 후.
 #endif
     }
 
@@ -273,39 +260,37 @@ final class ARScanSessionController: NSObject, ObservableObject {
     func startScan() {
         guard flowState == .idle || isTerminalState else { return }
 
-        lidarPrewarmWorkItem?.cancel()
-        lidarPrewarmWorkItem = nil
+        let reusingPrewarmedPipeline = scanConfigActive
 
-        // 1) UI·상태만 즉시 — session.run / queue.sync 금지
+        // UI·상태 — session.run / queue.sync 금지
         completedScan = nil
         ballAnchor = nil
         holeAnchor = nil
         cameraStartPose = nil
         cameraReturnPose = nil
         placementRequest = nil
-        latestMeshes.removeAll(keepingCapacity: true)
         trackingEvents.removeAll(keepingCapacity: true)
         guidanceTrackingEvents.removeAll(keepingCapacity: true)
         guidanceTrackingOK = true
         ballPlacementTrackingOK = true
         holePlacementTrackingOK = true
-        meshVertexCount = 0
-        meshCaptureEnabled = false
         guidancePhaseActive = false
-        gate6Shadow = nil
-        lastGate6ProcessTime = 0
-        gate6BallAttempts = 0
-        gate6HoleAttempts = 0
-        gate6BallDepthHits = 0
-        gate6HoleDepthHits = 0
-        gate6DepthRejectTotal = 0
-        gate6SessionID = "gate6-\(Self.scanIdentifier())"
         coverageHaptic.prepare()
         startedAt = Date()
         lastMeshCaptureTime = 0
         lastMeshVertexPublishTime = 0
         pendingMeshVertexCount = 0
-        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.20
+        meshCaptureBurstActive = true
+        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.12
+
+        if reusingPrewarmedPipeline {
+            // 워밍업된 ARMeshAnchor·세션 유지 — 버퍼/카운트/session.run 재시작 없음.
+            meshCaptureEnabled = true
+        } else {
+            latestMeshes.removeAll(keepingCapacity: true)
+            meshVertexCount = 0
+            meshCaptureEnabled = false
+        }
 
         // 커버리지는 메인에서 sync 하지 않음 (행업 원인)
         coverageSnapshot = .empty
@@ -320,7 +305,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
         meshCaptureEnabled = true
         flowState = .placingBall
         placementMessage = "시뮬레이터: 볼 (0, 0) · 홀 (0, 3m) 데모 기준을 사용합니다."
-        gate6Shadow = Gate6RGBDepthDetector.observeSynthetic(kind: .ball)
 #else
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else {
             fail("이 기기는 LiDAR 메시 재구성을 지원하지 않습니다.")
@@ -335,21 +319,13 @@ final class ARScanSessionController: NSObject, ObservableObject {
         placementMessage = "바닥을 향해 천천히 움직이세요. 메시가 쌓이면 볼을 지정할 수 있습니다."
         trackingDescription = "스캔 중"
 
-        if scanConfigActive {
-            // 워밍업된 ARMeshAnchor는 유지 — 지우면 바닥 수직 비출 때 메시가 한참 비어 보임.
-            // 수집 버퍼만 비우고 기존 앵커를 즉시 스냅샷한다.
-            meshCaptureEnabled = true
+        if reusingPrewarmedPipeline {
             snapshotExistingMeshAnchors()
         } else {
-            // 워밍업이 아직이면 짧게 양보한 뒤 한 번만 run (콜드 경로)
             let config = Self.makeScanConfiguration()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                guard let self else { return }
-                guard self.flowState == .placingBall else { return }
-                self.session.run(config, options: [])
-                self.scanConfigActive = true
-                self.meshCaptureEnabled = true
-            }
+            session.run(config, options: [])
+            scanConfigActive = true
+            meshCaptureEnabled = true
         }
 #endif
     }
@@ -369,22 +345,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #endif
     }
 
-    /// SwiftUI에서 실제 AR 뷰 크기를 알려준다(오버레이 좌표 정확도).
-    func updateGate6Viewport(_ size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
-        gate6ViewportSize = size
-    }
-
     /// 홀까지 스캔 후 홀 지정 단계로 진입.
     func beginHolePlacement() {
         guard flowState == .walkingToHole, ballAnchor != nil else { return }
         flowState = .placingHole
         placementMessage = "화면 중앙 십자선을 실제 홀컵 중심에 맞춘 뒤 지정하세요."
-#if targetEnvironment(simulator)
-        gate6Shadow = Gate6RGBDepthDetector.observeSynthetic(kind: .hole)
-#else
-        gate6Shadow = nil
-#endif
     }
 
     /// UI에서 "홀 기준점 지정" 버튼을 눌렀을 때.
@@ -693,7 +658,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #endif
     }
 
-    /// 메시 폴백용: 발·솟은 blob 제거 + 볼-홀 복도 밖 대량 정점 축소.
+    /// 메시 폴백용: 발·깃대·솟은 blob 제거 + 볼-홀 복도 밖 대량 정점 축소.
     private static func filterMeshVerticesForTerrain(
         _ vertices: [ScanVertex],
         ball: ScanPose,
@@ -702,7 +667,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let points = vertices.map {
             GroundScanFilter.Point(worldX: $0.worldX, worldY: $0.worldY, worldZ: $0.worldZ)
         }
-        var reject = GroundScanFilter.footRejectionMask(points)
+        var reject = GroundScanFilter.combinedFeatureRejectionMask(points)
         let ceiling = ball.worldY + GroundScanFilter.absoluteAboveBallMeters
         for (index, point) in points.enumerated() where point.worldY > ceiling {
             reject[index] = true
@@ -758,8 +723,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     func reset() {
-        lidarPrewarmWorkItem?.cancel()
-        lidarPrewarmWorkItem = nil
         ballAnchor = nil
         holeAnchor = nil
         cameraStartPose = nil
@@ -770,15 +733,13 @@ final class ARScanSessionController: NSObject, ObservableObject {
         completedScan = nil
         meshVertexCount = 0
         meshCaptureEnabled = false
+        meshCaptureBurstActive = false
         guidancePhaseActive = false
         guidanceTrackingEvents.removeAll()
         guidanceTrackingOK = true
-        gate6Shadow = nil
-        gate6SessionID = nil
-        lastGate6ProcessTime = 0
         resetCoverageState()
         flowState = .idle
-        // LiDAR 끄고, idle에서 다시 백그라운드 워밍업
+        // LiDAR 끄고, idle에서 다시 워밍업
         stopLiDARReconstructionKeepingWorld()
         prewarmCameraPreview()
     }
@@ -824,58 +785,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
         }
     }
 
-    /// 수동 앵커 확정 시점의 섀도 관측만 CSV에 남긴다. 자동 좌표는 앵커에 쓰지 않음.
-    private func recordGate6ShadowAgainstManual(kind: Gate6TargetKind, manual: ScanPose) {
-        guard let sessionID = gate6SessionID else { return }
-        let observation = gate6Shadow
-        let attemptID = UUID().uuidString.prefix(8).description
-        let rgbCount = observation?.rgbCandidateCount ?? 0
-        let rejected = observation?.depthRejectedCount ?? 0
-        let best = observation?.kind == kind ? observation?.best : nil
-        let depthOK = best?.depth.accepted == true
-        switch kind {
-        case .ball:
-            gate6BallAttempts += 1
-            if depthOK { gate6BallDepthHits += 1 }
-        case .hole:
-            gate6HoleAttempts += 1
-            if depthOK { gate6HoleDepthHits += 1 }
-        }
-        gate6DepthRejectTotal += rejected
-        let outcome: String
-        if depthOK, let best, let ax = best.worldX, let az = best.worldZ {
-            let d = hypot(ax - manual.worldX, az - manual.worldZ)
-            outcome = d < 0.08 ? "shadow_near_manual" : "shadow_far_from_manual"
-        } else if rgbCount == 0 {
-            outcome = "no_rgb_candidate"
-        } else {
-            outcome = "depth_rejected_or_no_world"
-        }
-        do {
-            try Gate6ExperimentRecorder.appendAttempt(
-                sessionID: sessionID,
-                kind: kind,
-                attemptID: attemptID,
-                rgbCandidates: rgbCount,
-                depthAccepted: depthOK,
-                falsePositiveRejected: rejected,
-                auto: best,
-                manualWorldX: manual.worldX,
-                manualWorldY: manual.worldY,
-                manualWorldZ: manual.worldZ,
-                outcome: outcome
-            )
-            try Gate6ExperimentRecorder.writeSummary(
-                sessionID: sessionID,
-                ballAttempts: gate6BallAttempts,
-                ballDepthHits: gate6BallDepthHits,
-                holeAttempts: gate6HoleAttempts,
-                holeDepthHits: gate6HoleDepthHits,
-                totalRGBRejectedByDepth: gate6DepthRejectTotal
-            )
-        } catch {
-            // 기록 실패는 스캔 플로우를 막지 않음
-        }
+    /// ARMeshAnchor 정점 수집 (스캔 진행 중만).
+    private var isMeshCaptureState: Bool {
+        meshCaptureEnabled && isCoverageActiveState
     }
 
     /// 스캔 데이터 수집이 끝나면 LiDAR 메시·sceneDepth를 끄고 월드 트래킹만 유지한다.
@@ -900,8 +812,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private func confirmBallAnchor(_ pose: ScanPose) {
         guard flowState == .placingBall else { return }
-        // 수동 raycast만 앵커. 게이트 6 자동 좌표는 비교 CSV만.
-        recordGate6ShadowAgainstManual(kind: .ball, manual: pose)
         ballAnchor = pose
         cameraStartPose = currentCameraPose() ?? ScanPose(
             worldX: pose.worldX,
@@ -915,7 +825,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
             pose.worldX, pose.worldY, pose.worldZ
         )
         flowState = .walkingToHole
-        gate6Shadow = nil
     }
 
     private func confirmHoleAnchor(_ pose: ScanPose) {
@@ -925,14 +834,12 @@ final class ARScanSessionController: NSObject, ObservableObject {
             placementMessage = "볼과 홀이 너무 가깝습니다(5cm 미만). 다시 지정하세요."
             return
         }
-        recordGate6ShadowAgainstManual(kind: .hole, manual: pose)
         holeAnchor = pose
         holePlacementTrackingOK = !trackingLimited
         placementMessage = String(
             format: "홀 기준점 지정 완료 · 거리 %.2fm",
             distance
         )
-        gate6Shadow = nil
         if pathMode == .oneWay {
             guard let cameraStartPose else {
                 fail("볼 지정 시 카메라 pose가 없습니다.")
@@ -1132,41 +1039,10 @@ extension ARScanSessionController: ARSessionDelegate {
                 self.applyCoverageSnapshot(snapshot)
             }
         }
-
-        // 게이트 6 섀도: 볼/홀 지정 단계에서만 ~4Hz. 시작 직후 유예.
-        let kind: Gate6TargetKind?
-        switch state {
-        case .placingBall: kind = .ball
-        case .placingHole: kind = .hole
-        default: kind = nil
-        }
-        guard let kind else { return }
-        guard CACurrentMediaTime() >= heavyWorkAllowedAfter else { return }
-        let now = frame.timestamp
-        guard now - lastGate6ProcessTime >= 0.25 else { return }
-        lastGate6ProcessTime = now
-        let viewport = gate6ViewportSize
-        let observation = Gate6RGBDepthDetector.observe(
-            frame: frame,
-            kind: kind,
-            viewportSize: viewport
-        )
-        DispatchQueue.main.async {
-            switch self.flowState {
-            case .placingBall where kind == .ball, .placingHole where kind == .hole:
-                if let observation {
-                    self.gate6Shadow = observation
-                }
-            default:
-                break
-            }
-        }
     }
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
-        // 사전 워밍업(idle) 중에는 정점 복사를 건너뛴다 — 스캔 시작 시 앵커 업데이트로 즉시 재수집됨.
-        guard meshCaptureEnabled, isCoverageActiveState else { return }
-        guard CACurrentMediaTime() >= heavyWorkAllowedAfter else { return }
+        guard isMeshCaptureState else { return }
         captureMeshAnchors(
             anchors,
             frameTimestamp: session.currentFrame?.timestamp ?? 0,
@@ -1175,8 +1051,7 @@ extension ARScanSessionController: ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        guard meshCaptureEnabled, isCoverageActiveState else { return }
-        guard CACurrentMediaTime() >= heavyWorkAllowedAfter else { return }
+        guard isMeshCaptureState else { return }
         captureMeshAnchors(
             anchors,
             frameTimestamp: session.currentFrame?.timestamp ?? 0,
@@ -1251,70 +1126,80 @@ extension ARScanSessionController: ARSessionDelegate {
         frameTimestamp: TimeInterval,
         cameraTransform: simd_float4x4?
     ) {
-        // ARKit 콜백에서 전체 정점 복사는 히칭 원인 → 스로틀. 물리 정확도를 위해 전량 유지하되 상한·발 필터 적용.
-        guard frameTimestamp - lastMeshCaptureTime >= 0.4 else { return }
+        // 스로틀 판단은 메인에서, 정점 복사·필터는 백그라운드에서. 볼 지정 전(burst)은 촘촘히.
+        let minInterval: TimeInterval = meshCaptureBurstActive ? 0.06 : 0.35
+        guard frameTimestamp - lastMeshCaptureTime >= minInterval else { return }
         lastMeshCaptureTime = frameTimestamp
 
+        let meshAnchors = anchors.compactMap { $0 as? ARMeshAnchor }
+        guard !meshAnchors.isEmpty else { return }
         let camX = cameraTransform.map { Double($0.columns.3.x) }
         let camZ = cameraTransform.map { Double($0.columns.3.z) }
         let ballY = ballAnchor?.worldY
 
-        var snapshots: [(UUID, [ScanVertex])] = []
-        for anchor in anchors {
-            guard let meshAnchor = anchor as? ARMeshAnchor else { continue }
-            let source = meshAnchor.geometry.vertices
-            var points: [GroundScanFilter.Point] = []
-            points.reserveCapacity(min(source.count, Self.maxVerticesPerAnchor))
-            let step = max(1, source.count / Self.maxVerticesPerAnchor)
-            for index in Swift.stride(from: 0, to: source.count, by: step) {
-                let pointer = source.buffer.contents()
-                    .advanced(by: source.offset + source.stride * index)
-                    .assumingMemoryBound(to: SIMD3<Float>.self)
-                let local = pointer.pointee
-                let world = meshAnchor.transform * SIMD4<Float>(local.x, local.y, local.z, 1)
-                points.append(
-                    GroundScanFilter.Point(
-                        worldX: Double(world.x),
-                        worldY: Double(world.y),
-                        worldZ: Double(world.z)
+        meshExtractionQueue.async { [weak self] in
+            var snapshots: [(UUID, [ScanVertex])] = []
+            for meshAnchor in meshAnchors {
+                let source = meshAnchor.geometry.vertices
+                var points: [GroundScanFilter.Point] = []
+                points.reserveCapacity(min(source.count, Self.maxVerticesPerAnchor))
+                let step = max(1, source.count / Self.maxVerticesPerAnchor)
+                for index in Swift.stride(from: 0, to: source.count, by: step) {
+                    let pointer = source.buffer.contents()
+                        .advanced(by: source.offset + source.stride * index)
+                        .assumingMemoryBound(to: SIMD3<Float>.self)
+                    let local = pointer.pointee
+                    let world = meshAnchor.transform * SIMD4<Float>(local.x, local.y, local.z, 1)
+                    points.append(
+                        GroundScanFilter.Point(
+                            worldX: Double(world.x),
+                            worldY: Double(world.y),
+                            worldZ: Double(world.z)
+                        )
                     )
-                )
+                }
+                // 발·깃대 필터: depth 융합·최종 지형·볼 지정 후 메시 저장에 적용.
+                // 볼 지정 전에는 수직 기둥(깃대)만 제거 — 발 앞 지면 보호.
+                if let ballY {
+                    points = GroundScanFilter.rejectAboveBallReference(points: points, ballY: ballY)
+                }
+                points = GroundScanFilter.rejectVerticalPoleLikeProtrusions(points)
+                let vertices = points.map {
+                    ScanVertex(
+                        worldX: $0.worldX,
+                        worldY: $0.worldY,
+                        worldZ: $0.worldZ,
+                        timestamp: frameTimestamp
+                    )
+                }
+                snapshots.append((meshAnchor.identifier, vertices))
             }
-            // 발 필터는 depth 융합·최종 지형에만 적용.
-            // 여기(메시 준비/흰화)에 쓰면 발 앞 지면까지 지워져 "멀리 비출 때만 메시"가 됨.
-            if let ballY {
-                points = GroundScanFilter.rejectAboveBallReference(points: points, ballY: ballY)
-            }
-            let vertices = points.map {
-                ScanVertex(
-                    worldX: $0.worldX,
-                    worldY: $0.worldY,
-                    worldZ: $0.worldZ,
-                    timestamp: frameTimestamp
-                )
-            }
-            snapshots.append((meshAnchor.identifier, vertices))
-        }
-        guard !snapshots.isEmpty else { return }
+            guard !snapshots.isEmpty else { return }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            for (identifier, vertices) in snapshots {
-                self.latestMeshes[identifier] = vertices
-            }
-            self.pruneLatestMeshesIfNeeded(
-                cameraX: camX,
-                cameraZ: camZ
-            )
-            let total = self.latestMeshes.values.reduce(0) { $0 + $1.count }
-            self.pendingMeshVertexCount = total
-            let crossedReady = total >= Self.meshReadyVertexThreshold
-                && self.meshVertexCount < Self.meshReadyVertexThreshold
-            if crossedReady
-                || frameTimestamp - self.lastMeshVertexPublishTime >= 0.5
-                || abs(total - self.meshVertexCount) >= 500 {
-                self.meshVertexCount = total
-                self.lastMeshVertexPublishTime = frameTimestamp
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (identifier, vertices) in snapshots {
+                    self.latestMeshes[identifier] = vertices
+                }
+                self.pruneLatestMeshesIfNeeded(
+                    cameraX: camX,
+                    cameraZ: camZ
+                )
+                let total = self.latestMeshes.values.reduce(0) { $0 + $1.count }
+                self.pendingMeshVertexCount = total
+                let crossedReady = total >= Self.meshReadyVertexThreshold
+                    && self.meshVertexCount < Self.meshReadyVertexThreshold
+                if crossedReady {
+                    self.meshCaptureBurstActive = false
+                }
+                let publishInterval: TimeInterval = self.meshCaptureBurstActive ? 0.12 : 0.5
+                let publishDelta = self.meshCaptureBurstActive ? 80 : 500
+                if crossedReady
+                    || frameTimestamp - self.lastMeshVertexPublishTime >= publishInterval
+                    || abs(total - self.meshVertexCount) >= publishDelta {
+                    self.meshVertexCount = total
+                    self.lastMeshVertexPublishTime = frameTimestamp
+                }
             }
         }
     }

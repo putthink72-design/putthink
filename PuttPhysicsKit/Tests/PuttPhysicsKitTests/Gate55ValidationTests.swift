@@ -228,6 +228,46 @@ final class Gate55ValidationTests: XCTestCase {
         )
     }
 
+    /// 그린스피드를 낮출수록(느린 그린) 평지환산 안내 거리가 길어져야 한다.
+    func testLowerGreenSpeedIncreasesFlatDisplayEquivalent() throws {
+        let holeDistance = 5.0
+        let cell = 0.05
+        let width = 21
+        let height = Int(ceil(holeDistance / cell)) + 5
+        var heights = [Double](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let localY = Double(y) * cell - 0.2
+                heights[y * width + x] = 0.35 * (localY / holeDistance)
+            }
+        }
+        let gridContext = try Gate55Validation.contextFromMeasuredGrid(
+            cellSize: cell,
+            originX: -0.5,
+            originY: -0.2,
+            width: width,
+            height: height,
+            heights: heights,
+            holeDistance: holeDistance
+        )
+        let speeds = [1.8, 2.2, 2.6, 3.0, 3.4]
+        let flats = speeds.map {
+            Gate55Validation.recommend(
+                context: gridContext,
+                greenSpeed: $0,
+                velocityPointCount: 45,
+                directionPointCount: 45
+            ).flatEquivalentDistance
+        }
+        for index in 0..<(flats.count - 1) {
+            XCTAssertGreaterThan(
+                flats[index],
+                flats[index + 1],
+                "느린 그린(\(speeds[index]))이 빠른 그린(\(speeds[index + 1]))보다 평지환산이 커야 함"
+            )
+        }
+    }
+
     private func recommendOnUniformSlope(
         elevationDelta: Double,
         holeDistance: Double

@@ -121,6 +121,11 @@ public struct Gate55Recommendation: Sendable, Equatable {
 }
 
 public enum Gate55Validation {
+    /// UI·「치는 느낌」용 평지환산에 쓰는 기준 그린스피드(m).
+    /// 추천 v₀는 사용자 `greenSpeed`로 구하지만, 표시 거리는 이 값으로 고정해야
+    /// 그린스피드를 낮출 때(느린 그린 → 더 세게) 안내 거리가 길어지는 직관과 맞는다.
+    public static let flatDisplayReferenceGreenSpeed = 2.5
+
     // MARK: - Terrain adapters
 
     /// 직접 실측 격자 → 컨텍스트. 값은 이미 로컬(+Y=볼→홀) 좌표계라고 가정한다.
@@ -287,9 +292,8 @@ public enum Gate55Validation {
                 && $0.candidate.directionDegrees == primary.candidate.directionDegrees
         }) ?? 0
 
-        let flat = flatEquivalentDistance(
-            initialVelocity: primary.candidate.initialVelocity,
-            greenSpeed: greenSpeed
+        let flat = flatDisplayEquivalentDistance(
+            initialVelocity: primary.candidate.initialVelocity
         )
         let forward = runForward(
             context: context,
@@ -333,6 +337,14 @@ public enum Gate55Validation {
             recordTrajectory: false
         )
         return flat.arcLength
+    }
+
+    /// UI에 표시할 평지환산 — 추천 v₀ + `flatDisplayReferenceGreenSpeed`.
+    public static func flatDisplayEquivalentDistance(initialVelocity: Double) -> Double {
+        flatEquivalentDistance(
+            initialVelocity: initialVelocity,
+            greenSpeed: flatDisplayReferenceGreenSpeed
+        )
     }
 }
 

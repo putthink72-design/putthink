@@ -6,6 +6,7 @@ import UIKit
 
 struct ScanFlowView: View {
     @StateObject private var controller = ARScanSessionController()
+    @StateObject private var guidancePlaceholder = Gate55GuidanceModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var regionCenterX = 0.5
     @State private var regionCenterY = 0.5
@@ -13,10 +14,8 @@ struct ScanFlowView: View {
     @State private var diagnostics: ScanDiagnostics?
     @State private var exportURL: URL?
     @State private var exportError: String?
-    @State private var showClearHistoryConfirmation = false
-    /// 앱 진입 전 사용자 밝기 — 나갈 때 복원.
     @State private var savedBrightness: CGFloat?
-    @State private var showPerformanceSettings = false
+    @State private var showSettings = false
 
     var body: some View {
         Group {
@@ -24,74 +23,14 @@ struct ScanFlowView: View {
                 Gate55GuidanceView(controller: controller)
                     .ignoresSafeArea(edges: .bottom)
             } else {
-                ZStack {
-                    PlacementARView(controller: controller)
-                        .ignoresSafeArea()
-
-                    // 중앙 십자선 — 볼/홀 기준점 조준용
-                    if showsReticle {
-                        CenterReticle()
-                            .allowsHitTesting(false)
-                    }
-
-                    // 게이트 6 섀도 후보 오버레이 (탭해도 앵커에 반영되지 않음)
-                    if showsReticle, let shadow = controller.gate6Shadow {
-                        GeometryReader { geo in
-                            Gate6ShadowOverlay(observation: shadow)
-                                .onAppear { controller.updateGate6Viewport(geo.size) }
-                                .onChange(of: geo.size) { _, size in
-                                    controller.updateGate6Viewport(size)
-                                }
-                        }
-                        .allowsHitTesting(false)
-                    }
-
-                    LinearGradient(
-                        colors: [.black.opacity(0.55), .clear, .black.opacity(0.7)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-
-                    VStack(spacing: 12) {
-                        trackingHeader
-                        if showsCoverageUI {
-                            coverageBanner
-                        }
-                        if let message = controller.placementMessage {
-                            Text(message)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.white)
-                                .padding(8)
-                                .frame(maxWidth: .infinity)
-                                .background(.blue.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        if let shadow = controller.gate6Shadow, showsReticle {
-                            Text(shadow.statusLine)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(8)
-                                .frame(maxWidth: .infinity)
-                                .background(.purple.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                            Text("섀도 모드 — 자동 좌표는 볼·홀 기준으로 사용하지 않습니다")
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                        Spacer()
-                        referenceStatusBanner
-                        flowPanel
-                    }
-                    .padding()
-                }
+                scanExperience
             }
         }
         .preferredColorScheme(.dark)
         .onAppear {
             applyBrightnessPolicy()
             UIApplication.shared.isIdleTimerDisabled = true
-            // 카메라 프리뷰만 — LiDAR는 스캔 시작 버튼에서 가동
-            controller.prewarmCameraPreview()
+            controller.prewarmSession()
         }
         .onDisappear {
             restoreBrightness()
@@ -102,7 +41,7 @@ struct ScanFlowView: View {
             case .active:
                 applyBrightnessPolicy()
                 UIApplication.shared.isIdleTimerDisabled = true
-                controller.prewarmCameraPreview()
+                controller.prewarmSession()
             case .inactive, .background:
                 restoreBrightness()
                 UIApplication.shared.isIdleTimerDisabled = false
@@ -117,14 +56,248 @@ struct ScanFlowView: View {
             guard identifier != nil else { return }
             exportCurrentScan()
         }
-        .alert("저장된 스캔 기록을 초기화할까요?", isPresented: $showClearHistoryConfirmation) {
-            Button("취소", role: .cancel) {}
-            Button("모두 삭제", role: .destructive, action: clearScanHistory)
-        } message: {
-            Text("실내 측정값을 포함한 모든 진단 파일이 삭제되며, 최근 3회 RMS는 다음 스캔부터 새로 계산됩니다.")
+        .sheet(isPresented: $showSettings) {
+            AppSettingsSheet(
+                mode: .scan,
+                controller: controller,
+                guidanceModel: guidancePlaceholder,
+                onRequestClearHistory: clearScanHistory
+            )
         }
-        .sheet(isPresented: $showPerformanceSettings) {
-            PerformanceSettingsView()
+    }
+
+    private var scanExperience: some View {
+        ZStack {
+            PlacementARView(controller: controller)
+                .ignoresSafeArea()
+
+            if showsReticle {
+                OSDAmberReticle(dashedRing: controller.flowState == .placingHole)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+
+            VStack(spacing: 0) {
+                scanTopChrome
+                    .padding(.horizontal, OSDTopChromeMetrics.horizontalPadding)
+                    .padding(.top, OSDTopChromeMetrics.topPadding)
+
+                if showsCoverageUI {
+                    coverageBanner
+                        .padding(.horizontal, 14)
+                        .padding(.top, 8)
+                }
+
+                if let message = controller.placementMessage {
+                    Text(message)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(8)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 14)
+                        .padding(.top, 8)
+                }
+
+                Spacer(minLength: 0)
+
+                Group {
+                    if controller.flowState == .idle {
+                        idleOnboardCard
+                    } else if controller.flowState != .complete {
+                        scanBottomPanel
+                    }
+                }
+                .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
+                .padding(.bottom, OSDTopChromeMetrics.floatingCardBottomPadding)
+            }
+        }
+    }
+
+    private var scanTopChrome: some View {
+        OSDHeaderBar {
+            if showsCoverageUI || controller.flowState != .idle {
+                OSDStatusPill(
+                    isHealthy: !controller.trackingLimited,
+                    title: trackingTitle,
+                    subtitle: "메시 \(controller.meshVertexCount.formatted())점"
+                )
+            } else {
+                Color.clear.frame(width: 1, height: 1)
+            }
+        } trailing: {
+            OSDGearButton { showSettings = true }
+        }
+    }
+
+    private var trackingTitle: String {
+        switch controller.flowState {
+        case .idle:
+            return "대기"
+        default:
+            return "트래킹 스캔 중"
+        }
+    }
+
+    @ViewBuilder
+    private var scanBottomPanel: some View {
+        switch controller.flowState {
+        case .preparing:
+            OSDOnboardCard {
+                ProgressView("LiDAR와 AR 트래킹 준비 중…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .placingBall:
+            OSDOnboardCard {
+                stepPanel(
+                    step: "STEP 1 / 2",
+                    title: "볼을 지정하세요",
+                    body: controller.meshReady
+                        ? "십자선을 실제 볼 중심에 맞춘 뒤 버튼을 누르세요."
+                        : "바닥(볼 주변)을 향해 천천히 좌우로 비추세요. 가까운 지면 메시가 쌓이면 지정할 수 있습니다.",
+                    button: controller.meshReady ? "볼 지정" : "메시 준비 중…",
+                    action: controller.requestBallPlacement,
+                    enabled: controller.meshReady
+                ) {
+                    if !controller.meshReady {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(OSDPalette.accent)
+                            Text("메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(OSDPalette.textSecondary)
+                        }
+                    }
+                    referenceStatusCompact
+                }
+            }
+        case .walkingToHole:
+            OSDOnboardCard {
+                stepPanel(
+                    step: "STEP 2 / 2",
+                    title: "홀까지 스캔하세요",
+                    body: "바닥 메시가 이어지도록 천천히 홀까지 걸어가세요.",
+                    button: "홀 도착 · 홀 지정",
+                    action: controller.beginHolePlacement
+                ) {
+                    referenceStatusCompact
+                }
+            }
+        case .placingHole:
+            OSDOnboardCard {
+                stepPanel(
+                    step: "STEP 2 / 2",
+                    title: "홀을 지정하세요",
+                    body: controller.pathMode == .oneWay
+                        ? "십자선을 홀컵 중심에 맞춘 뒤 지정하세요. 편도 모드라 지정 직후 바로 계산합니다."
+                        : "십자선을 실제 홀컵 중심에 맞춘 뒤 버튼을 누르세요.",
+                    button: controller.pathMode == .oneWay ? "홀 지정 · 바로 계산" : "홀 기준점 지정",
+                    action: controller.requestHolePlacement
+                ) {
+                    referenceStatusCompact
+                }
+            }
+        case .returningToBall:
+            OSDOnboardCard {
+                stepPanel(
+                    step: nil,
+                    title: "볼로 복귀",
+                    body: "같은 경로를 따라 돌아온 뒤 스캔을 종료하세요. 왕복으로 드리프트를 보정합니다.",
+                    button: "스캔 종료 · 추천 계산",
+                    action: controller.finishScan
+                ) {
+                    referenceStatusCompact
+                }
+            }
+        case .processing:
+            OSDOnboardCard {
+                ProgressView("5cm 높이맵 처리 중…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .failed(let message):
+            OSDOnboardCard {
+                stepPanel(
+                    step: nil,
+                    title: "스캔 실패",
+                    body: message,
+                    button: "처음부터 다시",
+                    action: controller.reset
+                ) {
+                    EmptyView()
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private var idleOnboardCard: some View {
+        OSDOnboardCard {
+            Text("볼과 홀컵 사이의 그린을 스캔하면\n퍼팅 경로를 안내합니다.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(OSDPalette.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+            OSDPrimaryButton(title: "스캔 시작") {
+                controller.startScan()
+            }
+            if let exportError {
+                Text(exportError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepPanel<Extra: View>(
+        step: String?,
+        title: String,
+        body bodyText: String,
+        button buttonTitle: String,
+        action: @escaping () -> Void,
+        enabled: Bool = true,
+        @ViewBuilder extra: () -> Extra
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OSDStepHeader(step: step, title: title, bodyText: bodyText)
+            extra()
+            OSDPrimaryButton(title: buttonTitle, enabled: enabled, action: action)
+            if controller.trackingLimited {
+                Text("천천히 움직이고 잔디의 특징이 보이도록 카메라 방향을 조정하세요.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(OSDPalette.accent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var referenceStatusCompact: some View {
+        if controller.ballAnchor != nil || controller.holeAnchor != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let ball = controller.ballAnchor {
+                    Text(String(format: "볼 (%.2f, %.2f, %.2f)", ball.worldX, ball.worldY, ball.worldZ))
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(OSDPalette.textTertiary)
+                        .monospacedDigit()
+                }
+                if let hole = controller.holeAnchor {
+                    Text(String(format: "홀 (%.2f, %.2f, %.2f)", hole.worldX, hole.worldY, hole.worldZ))
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(OSDPalette.textTertiary)
+                        .monospacedDigit()
+                }
+                if let distance = controller.currentHoleDistance {
+                    Text(String(format: "볼→홀 %.2fm", distance))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                        .monospacedDigit()
+                }
+            }
         }
     }
 
@@ -146,37 +319,6 @@ struct ScanFlowView: View {
         }
     }
 
-    private var trackingHeader: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Circle()
-                    .fill(controller.trackingLimited ? .orange : .green)
-                    .frame(width: 10, height: 10)
-                Text("트래킹 \(controller.trackingDescription)")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Button {
-                    showPerformanceSettings = true
-                } label: {
-                    Image(systemName: "thermometer.medium")
-                }
-                .accessibilityLabel("성능·발열 설정")
-                Text("메시 \(controller.meshVertexCount.formatted())점")
-                    .font(.caption.monospacedDigit())
-            }
-            if controller.trackingLimited {
-                Text("천천히 움직이고 잔디의 특징이 보이도록 카메라 방향을 조정하세요.")
-                    .font(.caption)
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(8)
-                    .background(.orange, in: RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-
     private var coverageBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
@@ -192,7 +334,7 @@ struct ScanFlowView: View {
                 .font(.caption.monospacedDigit().weight(.semibold))
 
             ProgressView(value: controller.coverageSnapshot.stableRatio)
-                .tint(.white)
+                .tint(OSDPalette.accent)
 
             Text(controller.coverageQualityMessage)
                 .font(.caption2)
@@ -200,209 +342,8 @@ struct ScanFlowView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    @ViewBuilder
-    private var referenceStatusBanner: some View {
-        if controller.ballAnchor != nil || controller.holeAnchor != nil {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("기준점: AR 지면 raycast (카메라 위치 아님)")
-                    .font(.caption2.weight(.semibold))
-                if let ball = controller.ballAnchor {
-                    Text(
-                        String(
-                            format: "볼 (%.2f, %.2f, %.2f)",
-                            ball.worldX, ball.worldY, ball.worldZ
-                        )
-                    )
-                    .font(.caption2.monospacedDigit())
-                }
-                if let hole = controller.holeAnchor {
-                    Text(
-                        String(
-                            format: "홀 (%.2f, %.2f, %.2f)",
-                            hole.worldX, hole.worldY, hole.worldZ
-                        )
-                    )
-                    .font(.caption2.monospacedDigit())
-                }
-                if let distance = controller.currentHoleDistance {
-                    Text(String(format: "볼→홀 %.2f m", distance))
-                        .font(.caption.weight(.semibold))
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
-    @ViewBuilder
-    private var flowPanel: some View {
-        switch controller.flowState {
-        case .idle:
-            instructionPanel(
-                title: "볼·홀 기준점 스캔",
-                message: "실제 볼과 홀컵 중심에 화면 중앙 십자선을 맞춰 지정합니다. 카메라 위치가 아니라 지면 좌표가 기준입니다.",
-                buttonTitle: "스캔 시작",
-                action: {
-                    // 버튼 하이라이트가 먼저 그려진 뒤 시작 (체감 응답성)
-                    Task { @MainActor in
-                        await Task.yield()
-                        controller.startScan()
-                    }
-                }
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("재측정(왕복 고정)", isOn: $controller.gate1RetestLockRoundTrip)
-                        .font(.caption.weight(.semibold))
-                    if controller.gate1RetestLockRoundTrip {
-                        Text("게이트1 전체 스택 재측정 모드 — 편도 회차는 시작할 수 없습니다. path_mode=roundTrip만 기록됩니다.")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-
-                    Text("스캔 경로")
-                        .font(.caption.weight(.semibold))
-                    Picker("스캔 경로", selection: $controller.pathMode) {
-                        ForEach(ScanPathMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(controller.gate1RetestLockRoundTrip)
-                    Text(controller.pathMode.detail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Text("스무딩 σ: \(controller.sigma, specifier: "%.2f")셀")
-                        .font(.caption)
-                    Slider(value: $controller.sigma, in: 0.5...3, step: 0.25)
-
-                    Button(role: .destructive) {
-                        showClearHistoryConfirmation = true
-                    } label: {
-                        Label("저장된 스캔 기록 초기화", systemImage: "trash")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    if let exportError {
-                        Text(exportError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-            }
-        case .preparing:
-            // 레거시 경로 — startScan은 바로 placingBall로 감
-            ProgressView("LiDAR와 AR 트래킹 준비 중…")
-                .padding(24)
-                .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        case .placingBall:
-            instructionPanel(
-                title: "1. 볼 기준점 지정",
-                message: controller.meshReady
-                    ? "십자선을 실제 골프공 중심에 맞춘 뒤 버튼을 누르세요. 흰 구 마커가 그 지점에 고정됩니다."
-                    : "바닥(볼 주변)을 향해 천천히 좌우로 비추세요. 가까운 지면 메시가 쌓이면 지정할 수 있습니다.",
-                buttonTitle: controller.meshReady ? "볼 기준점 지정" : "메시 준비 중…",
-                action: controller.requestBallPlacement,
-                enabled: controller.meshReady
-            ) {
-                if !controller.meshReady {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        case .walkingToHole:
-            instructionPanel(
-                title: "2. 홀까지 스캔",
-                message: "바닥 메시가 이어지도록 천천히 홀까지 걸어가세요. 도착하면 홀컵을 지정합니다.",
-                buttonTitle: "홀에 도착 · 홀 지정으로",
-                action: controller.beginHolePlacement
-            )
-        case .placingHole:
-            instructionPanel(
-                title: "3. 홀 기준점 지정",
-                message: controller.pathMode == .oneWay
-                    ? "십자선을 홀컵 중심에 맞춘 뒤 지정하세요. 편도 모드라 지정 직후 바로 계산합니다(드리프트 미보정)."
-                    : "십자선을 실제 홀컵 중심에 맞춘 뒤 버튼을 누르세요. 깃대 마커가 고정됩니다.",
-                buttonTitle: controller.pathMode == .oneWay
-                    ? "홀 지정 · 바로 계산"
-                    : "홀 기준점 지정",
-                action: controller.requestHolePlacement
-            )
-        case .returningToBall:
-            instructionPanel(
-                title: "4. 볼로 복귀",
-                message: "같은 경로를 따라 돌아온 뒤 스캔을 종료하세요. 왕복으로 드리프트를 보정합니다.",
-                buttonTitle: "스캔 종료 · 추천 계산",
-                action: controller.finishScan
-            )
-        case .processing:
-            ProgressView("5cm 높이맵 처리 중…")
-                .padding(24)
-                .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        case .complete:
-            EmptyView()
-        case .failed(let message):
-            instructionPanel(
-                title: "스캔 실패",
-                message: message,
-                buttonTitle: "처음부터 다시",
-                action: controller.reset
-            )
-        }
-    }
-
-    private func instructionPanel<Content: View>(
-        title: String,
-        message: String,
-        buttonTitle: String,
-        action: @escaping () -> Void,
-        enabled: Bool = true,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.title3.bold())
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            content()
-            Button(buttonTitle, action: action)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-                .disabled(!enabled)
-        }
-        .padding(18)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private func instructionPanel(
-        title: String,
-        message: String,
-        buttonTitle: String,
-        action: @escaping () -> Void,
-        enabled: Bool = true
-    ) -> some View {
-        instructionPanel(
-            title: title,
-            message: message,
-            buttonTitle: buttonTitle,
-            action: action,
-            enabled: enabled
-        ) {
-            EmptyView()
-        }
+        .background(OSDPalette.glassStrong, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
     }
 
     private var selectedRegion: PuttPhysicsKit.NormalizedRegion {
@@ -415,7 +356,6 @@ struct ScanFlowView: View {
         )
     }
 
-    /// 설정이 켜져 있을 때만 최대 밝기. 기본은 off.
     private func applyBrightnessPolicy() {
         if PerformanceSettings.forceMaxBrightness {
             forceMaxBrightness()
@@ -463,54 +403,6 @@ struct ScanFlowView: View {
     }
 }
 
-// MARK: - Gate 6 shadow overlay (표시 전용)
-
-private struct Gate6ShadowOverlay: View {
-    let observation: Gate6ShadowObservation
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(Array(observation.displayCandidates.enumerated()), id: \.offset) { _, candidate in
-                    Circle()
-                        .strokeBorder(
-                            candidate.depthAccepted ? Color.cyan : Color.yellow.opacity(0.85),
-                            lineWidth: candidate.depthAccepted ? 2.5 : 1.5
-                        )
-                        .frame(
-                            width: max(22, candidate.radiusNorm * geo.size.width * 2.8),
-                            height: max(22, candidate.radiusNorm * geo.size.width * 2.8)
-                        )
-                        .position(
-                            x: candidate.viewNormalizedX * geo.size.width,
-                            y: candidate.viewNormalizedY * geo.size.height
-                        )
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-// MARK: - Reticle
-
-private struct CenterReticle: View {
-    var body: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(Color.green.opacity(0.9), lineWidth: 2)
-                .frame(width: 44, height: 44)
-            Rectangle()
-                .fill(Color.green.opacity(0.9))
-                .frame(width: 2, height: 28)
-            Rectangle()
-                .fill(Color.green.opacity(0.9))
-                .frame(width: 28, height: 2)
-        }
-        .shadow(color: .black.opacity(0.5), radius: 2)
-    }
-}
-
 // MARK: - AR view with raycast + markers
 
 private struct PlacementARView: UIViewRepresentable {
@@ -525,6 +417,10 @@ private struct PlacementARView: UIViewRepresentable {
         view.renderOptions.insert(.disableGroundingShadows)
         context.coordinator.arView = view
         context.coordinator.attachDisplayLink(controller: controller)
+        // 머티리얼 셰이더를 미리 컴파일 — 첫 메시 표시 히칭 제거.
+        context.coordinator.brightMesh.prewarmRenderPipelines(in: view)
+        // ARView에 session이 붙은 직후 워밍업(onAppear보다 앞서 cold start 단축).
+        controller.prewarmSession()
         return view
     }
 
@@ -532,9 +428,19 @@ private struct PlacementARView: UIViewRepresentable {
         context.coordinator.arView = uiView
         context.coordinator.controller = controller
         context.coordinator.lineWidthPixels = 2
-        // 메시 시각화는 LiDAR 가동 직후 유예 뒤 (시작 버튼 행업 완화)
         if controller.meshVisualizationAllowed {
+            let wasVisible = context.coordinator.meshEnabled && !context.coordinator.meshHidden
             context.coordinator.meshEnabled = true
+            context.coordinator.meshHidden = false
+            if !wasVisible {
+                // 워밍업으로 이미 빌드된 지오메트리를 다음 틱을 기다리지 않고 즉시 공개.
+                context.coordinator.revealMeshNow(in: uiView)
+            }
+        } else if controller.meshWarmupActive {
+            // idle: 화면에는 숨기고 지오메트리만 미리 빌드 (스캔 시작 시 즉시 표시).
+            context.coordinator.meshEnabled = true
+            context.coordinator.meshHidden = true
+            context.coordinator.brightMesh.contentHidden = true
         } else {
             context.coordinator.meshEnabled = false
             context.coordinator.brightMesh.setEnabled(false, in: uiView)
@@ -546,7 +452,6 @@ private struct PlacementARView: UIViewRepresentable {
             hole: controller.holeAnchor
         )
         if let request = controller.placementRequest {
-            // updateUIView 사이클 밖에서 raycast → @Published 갱신
             let coordinator = context.coordinator
             let sessionController = controller
             DispatchQueue.main.async {
@@ -582,9 +487,11 @@ private struct PlacementARView: UIViewRepresentable {
         weak var arView: ARView?
         weak var controller: ARScanSessionController?
         var meshEnabled = false
+        var meshHidden = false
         var lineWidthPixels: Float = 2
         private var displayLink: CADisplayLink?
         private var lastMeshTick: CFTimeInterval = 0
+        private var burstRateApplied = false
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?
         private var ballARAnchor: ARAnchor?
@@ -605,17 +512,40 @@ private struct PlacementARView: UIViewRepresentable {
             displayLink = nil
         }
 
+        /// 스캔 시작 순간 — 워밍업된 지오메트리를 즉시 공개하고 첫 빌드도 바로 스케줄.
+        func revealMeshNow(in view: ARView) {
+            brightMesh.setEnabled(true, in: view)
+            brightMesh.contentHidden = false
+            brightMesh.lineWidthPixels = lineWidthPixels
+            brightMesh.burstMode = controller?.meshCaptureBurstActive ?? true
+            if let controller {
+                brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
+            }
+            brightMesh.update(in: view)
+            lastMeshTick = CACurrentMediaTime()
+        }
+
         @objc private func onDisplayLink(_ link: CADisplayLink) {
             guard meshEnabled, let controller, let view = arView else { return }
-            guard link.timestamp - lastMeshTick >= 0.08 else { return }
+            let burst = controller.meshCaptureBurstActive && !meshHidden
+            if burst != burstRateApplied {
+                link.preferredFrameRateRange = burst
+                    ? CAFrameRateRange(minimum: 15, maximum: 30, preferred: 24)
+                    : CAFrameRateRange(minimum: 8, maximum: 15, preferred: 12)
+                burstRateApplied = burst
+            }
+            // 숨김 워밍업은 여유 있게, 첫 공개 burst는 촘촘히 갱신.
+            let tickInterval: TimeInterval = meshHidden ? 0.12 : (burst ? 0.04 : 0.08)
+            guard link.timestamp - lastMeshTick >= tickInterval else { return }
             lastMeshTick = link.timestamp
             brightMesh.setEnabled(true, in: view)
+            brightMesh.contentHidden = meshHidden
             brightMesh.lineWidthPixels = lineWidthPixels
+            brightMesh.burstMode = burst
             brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
             brightMesh.update(in: view)
         }
 
-        /// 지정 위치에 한 번만 고정. 매 프레임 좌표를 덮어쓰지 않아 카메라 따라가지 않음.
         func syncMarkers(
             in view: ARView,
             session: ARSession,
@@ -672,13 +602,11 @@ private struct PlacementARView: UIViewRepresentable {
             kind: PlacementKind,
             controller: ARScanSessionController
         ) {
-            // 같은 요청을 updateUIView마다 반복 처리하지 않음
             guard lastHandledRequest != kind else { return }
             lastHandledRequest = kind
 
             let center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
             guard view.bounds.width > 1, view.bounds.height > 1 else {
-                // 레이아웃 전이 — 다음 프레임에서 재시도
                 lastHandledRequest = nil
                 return
             }
@@ -699,7 +627,6 @@ private struct PlacementARView: UIViewRepresentable {
                 )
                 lastHandledRequest = nil
             } else {
-                // existingPlane / mesh 재시도
                 let meshResults = view.raycast(
                     from: center,
                     allowing: .existingPlaneGeometry,

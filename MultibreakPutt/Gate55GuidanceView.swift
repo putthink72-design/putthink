@@ -35,33 +35,132 @@ enum GreenSurfaceVizMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// X 좌우 편차 부호 — 키패드 마이너스 대신 탭으로 선택.
+private enum MeasuredXLateral: String, CaseIterable, Identifiable {
+    case left
+    case center
+    case right
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .left: return "←"
+        case .center: return "·"
+        case .right: return "→"
+        }
+    }
+
+    func signedMagnitude(_ magnitude: Double) -> Double {
+        switch self {
+        case .left: return -abs(magnitude)
+        case .center: return 0
+        case .right: return abs(magnitude)
+        }
+    }
+}
+
+/// Y 직선 편차 부호 — ↓ 짧음 · 정확 · ↑ 김.
+private enum MeasuredYAlong: String, CaseIterable, Identifiable {
+    case short
+    case onLine
+    case long
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .short: return "↓"
+        case .onLine: return "·"
+        case .long: return "↑"
+        }
+    }
+
+    func adjustedHoleDistance(holeDistance: Double, centimeters: Int) -> Double {
+        let meters = Double(max(centimeters, 0)) / 100.0
+        switch self {
+        case .short: return holeDistance - meters
+        case .onLine: return holeDistance
+        case .long: return holeDistance + meters
+        }
+    }
+}
+
+/// 현장 퍼팅 후 주관적 경로 일치도 (궤적 자동 추적 없음).
+private enum FieldPuttPathMatch: String, CaseIterable, Identifiable {
+    case similar
+    case fair
+    case different
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .similar: return "경로 유사"
+        case .fair: return "대체로"
+        case .different: return "다름"
+        }
+    }
+}
+
+/// 현장 퍼팅 cm 입력 대상.
+private enum FieldCmPadTarget {
+    case x
+    case y
+}
+
 struct Gate55GuidanceView: View {
     @ObservedObject var controller: ARScanSessionController
     @StateObject private var model = Gate55GuidanceModel()
     @State private var showDiagnostics = false
     @State private var runID = ""
-    @State private var executedBetaText = ""
-    @State private var measuredStopX = ""
-    @State private var measuredStopY = ""
-    @State private var rampHeightCM = "10"
-    @State private var measuredV0 = ""
+    @State private var measuredXLateral: MeasuredXLateral = .center
+    @State private var measuredStopXcm = ""
+    @State private var measuredYAlong: MeasuredYAlong = .onLine
+    @State private var measuredStopYcm = ""
+    @State private var fieldHoleIn = false
+    @State private var fieldPathMatch: FieldPuttPathMatch = .similar
     @State private var recordMessage: String?
     @State private var aimRevision = 0
     @State private var greenVizMode: GreenSurfaceVizMode = .contours
     @State private var showPerformanceSettings = false
-    @AppStorage(PerformanceSettings.aimCalcDistanceFloorKey)
-    private var aimCalcDistanceFloorRaw: Double = AimCalcDistanceFloor.cm30.rawValue
+    @State private var osdScrollAnchor: String?
+    @State private var activeCmPad: FieldCmPadTarget?
+    @State private var cmPadMounted = false
+    @State private var floorAddressMode = false
 
     var body: some View {
-        GeometryReader { geo in
+        guidanceRoot
+    }
+
+    private var guidanceRoot: some View {
+        ZStack(alignment: .top) {
+            arPanel
+                .ignoresSafeArea()
+
             VStack(spacing: 0) {
-                arPanel(height: geo.size.height * 0.5)
-                infoPanel
-                    .frame(height: geo.size.height * 0.5)
+                if !floorAddressMode {
+                    guidanceTopChrome
+                        .padding(.horizontal, OSDTopChromeMetrics.horizontalPadding)
+                        .padding(.top, OSDTopChromeMetrics.topPadding)
+                }
+
+                Spacer(minLength: 0)
+
+                if floorAddressMode {
+                    floorAddressBottomOSD
+                } else {
+                    guidanceBottomStack
+                }
             }
+        }
+        .overlay(alignment: .bottom) {
+            cmNumberPadOverlay
         }
         .preferredColorScheme(.dark)
         .onAppear {
+            cmPadMounted = true
+            OSDDoneTextField.prewarmAccessoryBar()
             if runID.isEmpty {
                 runID = defaultRunID()
             }
@@ -104,12 +203,26 @@ struct Gate55GuidanceView: View {
             }
         }
         .sheet(isPresented: $showPerformanceSettings) {
-            PerformanceSettingsView()
+            AppSettingsSheet(
+                mode: .guidance,
+                controller: controller,
+                guidanceModel: model,
+                onAimSettingsChanged: {
+                    aimRevision += 1
+                }
+            )
         }
     }
 
+    private var floorAddressBottomOSD: some View {
+        guidanceBottomOSD
+            .osdKeyboardAdaptive()
+            .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
+            .padding(.bottom, guidanceBottomPadding)
+    }
+
     @ViewBuilder
-    private func arPanel(height: CGFloat) -> some View {
+    private var arPanel: some View {
         ZStack(alignment: .topLeading) {
             Gate55ARAimView(
                 controller: controller,
@@ -118,18 +231,17 @@ struct Gate55GuidanceView: View {
                 visible: model.hasAimLine,
                 revision: aimRevision,
                 trajectorySamples: trajectorySamplesForAR,
-                greenVizMode: greenVizMode
+                greenVizMode: greenVizMode,
+                floorAddressMode: $floorAddressMode
             )
-            .frame(height: height)
+            .id("gate55-guidance-ar")
 
             if controller.placementRequest == .reanchorHole {
-                CenterReticleOverlay()
+                OSDAmberReticle(dashedRing: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
-
-            arChromeOverlay(height: height)
         }
-        .frame(height: height)
     }
 
     private var trajectorySamplesForAR: [TrajectorySample] {
@@ -138,58 +250,198 @@ struct Gate55GuidanceView: View {
             ?? []
     }
 
-    @ViewBuilder
-    private func arChromeOverlay(height: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                arStatusStack
-                    .allowsHitTesting(false)
-                Spacer(minLength: 8)
-                GreenVizModePicker(selection: $greenVizMode)
-            }
-            .padding(10)
-
-            Spacer(minLength: 0)
-                .allowsHitTesting(false)
-
-            Text(greenVizMode.hint)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.black.opacity(0.4), in: Capsule())
-                .padding(.bottom, 10)
-                .allowsHitTesting(false)
-        }
-        .frame(height: height)
-    }
-
-    @ViewBuilder
-    private var arStatusStack: some View {
+    private var guidanceTopChrome: some View {
         VStack(alignment: .leading, spacing: 6) {
-            trackingBadge
+            HStack(alignment: .center, spacing: 8) {
+                OSDStatusPill(
+                    isHealthy: controller.guidanceTrackingOK && !controller.trackingLimited,
+                    title: "조준 중",
+                    subtitle: statusSubtitle
+                )
+
+                Spacer(minLength: 4)
+
+                OSDGearButton { showPerformanceSettings = true }
+            }
+
             if let banner = model.thermalLevel.statusBanner {
                 Text(banner)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(OSDPalette.accentInk)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.orange.opacity(0.9), in: Capsule())
+                    .background(OSDPalette.accent.opacity(0.9), in: Capsule())
             }
+        }
+    }
+
+    private var statusSubtitle: String? {
+        var parts: [String] = []
+        if let scan = controller.completedScan {
+            parts.append(String(format: "볼→홀 %.1fm", scan.holeDistance))
+            parts.append(scan.driftCorrected ? "왕복" : "편도")
+        }
+        if !controller.guidanceTrackingOK || controller.trackingLimited {
+            parts.append("limited")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var guidanceBottomStack: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Spacer(minLength: 0)
+                Button(action: controller.reset) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("새 스캔")
+                            .font(.system(size: 15, weight: .heavy))
+                    }
+                    .foregroundStyle(OSDPalette.accentInk)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background {
+                        LinearGradient(
+                            colors: [OSDPalette.accent, Color(red: 229 / 255, green: 150 / 255, blue: 15 / 255)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+                    .shadow(color: OSDPalette.accent.opacity(0.55), radius: 10, y: 4)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .frame(minWidth: 80, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            HStack {
+                Spacer(minLength: 0)
+                GreenVizModePicker(selection: $greenVizMode)
+            }
+            guidanceBottomOSD
+        }
+        .osdKeyboardAdaptive()
+        .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
+        .padding(.bottom, guidanceBottomPadding)
+    }
+
+    private var guidanceBottomPadding: CGFloat {
+        let base = OSDTopChromeMetrics.floatingCardBottomPadding
+        if activeCmPad != nil {
+            return base + OSDInlineNumberPad.height
+        }
+        return base
+    }
+
+    @ViewBuilder
+    private var cmNumberPadOverlay: some View {
+        if cmPadMounted {
+            OSDInlineNumberPad(
+                onDigit: appendCmDigit,
+                onDelete: deleteCmDigit,
+                onDone: { activeCmPad = nil }
+            )
+            .opacity(activeCmPad == nil ? 0 : 1)
+            .allowsHitTesting(activeCmPad != nil)
+            .animation(nil, value: activeCmPad)
+            .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
+            .padding(.bottom, OSDTopChromeMetrics.floatingCardBottomPadding)
+        }
+    }
+
+    private var guidanceBottomOSD: some View {
+        OSDFloatingScrollCard(maxHeight: 320, scrollToID: osdScrollAnchor) {
+            VStack(alignment: .leading, spacing: 14) {
+                if model.isComputing {
+                    ProgressView("계산 중…")
+                        .tint(OSDPalette.accent)
+                } else {
+                    recommendationSection
+                    OSDSectionDivider()
+                    speedCorridorSection
+                }
+
+                OSDSectionDivider()
+                advancedPanelContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var recommendationSection: some View {
+        if let rec = model.recommendation, rec.primary != nil {
+            OSDAimReadout(
+                horizontalDistance: rec.horizontalDistance,
+                flatEquivalentDistance: rec.flatEquivalentDistance,
+                distanceAdjustment: rec.distanceAdjustment,
+                elevationDelta: rec.elevationDelta,
+                directionDegrees: rec.directionDegrees,
+                strokeGuidance: rec.strokeGuidance,
+                detailLines: [
+                    String(format: "v0 %.2f m/s · β %+.1f°", rec.initialVelocity, rec.directionDegrees),
+                    String(
+                        format: "정지 (%.2f, %.2f) · 오버런 %.2fm",
+                        rec.stopPosition.x,
+                        rec.stopPosition.y,
+                        rec.overrunDistance
+                    )
+                ]
+            )
+
+            if abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8 {
+                Text("평탄한 면인데 |β|가 큽니다. 라이다 노이즈 가능성 — 볼·홀을 다시 지정하거나 조명을 바꿔 재스캔하세요.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(OSDPalette.accent.opacity(0.9))
+            }
+        } else {
+            Text("후보 없음 — 그린스피드나 볼·홀 배치를 확인하세요.")
+                .font(.system(size: 13))
+                .foregroundStyle(OSDPalette.accent)
+        }
+    }
+
+    @ViewBuilder
+    private var advancedPanelContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("게이트 5.5 조준")
+                    .font(.headline)
+                Spacer()
+                Button("진단") { showDiagnostics = true }
+                    .font(.caption)
+                    .foregroundStyle(OSDPalette.accent)
+            }
+
+            Text(greenVizMode.hint)
+                .font(.caption2)
+                .foregroundStyle(OSDPalette.textTertiary)
+
             if let scan = controller.completedScan {
                 Text(scanStatusText(scan))
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(.black.opacity(0.45), in: Capsule())
+                    .font(.caption2)
+                    .foregroundStyle(OSDPalette.textSecondary)
             }
+
             if let message = controller.placementMessage {
                 Text(message)
                     .font(.caption2)
-                    .padding(6)
-                    .background(.blue.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
+                    .foregroundStyle(OSDPalette.textSecondary)
+            }
+
+            OSDSectionDivider()
+            fieldPuttSection
+
+            if let recordMessage {
+                Text(recordMessage)
+                    .font(.caption2)
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .textSelection(.enabled)
             }
         }
+        .padding(.top, 4)
     }
 
     private func scanStatusText(_ scan: CompletedScan) -> String {
@@ -200,307 +452,16 @@ struct Gate55GuidanceView: View {
         )
     }
 
-    private var trackingBadge: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(controller.trackingLimited ? Color.orange : Color.green)
-                .frame(width: 8, height: 8)
-            Text(controller.trackingDescription)
-                .font(.caption.weight(.semibold))
-            if !controller.guidanceTrackingOK {
-                Text("· 조준중 limited")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    private var infoPanel: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                // AR 바로 아래 첫 UI: 실거리·나침반 → Speed Corridor
-                if model.isComputing {
-                    ProgressView("계산 중…")
-                } else {
-                    recommendationCard
-                    speedCorridorSection
-                }
-
-                HStack {
-                    Text("게이트 5.5 조준")
-                        .font(.headline)
-                    Spacer()
-                    Button {
-                        showPerformanceSettings = true
-                    } label: {
-                        Image(systemName: "thermometer.medium")
-                    }
-                    .font(.caption)
-                    .accessibilityLabel("성능·발열 설정")
-                    Button("진단") { showDiagnostics = true }
-                        .font(.caption)
-                    Button("새 스캔", action: controller.reset)
-                        .font(.caption)
-                }
-
-                aimProximityFloorSection
-
-                if let rec = model.recommendation, rec.primary != nil,
-                   abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8 {
-                    Text("평탄한 면인데 |β|가 큽니다. 라이다 노이즈 가능성 — 볼·홀을 다시 지정하거나 조명을 바꿔 재스캔하세요.")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("AR 우측 상단에서 등고선 / 격자·흐름을 전환 · 회색 0° · 녹색 경로 · 흰 조준")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Divider()
-
-                greenSpeedSection
-
-                Divider()
-                experimentSection
-
-                Button("홀 재앵커링 (중앙 조준)") {
-                    controller.requestHoleReanchor()
-                }
-                .buttonStyle(.bordered)
-                .font(.caption)
-
-                if let recordMessage {
-                    Text(recordMessage)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-            .padding(14)
-        }
-        .background(.ultraThinMaterial)
-    }
-
-    private var aimProximityFloorSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("조준 근접 하한")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text(String(format: "%.0f cm", aimCalcDistanceFloorRaw * 100))
-                    .font(.caption.monospacedDigit().weight(.semibold))
-            }
-
-            HStack(spacing: 4) {
-                ForEach(AimCalcDistanceFloor.allCases) { floor in
-                    let selected = abs(aimCalcDistanceFloorRaw - floor.rawValue) < 0.01
-                    Button(floor.label) {
-                        aimCalcDistanceFloorRaw = floor.rawValue
-                        PerformanceSettings.notifyDidChange()
-                        aimRevision += 1
-                    }
-                    .font(.caption2.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(
-                        selected ? Color.orange.opacity(0.5) : Color.white.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 7)
-                    )
-                    .foregroundStyle(.white)
-                }
-            }
-
-            Slider(
-                value: $aimCalcDistanceFloorRaw,
-                in: 0.15...0.60,
-                step: 0.05
-            ) { editing in
-                if !editing {
-                    PerformanceSettings.notifyDidChange()
-                    aimRevision += 1
-                }
-            }
-            Text("가까이 갈수록 퍼팅선을 볼 아래(지면 쪽)로 내립니다. 굵기는 고정입니다. 기본 30cm.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(8)
-        .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var greenSpeedSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("그린스피드")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(String(format: "%.1f m", model.greenSpeed))
-                    .font(.caption.monospacedDigit().weight(.semibold))
-            }
-
-            HStack(spacing: 6) {
-                ForEach(Gate55GuidanceModel.greenSpeedPresets, id: \.self) { preset in
-                    let selected = abs(model.greenSpeed - preset) < 0.05
-                    Button(String(format: "%.1f", preset)) {
-                        model.setGreenSpeed(preset)
-                    }
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(
-                        selected ? Color.green.opacity(0.45) : Color.white.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 8)
-                    )
-                    .foregroundStyle(.white)
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    model.nudgeGreenSpeed(-0.1)
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.title3)
-                }
-                .disabled(model.isComputing || model.greenSpeed <= 1.5)
-
-                Text("±0.1 m")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    model.nudgeGreenSpeed(0.1)
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                }
-                .disabled(model.isComputing || model.greenSpeed >= 4.0)
-
-                Spacer()
-            }
-        }
-    }
-
-    @ViewBuilder
     private var speedCorridorSection: some View {
-        let count = model.corridorCandidateCount
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Speed Corridor")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                if count >= 1, let rec = model.recommendation {
-                    Text(
-                        String(
-                            format: "오버런 %.2fm · %d/%d",
-                            rec.overrunDistance,
-                            min(model.corridorIndex + 1, count),
-                            count
-                        )
-                    )
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack {
-                Text("안전")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if count <= 1 {
-                    Slider(value: .constant(0), in: 0...1)
-                        .disabled(true)
-                        .opacity(0.45)
-                } else {
-                    Slider(
-                        value: Binding(
-                            get: { Double(model.corridorIndex) },
-                            set: { model.selectCorridorIndex(Int($0.rounded())) }
-                        ),
-                        in: 0...Double(count - 1),
-                        step: 1
-                    )
-                    .disabled(model.isComputing || model.isApplyingCorridor)
-                }
-                Text("공격적")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if count <= 1 {
-                Text(count == 0 ? "후보 없음" : "이 그린은 후보가 1개뿐")
-                    .font(.caption2)
-                    .foregroundStyle(.orange.opacity(0.9))
-            }
-
-            Text(model.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private var recommendationCard: some View {
-        if let rec = model.recommendation, rec.primary != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(format: "실거리 %.1fm", rec.horizontalDistance))
-                            .font(.subheadline)
-                        Text("평지환산거리")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(String(format: "%.1f m", rec.flatEquivalentDistance))
-                            .font(.title.bold())
-                    }
-                    Spacer()
-                    DirectionCompass(degrees: rec.directionDegrees)
-                        .frame(width: 56, height: 56)
-                }
-
-                Text(adjustmentText(rec.distanceAdjustment))
-                    .font(.subheadline.weight(.medium))
-                Text(elevationText(rec.elevationDelta))
-                    .font(.subheadline)
-                Text(rec.strokeGuidance)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.green)
-
-                Divider()
-
-                Text(
-                    String(
-                        format: "v0 %.2f m/s · β %+.1f°",
-                        rec.initialVelocity,
-                        rec.directionDegrees
-                    )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                Text(
-                    String(
-                        format: "정지위치 (%.2f, %.2f) · 오버런 %.2fm",
-                        rec.stopPosition.x,
-                        rec.stopPosition.y,
-                        rec.overrunDistance
-                    )
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-            .padding(10)
-            .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
-        } else {
-            Text("후보 없음 — 그린스피드나 볼·홀 배치를 확인하세요.")
-                .font(.subheadline)
-                .foregroundStyle(.orange)
-        }
+        OSDSpeedCorridorSection(
+            corridorIndex: model.corridorIndex,
+            corridorCount: model.corridorCandidateCount,
+            overrunDistance: model.recommendation?.overrunDistance,
+            isComputing: model.isComputing,
+            isApplying: model.isApplyingCorridor,
+            statusMessage: model.statusMessage,
+            onSelectIndex: { model.selectCorridorIndex($0) }
+        )
     }
 
     private func forwardCard(_ result: Gate55ForwardResult) -> some View {
@@ -528,213 +489,239 @@ struct Gate55GuidanceView: View {
         .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var experimentSection: some View {
+    private var fieldPuttSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("실험 기록")
+            Text("현장 퍼팅 기록")
                 .font(.subheadline.bold())
 
-            TextField("run_id", text: $runID)
-                .textInputAutocapitalization(.never)
-                .font(.caption)
-
-            HStack {
-                TextField("실행 β(영상)", text: $executedBetaText)
-                    .keyboardType(.decimalPad)
-                    .font(.caption)
-                TextField("실측정지 X", text: $measuredStopX)
-                    .keyboardType(.decimalPad)
-                    .font(.caption)
-                TextField("실측정지 Y", text: $measuredStopY)
-                    .keyboardType(.decimalPad)
-                    .font(.caption)
-            }
-
-            HStack {
-                TextField("램프 cm", text: $rampHeightCM)
-                    .keyboardType(.decimalPad)
-                    .font(.caption)
-                TextField("실측 v0", text: $measuredV0)
-                    .keyboardType(.decimalPad)
-                    .font(.caption)
-            }
-
-            HStack {
-                Button("조준 스냅샷") { saveAimSnapshot() }
-                Button("실내 결과") { saveIndoorResult() }
-                Button("램프 캘리브") { saveRampCalibration() }
-            }
-            .buttonStyle(.bordered)
-            .font(.caption)
-
-            Button("경사 스팟체크 샘플 1점") { saveSlopeSpotSample() }
-                .buttonStyle(.bordered)
-                .font(.caption)
-        }
-    }
-
-    private func labeledNumber(_ title: String, value: Binding<Double>) -> some View {
-        HStack {
-            Text(title).font(.caption2)
-            TextField(
-                title,
-                value: value,
-                format: .number.precision(.fractionLength(2))
+            OSDDoneTextField(
+                text: $runID,
+                placeholder: "run_id (예: h3-putt1)",
+                keyboardType: .asciiCapable,
+                textAlignment: .natural,
+                onBeginEditing: scrollToFieldPuttInputs
             )
-            .keyboardType(.decimalPad)
-            .font(.caption)
-            .frame(width: 64)
+            .frame(height: 30)
+
+            Text("실측 cm 정수 (저장 시 m 변환). X=←·→, Y=↓·↑. β는 추천값 자동.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("X")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                        .frame(width: 10)
+
+                    Picker("X 부호", selection: $measuredXLateral) {
+                        ForEach(MeasuredXLateral.allCases) { lateral in
+                            Text(lateral.label).tag(lateral)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: measuredXLateral) { _, lateral in
+                        if lateral == .center {
+                            measuredStopXcm = ""
+                            if activeCmPad == .x { activeCmPad = nil }
+                        }
+                    }
+
+                    OSDCentimeterInput(
+                        digits: $measuredStopXcm,
+                        isEnabled: measuredXLateral != .center,
+                        isActive: activeCmPad == .x,
+                        onActivate: { activateCmPad(.x) }
+                    )
+                    .frame(width: 60, height: 32)
+                }
+                .frame(maxWidth: .infinity)
+
+                HStack(spacing: 4) {
+                    Text("Y")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                        .frame(width: 10)
+
+                    Picker("Y 부호", selection: $measuredYAlong) {
+                        ForEach(MeasuredYAlong.allCases) { along in
+                            Text(along.label).tag(along)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(fieldHoleIn)
+                    .onChange(of: measuredYAlong) { _, along in
+                        if along == .onLine {
+                            measuredStopYcm = ""
+                            if activeCmPad == .y { activeCmPad = nil }
+                        }
+                    }
+
+                    OSDCentimeterInput(
+                        digits: $measuredStopYcm,
+                        isEnabled: !fieldHoleIn && measuredYAlong != .onLine,
+                        isActive: activeCmPad == .y,
+                        onActivate: { activateCmPad(.y) }
+                    )
+                    .frame(width: 60, height: 32)
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            Picker("경로 일치", selection: $fieldPathMatch) {
+                ForEach(FieldPuttPathMatch.allCases) { match in
+                    Text(match.label).tag(match)
+                }
+            }
+            .pickerStyle(.segmented)
+            .tint(OSDPalette.accent)
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button {
+                    fieldHoleIn.toggle()
+                    if fieldHoleIn {
+                        measuredYAlong = .onLine
+                        measuredStopYcm = ""
+                        if activeCmPad == .y { activeCmPad = nil }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: fieldHoleIn ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("홀인")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(fieldHoleIn ? OSDPalette.accent : OSDPalette.textSecondary)
+                }
+                .buttonStyle(.plain)
+                Button("퍼팅 1회 저장") {
+                    activeCmPad = nil
+                    dismissPuttKeyboard()
+                    saveFieldPutt()
+                }
+                    .buttonStyle(.borderedProminent)
+                    .font(.caption)
+                    .tint(OSDPalette.accent)
+            }
         }
+        .id("fieldPutt")
+        .padding(.vertical, 4)
     }
 
-    private func saveAimSnapshot() {
+    private func saveFieldPutt() {
         guard let scan = controller.completedScan else { return }
-        let v0: Double
-        let beta: Double
-        if model.computeMode == .recommend, let rec = model.recommendation, rec.primary != nil {
-            v0 = rec.initialVelocity
-            beta = rec.directionDegrees
-        } else {
-            v0 = model.manualV0
-            beta = model.manualBeta
+        guard let rec = model.recommendation, rec.primary != nil else {
+            recordMessage = "추천 결과가 없습니다. 그린스피드·스캔을 확인하세요."
+            return
         }
+        guard fieldHoleIn || measuredYAlong == .onLine || parsedCentimeters(measuredStopYcm) != nil else {
+            recordMessage = "홀인이 아니면 ↓/↑ 와 cm를 입력하세요."
+            return
+        }
+
+        let mx = measuredXLateral.signedMagnitude(Double(parsedCentimeters(measuredStopXcm) ?? 0) / 100.0)
+        let my: Double
+        if fieldHoleIn {
+            my = scan.holeDistance
+        } else {
+            my = measuredYAlong.adjustedHoleDistance(
+                holeDistance: scan.holeDistance,
+                centimeters: parsedCentimeters(measuredStopYcm) ?? 0
+            )
+        }
+        let measured = PuttVector2(x: mx, y: my)
+
         do {
-            try Gate55ExperimentRecorder.writeAimSnapshot(
+            try Gate55ExperimentRecorder.appendFieldPuttResult(
                 scanID: scan.id,
+                pathMode: scan.pathMode.rawValue,
+                surfaceSource: scan.surfaceSource,
+                holeDistanceM: scan.holeDistance,
+                greenSpeedM: model.greenSpeed,
+                corridorIndex: model.corridorIndex,
+                corridorCount: model.corridorCandidateCount,
                 runID: runID,
-                requestedV0: v0,
-                requestedBeta: beta,
+                requestedV0: rec.initialVelocity,
+                requestedBeta: rec.directionDegrees,
+                predictedStop: rec.stopPosition,
+                recommendation: rec,
+                measuredStop: measured,
+                executedBeta: rec.directionDegrees,
+                holeIn: fieldHoleIn,
+                pathMatch: fieldPathMatch.rawValue,
                 trackingStateOK: controller.guidanceTrackingOK && !controller.trackingLimited,
-                recommendation: model.recommendation
-            )
-            if let executed = Double(executedBetaText) {
-                try Gate55ExperimentRecorder.appendOverheadTrackingMeta(
-                    scanID: scan.id,
-                    runID: runID + "-exec",
-                    requestedV0: v0,
-                    requestedBeta: beta,
-                    executedBeta: executed,
-                    trackingStateOK: controller.guidanceTrackingOK
-                )
-            }
-            let dir = try Gate55ExperimentRecorder.experimentDirectory(for: scan.id)
-            recordMessage = "저장: \(dir.path)"
-        } catch {
-            recordMessage = "기록 실패: \(error.localizedDescription)"
-        }
-    }
-
-    private func saveIndoorResult() {
-        guard let scan = controller.completedScan else { return }
-        let predicted: PuttVector2
-        let v0: Double
-        let beta: Double
-        if let rec = model.recommendation, rec.primary != nil {
-            predicted = rec.stopPosition
-            v0 = rec.initialVelocity
-            beta = rec.directionDegrees
-        } else if let forward = model.forwardResult {
-            predicted = forward.stopPosition
-            v0 = forward.initialVelocity
-            beta = forward.directionDegrees
-        } else {
-            recordMessage = "예측 결과가 없습니다."
-            return
-        }
-        guard let mx = Double(measuredStopX), let my = Double(measuredStopY) else {
-            recordMessage = "실측 정지좌표를 입력하세요."
-            return
-        }
-        do {
-            try Gate55ExperimentRecorder.appendIndoorRunResult(
-                scanID: scan.id,
-                runID: runID,
-                v0: v0,
-                beta: beta,
-                predictedStop: predicted,
-                measuredStop: PuttVector2(x: mx, y: my)
-            )
-            let dir = try Gate55ExperimentRecorder.experimentDirectory(for: scan.id)
-            recordMessage = "실내 결과 저장: \(dir.path)"
-        } catch {
-            recordMessage = "기록 실패: \(error.localizedDescription)"
-        }
-    }
-
-    private func saveRampCalibration() {
-        guard let scan = controller.completedScan else { return }
-        guard let height = Double(rampHeightCM), let v0 = Double(measuredV0) else {
-            recordMessage = "램프 높이와 실측 v0를 입력하세요."
-            return
-        }
-        do {
-            try Gate55ExperimentRecorder.appendRampCalibration(
-                scanID: scan.id,
-                runID: runID,
-                rampHeightCM: height,
-                ballID: "ball-1",
-                measuredV0: v0,
                 notes: ""
             )
-            recordMessage = "램프 캘리브 저장 완료"
+            runID = defaultRunID()
+            measuredXLateral = .center
+            measuredStopXcm = ""
+            measuredYAlong = .onLine
+            measuredStopYcm = ""
+            fieldHoleIn = false
+            activeCmPad = nil
+            dismissPuttKeyboard()
+            let dir = try Gate55ExperimentRecorder.experimentDirectory(for: scan.id)
+            recordMessage = "현장 퍼팅 저장: \(dir.path)/field_putt_results.csv"
         } catch {
             recordMessage = "기록 실패: \(error.localizedDescription)"
         }
     }
 
-    /// 볼 위치 국소 경사를 높이맵에서 조회해 스팟체크 CSV에 한 줄 남긴다.
-    /// measured_* 칸은 현장에서 경사계 값으로 덮어쓸 수 있도록 동일 값으로 시드한다.
-    private func saveSlopeSpotSample() {
-        guard let scan = controller.completedScan,
-              let context = model.context else { return }
-        let point = PuttVector2(x: 0, y: context.holeDistance * 0.5)
-        let slope = context.field.localSlope(at: point)
-        let deg = slope.alpha * 180 / .pi
-        let az = slope.descentAzimuth * 180 / .pi
-        do {
-            try Gate55ExperimentRecorder.appendSlopeSpotcheck(
-                scanID: scan.id,
-                runID: runID,
-                pointID: "midpath",
-                x: point.x,
-                y: point.y,
-                measuredSlopeDeg: deg,
-                measuredAzimuthDeg: az,
-                heightmapSlopeDeg: deg,
-                heightmapAzimuthDeg: az
-            )
-            // 빈 실내 지형 템플릿도 함께 확보
-            try Gate55ExperimentRecorder.writeIndoorTerrain(
-                scanID: scan.id,
-                points: [
-                    (0, 0, context.field.height(at: .zero)),
-                    (0, context.holeDistance * 0.5, context.field.height(at: point)),
-                    (0, context.holeDistance, context.field.height(at: context.holeLocal))
-                ]
-            )
-            recordMessage = "스팟체크·실내지형 템플릿 저장 완료"
-        } catch {
-            recordMessage = "기록 실패: \(error.localizedDescription)"
+    private func parsedCentimeters(_ text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, let value = Int(trimmed), value >= 0 else { return nil }
+        return value
+    }
+
+    private func scrollToFieldPuttInputs() {
+        osdScrollAnchor = nil
+        DispatchQueue.main.async {
+            osdScrollAnchor = "fieldPutt"
         }
+    }
+
+    private func activateCmPad(_ target: FieldCmPadTarget) {
+        dismissPuttKeyboard()
+        activeCmPad = target
+        scrollToFieldPuttInputs()
+    }
+
+    private func appendCmDigit(_ digit: String) {
+        switch activeCmPad {
+        case .x:
+            measuredStopXcm.append(contentsOf: digit.filter(\.isNumber))
+        case .y:
+            measuredStopYcm.append(contentsOf: digit.filter(\.isNumber))
+        case nil:
+            break
+        }
+    }
+
+    private func deleteCmDigit() {
+        switch activeCmPad {
+        case .x:
+            if !measuredStopXcm.isEmpty { measuredStopXcm.removeLast() }
+        case .y:
+            if !measuredStopYcm.isEmpty { measuredStopYcm.removeLast() }
+        case nil:
+            break
+        }
+    }
+
+    private func dismissPuttKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 
     private func defaultRunID() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HHmmss"
         return "run-\(formatter.string(from: Date()))"
-    }
-
-    private func adjustmentText(_ value: Double) -> String {
-        let direction = value >= 0 ? "오르막 보정" : "내리막 보정"
-        return String(format: "(%+.1f m %@)", value, direction)
-    }
-
-    private func elevationText(_ value: Double) -> String {
-        if abs(value) < 0.005 {
-            return "볼과 홀이 같은 높이"
-        }
-        return value > 0
-            ? String(format: "홀이 볼보다 %.2f m 높음", value)
-            : String(format: "홀이 볼보다 %.2f m 낮음", abs(value))
     }
 }
 
@@ -758,14 +745,10 @@ private struct GreenVizModePicker: View {
                         Text(mode.title)
                             .font(.caption.weight(.semibold))
                     }
-                    .foregroundStyle(selected ? Color.black : Color.white.opacity(0.85))
+                    .foregroundStyle(selected ? OSDPalette.accentInk : OSDPalette.textSecondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background {
-                        if selected {
-                            Capsule().fill(Color.white)
-                        }
-                    }
+                    .background(selected ? OSDPalette.accent : Color.clear, in: Capsule())
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -774,12 +757,8 @@ private struct GreenVizModePicker: View {
             }
         }
         .padding(3)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+        .background(OSDPalette.glass, in: Capsule())
+        .overlay(Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
     }
 }
 
@@ -833,16 +812,78 @@ private struct AimArrow: Shape {
     }
 }
 
-private struct CenterReticleOverlay: View {
-    var body: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(Color.orange.opacity(0.95), lineWidth: 2)
-                .frame(width: 44, height: 44)
-            Rectangle().fill(Color.orange).frame(width: 2, height: 28)
-            Rectangle().fill(Color.orange).frame(width: 28, height: 2)
+// MARK: - Floor address world-locked HUD (화면 투영, 폰 방향 무관)
+
+final class FloorAddressWorldHUDView: UIView {
+    private let holeLayer = CAShapeLayer()
+    private let aimLayer = CAShapeLayer()
+    private let betaLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+
+        for layer in [holeLayer, aimLayer] {
+            layer.fillColor = nil
+            layer.lineCap = .round
+            layer.lineJoin = .round
+            self.layer.addSublayer(layer)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        holeLayer.strokeColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 1).cgColor
+        holeLayer.lineWidth = 4
+        aimLayer.strokeColor = UIColor.white.cgColor
+        aimLayer.lineWidth = 5
+        aimLayer.shadowColor = UIColor.white.cgColor
+        aimLayer.shadowOpacity = 0.45
+        aimLayer.shadowRadius = 8
+        aimLayer.shadowOffset = .zero
+
+        betaLabel.font = .monospacedDigitSystemFont(ofSize: 40, weight: .bold)
+        betaLabel.textColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 1)
+        betaLabel.textAlignment = .center
+        addSubview(betaLabel)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(holeLine: (CGPoint, CGPoint)?, aimLine: (CGPoint, CGPoint)?, betaText: String?, isVisible: Bool) {
+        isHidden = !isVisible
+        if let holeLine {
+            let path = UIBezierPath()
+            path.move(to: holeLine.0)
+            path.addLine(to: holeLine.1)
+            holeLayer.path = path.cgPath
+            holeLayer.isHidden = false
+        } else {
+            holeLayer.isHidden = true
+        }
+
+        if let aimLine {
+            let path = UIBezierPath()
+            path.move(to: aimLine.0)
+            path.addLine(to: aimLine.1)
+            aimLayer.path = path.cgPath
+            aimLayer.isHidden = false
+        } else {
+            aimLayer.isHidden = true
+        }
+
+        betaLabel.text = betaText
+        betaLabel.isHidden = betaText == nil
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        holeLayer.frame = bounds
+        aimLayer.frame = bounds
+        betaLabel.sizeToFit()
+        betaLabel.center = CGPoint(x: bounds.midX, y: bounds.maxY - 48)
     }
 }
 
@@ -856,20 +897,33 @@ struct Gate55ARAimView: UIViewRepresentable {
     let revision: Int
     var trajectorySamples: [TrajectorySample] = []
     var greenVizMode: GreenSurfaceVizMode = .contours
+    @Binding var floorAddressMode: Bool
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         view.session = controller.session
-        // 조준 단계: LiDAR 메시 재구성·occlusion 불필요. 등고·조준·경로만.
         view.environment.sceneUnderstanding.options = []
         view.debugOptions.remove(.showSceneUnderstanding)
         view.renderOptions.insert(.disableMotionBlur)
+        let hud = FloorAddressWorldHUDView(frame: view.bounds)
+        hud.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(hud)
+        context.coordinator.floorHUDView = hud
         return view
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
         uiView.environment.sceneUnderstanding.options = []
         uiView.debugOptions.remove(.showSceneUnderstanding)
+        context.coordinator.floorHUDView?.frame = uiView.bounds
+        if let hud = context.coordinator.floorHUDView {
+            uiView.bringSubviewToFront(hud)
+        }
+        context.coordinator.onFloorAddressModeChanged = { newValue in
+            if floorAddressMode != newValue {
+                floorAddressMode = newValue
+            }
+        }
         context.coordinator.updateScene(
             in: uiView,
             scan: scan,
@@ -925,9 +979,52 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var lastAimWidth: Float = 0
         private var lastAimLift: Float = 0
         private var lastPathLift: Float = 0
+        private var lastAddressMode = false
+        private var lastFloorAddressMode = false
+        private var lastReportedFloorHUD = false
+        private var lastARHiddenForFloorHUD = false
+        private var smoothedFloorAddressHUD = false
+        private var lastFloorHeightAboveBall: Float = 0.8
+        private var lastFloorBallDistance: Float = 1.2
         private var smoothedCamBallDistance: Float = 1.2
         private var lastZeroHoleDistance: Double = .nan
         private var lastTrajectoryRevision: Int = -1
+        var onFloorAddressModeChanged: ((Bool) -> Void)?
+        weak var floorHUDView: FloorAddressWorldHUDView?
+        private weak var hudARView: ARView?
+        private var hudDisplayLink: CADisplayLink?
+        private var hudSceneState: FloorHUDSceneState?
+        private var cachedHoleDirection: CGPoint?
+        private var cachedAimDirection: CGPoint?
+        private var smoothedHUDAnchor: CGPoint?
+        private var smoothedHoleUnit: CGPoint?
+        private var smoothedAimUnit: CGPoint?
+        private var smoothedBetaDegrees: Double?
+        private var lastHUDCameraTransform: simd_float4x4?
+
+        private static let hudAnchorSmoothAlpha: CGFloat = 0.14
+        private static let hudDirectionSmoothAlpha: CGFloat = 0.22
+        private static let hudBetaSmoothAlpha: Double = 0.12
+        private static let hudAnchorDeadZone: CGFloat = 2.0
+        private static let hudDirectionDotDeadZone: CGFloat = 0.99985
+        /// 프레임당 이 각도 이상 회전하면 AR처럼 즉시 추적 (스무딩 생략).
+        private static let hudRotationThresholdDegrees: Float = 0.35
+
+        private struct FloorHUDSceneState {
+            var ballWorld: SIMD3<Float>
+            var holeWorld: SIMD3<Float>
+            var betaDegrees: Double
+            var lift: Float
+            var transform: ScanCoordinateTransform
+        }
+
+        private struct CameraAddressContext {
+            var distance: Float
+            var heightAboveBall: Float
+            var alongPuttAxis: Float
+            var isAddressPosition: Bool
+            var isFloorAddressHUD: Bool
+        }
 
         /// 격자 한 변 단위 지렁이 — 변당 대시 3개.
         private struct WormFlowLine {
@@ -961,6 +1058,8 @@ struct Gate55ARAimView: UIViewRepresentable {
 
         func cleanup() {
             stopWormFlowAnimation()
+            stopFloorHUDDisplayLink()
+            resetFloorHUDSmoothing()
             wormFlowLines.removeAll()
             if let wormDashRoot {
                 wormDashRoot.removeFromParent()
@@ -1105,6 +1204,14 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimLift = 0
                 lastPathLift = 0
                 lastVizMode = nil
+                smoothedFloorAddressHUD = false
+                lastARHiddenForFloorHUD = false
+                stopFloorHUDDisplayLink()
+                hideFloorHUD()
+                if lastReportedFloorHUD {
+                    lastReportedFloorHUD = false
+                    onFloorAddressModeChanged?(false)
+                }
                 return
             }
 
@@ -1203,45 +1310,122 @@ struct Gate55ARAimView: UIViewRepresentable {
 
             // 고정 월드 굵기 — 거리 따라 화면폭을 바꾸면 근접 시 굵어지고 매 프레임 흔들림
             let contourLift: Float = 0.006
-            let pathWidth: Float = 0.014
-            let aimWidth: Float = 0.010
             let wormWidth: Float = 0.012
-            let camBall = cameraBallDistance(ballWorld: ballWorld, in: view)
+            let address = cameraAddressContext(
+                ballWorld: ballWorld,
+                holeWorld: holeWorld,
+                in: view
+            )
+            let addressModeChanged = lastAddressMode != address.isAddressPosition
+            let floorModeChanged = lastFloorAddressMode != address.isFloorAddressHUD
             if smoothedCamBallDistance <= 0 {
-                smoothedCamBallDistance = camBall
+                smoothedCamBallDistance = address.distance
             } else {
-                smoothedCamBallDistance += (camBall - smoothedCamBallDistance) * 0.18
+                smoothedCamBallDistance += (address.distance - smoothedCamBallDistance) * 0.18
             }
-            let floorMeters = Float(PerformanceSettings.aimCalcDistanceFloor)
-            // 가까이 갈수록 퍼팅선을 볼 아래(지면)로 — t=1이면 거의 지면
-            let proximityT = max(
-                0,
-                min(1, (floorMeters - smoothedCamBallDistance) / max(floorMeters, 0.05))
-            )
-            // 3mm 단위로 양자화해 매 프레임 재생성·흔들림 방지
-            let pathLift = ((0.018 - proximityT * 0.014) / 0.003).rounded() * 0.003
-            let aimLift = ((0.022 - proximityT * 0.018) / 0.003).rounded() * 0.003
 
-            updateTerrainViz(
-                mode: greenVizMode,
-                for: scan,
-                lift: contourLift,
-                transform: transform,
-                parent: overlays,
-                wormWidth: wormWidth
-            )
+            let pathLift: Float
+            let aimLift: Float
+            var pathWidth: Float = 0.014
+            var aimWidth: Float = 0.010
+            if address.isAddressPosition {
+                pathLift = 0.057
+                aimLift = 0.066
+                pathWidth = 0.020
+                aimWidth = 0.014
+            } else {
+                let floorMeters = Float(PerformanceSettings.aimCalcDistanceFloor)
+                let proximityT = max(
+                    0,
+                    min(1, (floorMeters - smoothedCamBallDistance) / max(floorMeters, 0.05))
+                )
+                pathLift = ((0.018 - proximityT * 0.014) / 0.003).rounded() * 0.003
+                aimLift = ((0.022 - proximityT * 0.018) / 0.003).rounded() * 0.003
+            }
+
+            reportFloorAddressHUD(address)
+            if visible {
+                hudSceneState = FloorHUDSceneState(
+                    ballWorld: ballWorld,
+                    holeWorld: holeWorld,
+                    betaDegrees: betaDegrees,
+                    lift: pathLift,
+                    transform: transform
+                )
+                hudARView = view
+                startFloorHUDDisplayLinkIfNeeded()
+                refreshFloorHUD(
+                    showLines: smoothedFloorAddressHUD,
+                    preferFastDirections: smoothedFloorAddressHUD
+                )
+                if !smoothedFloorAddressHUD {
+                    seedFloorHUDDirectionCache(
+                        in: view,
+                        ballWorld: ballWorld,
+                        lift: pathLift,
+                        transform: transform,
+                        betaDegrees: betaDegrees
+                    )
+                }
+            } else {
+                stopFloorHUDDisplayLink()
+                hideFloorHUD()
+            }
+
+            let arHiddenForHUD = smoothedFloorAddressHUD
+            let arVisibilityChanged = lastARHiddenForFloorHUD != arHiddenForHUD
+            lastARHiddenForFloorHUD = arHiddenForHUD
+            overlayRoot?.isEnabled = !arHiddenForHUD
+            ballAnchorEntity?.isEnabled = !arHiddenForHUD
+            holeAnchorEntity?.isEnabled = !arHiddenForHUD
+            if arHiddenForHUD {
+                zeroLineEntity?.isEnabled = false
+                aimEntity?.isEnabled = false
+                trajectoryRoot?.isEnabled = false
+                clearContours()
+                clearGridFlow()
+                lastAddressMode = address.isAddressPosition
+                lastFloorAddressMode = address.isFloorAddressHUD
+                return
+            }
+
+            zeroLineEntity?.isEnabled = true
+            aimEntity?.isEnabled = visible
+            trajectoryRoot?.isEnabled = visible
+            if arVisibilityChanged {
+                lastTrajectoryRevision = -1
+            }
+
+            if address.isFloorAddressHUD {
+                clearContours()
+                clearGridFlow()
+            } else {
+                updateTerrainViz(
+                    mode: greenVizMode,
+                    for: scan,
+                    lift: contourLift,
+                    transform: transform,
+                    parent: overlays,
+                    wormWidth: wormWidth
+                )
+            }
 
             let zeroNeedsRebuild = zeroLineEntity == nil
                 || abs(lastZeroHoleDistance - scan.holeDistance) > 1e-4
                 || abs(lastPathLift - pathLift) > 0.0015
+                || addressModeChanged
+                || arVisibilityChanged
             if zeroNeedsRebuild {
+                let zeroWidth = address.isAddressPosition
+                    ? max(pathWidth * 0.55, 0.008)
+                    : max(pathWidth * 0.35, 0.004)
                 placeBallLocalSegment(
                     toLocalX: 0,
                     toLocalY: scan.holeDistance,
                     lift: pathLift,
-                    width: max(pathWidth * 0.35, 0.004),
+                    width: zeroWidth,
                     thickness: 0.002,
-                    color: UIColor(white: 0.55, alpha: 0.75),
+                    color: UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 1),
                     transform: transform,
                     parent: overlays,
                     entity: &zeroLineEntity
@@ -1271,12 +1455,20 @@ struct Gate55ARAimView: UIViewRepresentable {
                 trajectoryRebuilt = true
             }
 
-            let length = max(1.0, min(scan.holeDistance * 0.45, 2.2))
+            let length: Double
+            if address.isAddressPosition {
+                length = max(1.5, min(scan.holeDistance * 0.82, 5.0))
+            } else {
+                length = max(1.0, min(scan.holeDistance * 0.45, 2.2))
+            }
             if trajectoryRebuilt
                 || aimEntity == nil
                 || abs(lastAimBeta - betaDegrees) > 0.05
                 || abs(lastAimLength - Float(length)) > 1e-3
-                || abs(lastAimLift - aimLift) > 0.0015 {
+                || abs(lastAimLift - aimLift) > 0.0015
+                || addressModeChanged
+                || floorModeChanged
+                || arVisibilityChanged {
                 let beta = betaDegrees * .pi / 180
                 placeBallLocalSegment(
                     toLocalX: sin(beta) * length,
@@ -1294,6 +1486,472 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimWidth = aimWidth
                 lastAimLift = aimLift
             }
+            lastAddressMode = address.isAddressPosition
+            lastFloorAddressMode = address.isFloorAddressHUD
+        }
+
+        private func reportFloorAddressHUD(_ address: CameraAddressContext) {
+            lastFloorHeightAboveBall = address.heightAboveBall
+            lastFloorBallDistance = address.distance
+            if address.isFloorAddressHUD {
+                smoothedFloorAddressHUD = true
+            } else if lastFloorHeightAboveBall > 0.42 || lastFloorBallDistance > 1.40 {
+                smoothedFloorAddressHUD = false
+            }
+            guard smoothedFloorAddressHUD != lastReportedFloorHUD else { return }
+            lastReportedFloorHUD = smoothedFloorAddressHUD
+            onFloorAddressModeChanged?(smoothedFloorAddressHUD)
+        }
+
+        private func startFloorHUDDisplayLinkIfNeeded() {
+            guard hudDisplayLink == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(refreshFloorHUDTick))
+            link.add(to: .main, forMode: .common)
+            hudDisplayLink = link
+        }
+
+        private func stopFloorHUDDisplayLink() {
+            hudDisplayLink?.invalidate()
+            hudDisplayLink = nil
+            hudARView = nil
+            hudSceneState = nil
+            resetFloorHUDSmoothing()
+        }
+
+        private func resetFloorHUDSmoothing() {
+            smoothedHUDAnchor = nil
+            smoothedHoleUnit = nil
+            smoothedAimUnit = nil
+            smoothedBetaDegrees = nil
+            lastHUDCameraTransform = nil
+            cachedHoleDirection = nil
+            cachedAimDirection = nil
+        }
+
+        private func beginFloorHUDSmoothingSession() {
+            smoothedHUDAnchor = nil
+            smoothedHoleUnit = nil
+            smoothedAimUnit = nil
+            smoothedBetaDegrees = nil
+            lastHUDCameraTransform = nil
+        }
+
+        @objc private func refreshFloorHUDTick() {
+            guard let view = hudARView, let state = hudSceneState else { return }
+            let address = cameraAddressContext(
+                ballWorld: state.ballWorld,
+                holeWorld: state.holeWorld,
+                in: view
+            )
+            let wasFloorHUD = smoothedFloorAddressHUD
+            reportFloorAddressHUD(address)
+            if smoothedFloorAddressHUD, !wasFloorHUD {
+                beginFloorHUDSmoothingSession()
+                refreshFloorHUD(showLines: true, preferFastDirections: true)
+            } else if !smoothedFloorAddressHUD, wasFloorHUD {
+                resetFloorHUDSmoothing()
+                refreshFloorHUD(showLines: false)
+            } else {
+                refreshFloorHUD(showLines: smoothedFloorAddressHUD)
+            }
+        }
+
+        private func hideFloorHUD() {
+            floorHUDView?.update(holeLine: nil, aimLine: nil, betaText: nil, isVisible: false)
+        }
+
+        private func refreshFloorHUD(showLines: Bool, preferFastDirections: Bool = false) {
+            guard let view = hudARView,
+                  let state = hudSceneState,
+                  let hud = floorHUDView else { return }
+
+            let bounds = view.bounds.insetBy(dx: 8, dy: 8)
+            guard bounds.width > 1, bounds.height > 1 else { return }
+
+            guard let holeDir = horizontalWorldDirection(from: state.transform, localX: 0, localY: 1) else {
+                return
+            }
+            let beta = state.betaDegrees * .pi / 180
+            guard let aimDir = horizontalWorldDirection(
+                from: state.transform,
+                localX: sin(beta),
+                localY: cos(beta)
+            ) else { return }
+
+            let origin = SIMD3<Float>(
+                state.ballWorld.x,
+                state.ballWorld.y + state.lift,
+                state.ballWorld.z
+            )
+            let orientation = viewportOrientation(for: view)
+
+            guard let frame = view.session.currentFrame else {
+                if showLines {
+                    let betaText = formatSmoothedBeta(state.betaDegrees, immediate: false)
+                    hud.update(holeLine: nil, aimLine: nil, betaText: betaText, isVisible: true)
+                }
+                return
+            }
+
+            let cameraTransform = frame.camera.transform
+            let rotating = isHUDCameraRotating(current: cameraTransform)
+            lastHUDCameraTransform = cameraTransform
+
+            let rawHoleUnit = resolveScreenDirection(
+                origin: origin,
+                directionWorld: holeDir,
+                in: view,
+                frame: frame,
+                orientation: orientation,
+                cached: cachedHoleDirection,
+                preferFast: preferFastDirections && !rotating
+            )
+            let rawAimUnit = resolveScreenDirection(
+                origin: origin,
+                directionWorld: aimDir,
+                in: view,
+                frame: frame,
+                orientation: orientation,
+                cached: cachedAimDirection,
+                preferFast: preferFastDirections && !rotating
+            )
+            let rawAnchor = hudAnchor(
+                in: view,
+                ballWorld: state.ballWorld,
+                lift: state.lift,
+                bounds: bounds,
+                frame: frame,
+                orientation: orientation
+            )
+
+            cachedHoleDirection = rawHoleUnit
+            cachedAimDirection = rawAimUnit
+
+            let holeUnit: CGPoint
+            let aimUnit: CGPoint
+            let anchor: CGPoint
+            let betaText: String
+
+            if showLines {
+                if rotating {
+                    holeUnit = rawHoleUnit
+                    aimUnit = rawAimUnit
+                    smoothedHoleUnit = rawHoleUnit
+                    smoothedAimUnit = rawAimUnit
+                    anchor = rawAnchor
+                    smoothedHUDAnchor = rawAnchor
+                    betaText = formatSmoothedBeta(state.betaDegrees, immediate: true)
+                } else {
+                    holeUnit = smoothUnitDirection(
+                        smoothedHoleUnit,
+                        toward: rawHoleUnit,
+                        alpha: Self.hudDirectionSmoothAlpha
+                    )
+                    aimUnit = smoothUnitDirection(
+                        smoothedAimUnit,
+                        toward: rawAimUnit,
+                        alpha: Self.hudDirectionSmoothAlpha
+                    )
+                    smoothedHoleUnit = holeUnit
+                    smoothedAimUnit = aimUnit
+                    anchor = smoothHUDAnchor(
+                        smoothedHUDAnchor,
+                        toward: rawAnchor,
+                        alpha: Self.hudAnchorSmoothAlpha
+                    )
+                    smoothedHUDAnchor = anchor
+                    betaText = formatSmoothedBeta(state.betaDegrees, immediate: false)
+                }
+            } else {
+                holeUnit = rawHoleUnit
+                aimUnit = rawAimUnit
+                anchor = rawAnchor
+                betaText = String(format: "%+.1f°", state.betaDegrees)
+            }
+
+            hud.update(
+                holeLine: clipLineThroughAnchor(anchor: anchor, unitDirection: holeUnit, bounds: bounds),
+                aimLine: clipLineThroughAnchor(anchor: anchor, unitDirection: aimUnit, bounds: bounds),
+                betaText: betaText,
+                isVisible: showLines
+            )
+        }
+
+        private func formatSmoothedBeta(_ betaDegrees: Double, immediate: Bool) -> String {
+            if immediate {
+                smoothedBetaDegrees = betaDegrees
+                return String(format: "%+.1f°", betaDegrees)
+            }
+            if let previous = smoothedBetaDegrees {
+                let next = previous + (betaDegrees - previous) * Self.hudBetaSmoothAlpha
+                smoothedBetaDegrees = next
+                return String(format: "%+.1f°", next)
+            }
+            smoothedBetaDegrees = betaDegrees
+            return String(format: "%+.1f°", betaDegrees)
+        }
+
+        /// 카메라 yaw 변화 — 폰 회전 시 HUD가 AR 선과 같이 즉시 따라가게 한다.
+        private func isHUDCameraRotating(current: simd_float4x4) -> Bool {
+            guard let previous = lastHUDCameraTransform else { return false }
+            let curForward = -SIMD3<Float>(
+                current.columns.2.x,
+                current.columns.2.y,
+                current.columns.2.z
+            )
+            let prevForward = -SIMD3<Float>(
+                previous.columns.2.x,
+                previous.columns.2.y,
+                previous.columns.2.z
+            )
+            var curXZ = SIMD2<Float>(curForward.x, curForward.z)
+            var prevXZ = SIMD2<Float>(prevForward.x, prevForward.z)
+            let curLen = simd_length(curXZ)
+            let prevLen = simd_length(prevXZ)
+            guard curLen > 1e-4, prevLen > 1e-4 else { return false }
+            curXZ /= curLen
+            prevXZ /= prevLen
+            let dot = max(-1, min(1, simd_dot(curXZ, prevXZ)))
+            let deltaDegrees = acos(dot) * 180 / Float.pi
+            return deltaDegrees >= Self.hudRotationThresholdDegrees
+        }
+
+        private func smoothHUDAnchor(
+            _ current: CGPoint?,
+            toward target: CGPoint,
+            alpha: CGFloat
+        ) -> CGPoint {
+            guard let current else { return target }
+            let dx = target.x - current.x
+            let dy = target.y - current.y
+            if hypot(dx, dy) < Self.hudAnchorDeadZone {
+                return current
+            }
+            return CGPoint(x: current.x + dx * alpha, y: current.y + dy * alpha)
+        }
+
+        private func smoothUnitDirection(
+            _ current: CGPoint?,
+            toward target: CGPoint,
+            alpha: CGFloat
+        ) -> CGPoint {
+            let normalizedTarget = normalizeHUDDirection(target)
+            guard let current else { return normalizedTarget }
+            let normalizedCurrent = normalizeHUDDirection(current)
+            let dot = normalizedCurrent.x * normalizedTarget.x
+                + normalizedCurrent.y * normalizedTarget.y
+            if dot >= Self.hudDirectionDotDeadZone {
+                return normalizedCurrent
+            }
+            let blended = CGPoint(
+                x: normalizedCurrent.x + (normalizedTarget.x - normalizedCurrent.x) * alpha,
+                y: normalizedCurrent.y + (normalizedTarget.y - normalizedCurrent.y) * alpha
+            )
+            return normalizeHUDDirection(blended)
+        }
+
+        private func normalizeHUDDirection(_ point: CGPoint) -> CGPoint {
+            let len = hypot(point.x, point.y)
+            guard len > 0.001 else { return CGPoint(x: 0, y: -1) }
+            return CGPoint(x: point.x / len, y: point.y / len)
+        }
+
+        private func viewportOrientation(for view: UIView) -> UIInterfaceOrientation {
+            if let scene = view.window?.windowScene {
+                return scene.interfaceOrientation
+            }
+            return view.bounds.width > view.bounds.height ? .landscapeRight : .portrait
+        }
+
+        /// 투영 1회 시도 후 viewMatrix 폴백 — nil 없이 즉시 반환.
+        private func resolveScreenDirection(
+            origin: SIMD3<Float>,
+            directionWorld: SIMD3<Float>,
+            in view: ARView,
+            frame: ARFrame,
+            orientation: UIInterfaceOrientation,
+            cached: CGPoint?,
+            preferFast: Bool = false
+        ) -> CGPoint {
+            if preferFast {
+                if let cached { return cached }
+                return viewMatrixScreenDirection(directionWorld, frame: frame, orientation: orientation)
+            }
+            if let projected = quickProjectedDirection(
+                origin: origin,
+                directionWorld: directionWorld,
+                in: view,
+                frame: frame,
+                orientation: orientation
+            ) {
+                return projected
+            }
+            if let cached {
+                return cached
+            }
+            return viewMatrixScreenDirection(directionWorld, frame: frame, orientation: orientation)
+        }
+
+        private func seedFloorHUDDirectionCache(
+            in view: ARView,
+            ballWorld: SIMD3<Float>,
+            lift: Float,
+            transform: ScanCoordinateTransform,
+            betaDegrees: Double
+        ) {
+            guard let frame = view.session.currentFrame,
+                  let holeDir = horizontalWorldDirection(from: transform, localX: 0, localY: 1) else { return }
+            let beta = betaDegrees * .pi / 180
+            guard let aimDir = horizontalWorldDirection(
+                from: transform,
+                localX: sin(beta),
+                localY: cos(beta)
+            ) else { return }
+            let origin = SIMD3<Float>(ballWorld.x, ballWorld.y + lift, ballWorld.z)
+            let orientation = viewportOrientation(for: view)
+            cachedHoleDirection = resolveScreenDirection(
+                origin: origin,
+                directionWorld: holeDir,
+                in: view,
+                frame: frame,
+                orientation: orientation,
+                cached: cachedHoleDirection,
+                preferFast: false
+            )
+            cachedAimDirection = resolveScreenDirection(
+                origin: origin,
+                directionWorld: aimDir,
+                in: view,
+                frame: frame,
+                orientation: orientation,
+                cached: cachedAimDirection,
+                preferFast: false
+            )
+        }
+
+        private func quickProjectedDirection(
+            origin: SIMD3<Float>,
+            directionWorld: SIMD3<Float>,
+            in view: ARView,
+            frame: ARFrame,
+            orientation: UIInterfaceOrientation
+        ) -> CGPoint? {
+            let viewport = view.bounds.size
+            guard viewport.width > 1, viewport.height > 1 else { return nil }
+
+            func project(_ world: SIMD3<Float>) -> CGPoint? {
+                if let p = view.project(world) { return p }
+                let p = frame.camera.projectPoint(world, orientation: orientation, viewportSize: viewport)
+                guard p.x.isFinite, p.y.isFinite else { return nil }
+                return p
+            }
+
+            func unit(from p0: CGPoint, to p1: CGPoint) -> CGPoint? {
+                let dx = p1.x - p0.x
+                let dy = p1.y - p0.y
+                let len = hypot(dx, dy)
+                guard len > 2 else { return nil }
+                return CGPoint(x: dx / len, y: dy / len)
+            }
+
+            let pairs: [(Float, Float)] = [(0.25, 0.75), (0.4, 1.2), (0.15, 0.45)]
+            for (near, far) in pairs {
+                guard let p0 = project(origin + directionWorld * near),
+                      let p1 = project(origin + directionWorld * far),
+                      let u = unit(from: p0, to: p1) else { continue }
+                return u
+            }
+            if let p0 = project(origin),
+               let p1 = project(origin + directionWorld * 1.0),
+               let u = unit(from: p0, to: p1) {
+                return u
+            }
+            return nil
+        }
+
+        private func viewMatrixScreenDirection(
+            _ directionWorld: SIMD3<Float>,
+            frame: ARFrame,
+            orientation: UIInterfaceOrientation
+        ) -> CGPoint {
+            let viewMatrix = frame.camera.viewMatrix(for: orientation)
+            let dir = simd_normalize(directionWorld)
+            let cam = viewMatrix * SIMD4<Float>(dir.x, dir.y, dir.z, 0)
+            var ux = CGFloat(cam.x)
+            var uy = CGFloat(-cam.y)
+            var len = hypot(ux, uy)
+            if len < 0.03 {
+                let t = frame.camera.transform
+                let right = SIMD3<Float>(t.columns.0.x, t.columns.0.y, t.columns.0.z)
+                let up = SIMD3<Float>(t.columns.1.x, t.columns.1.y, t.columns.1.z)
+                ux = CGFloat(simd_dot(dir, right))
+                uy = CGFloat(-simd_dot(dir, up))
+                len = hypot(ux, uy)
+            }
+            if len < 0.001 {
+                return CGPoint(x: 0, y: -1)
+            }
+            return CGPoint(x: ux / len, y: uy / len)
+        }
+
+        private func hudAnchor(
+            in view: ARView,
+            ballWorld: SIMD3<Float>,
+            lift: Float,
+            bounds: CGRect,
+            frame: ARFrame,
+            orientation: UIInterfaceOrientation
+        ) -> CGPoint {
+            let origin = SIMD3<Float>(ballWorld.x, ballWorld.y + lift, ballWorld.z)
+            let expanded = bounds.insetBy(dx: -60, dy: -60)
+            if let projected = view.project(origin), expanded.contains(projected) {
+                return projected
+            }
+            let projected = frame.camera.projectPoint(
+                origin,
+                orientation: orientation,
+                viewportSize: view.bounds.size
+            )
+            if projected.x.isFinite, projected.y.isFinite, expanded.contains(projected) {
+                return projected
+            }
+            return CGPoint(x: bounds.midX, y: bounds.maxY * 0.72)
+        }
+
+        private func clipLineThroughAnchor(
+            anchor: CGPoint,
+            unitDirection: CGPoint,
+            bounds: CGRect
+        ) -> (CGPoint, CGPoint) {
+            var ts: [CGFloat] = []
+            if abs(unitDirection.x) > 1e-6 {
+                ts.append((bounds.minX - anchor.x) / unitDirection.x)
+                ts.append((bounds.maxX - anchor.x) / unitDirection.x)
+            }
+            if abs(unitDirection.y) > 1e-6 {
+                ts.append((bounds.minY - anchor.y) / unitDirection.y)
+                ts.append((bounds.maxY - anchor.y) / unitDirection.y)
+            }
+            let tMin = ts.min() ?? 0
+            let tMax = ts.max() ?? 0
+            return (
+                CGPoint(x: anchor.x + tMin * unitDirection.x, y: anchor.y + tMin * unitDirection.y),
+                CGPoint(x: anchor.x + tMax * unitDirection.x, y: anchor.y + tMax * unitDirection.y)
+            )
+        }
+
+        private func horizontalWorldDirection(
+            from transform: ScanCoordinateTransform,
+            localX: Double,
+            localY: Double
+        ) -> SIMD3<Float>? {
+            var wx = Float(localX * transform.rightX + localY * transform.forwardX)
+            var wz = Float(localX * transform.rightZ + localY * transform.forwardZ)
+            let len = hypot(wx, wz)
+            guard len > 1e-4 else { return nil }
+            wx /= len
+            wz /= len
+            return SIMD3(wx, 0, wz)
         }
 
         private func ensureOverlayRoot(under ball: AnchorEntity) -> Entity {
@@ -1365,14 +2023,45 @@ struct Gate55ARAimView: UIViewRepresentable {
             )
         }
 
-        private func cameraBallDistance(
+        private func cameraAddressContext(
             ballWorld: SIMD3<Float>,
+            holeWorld: SIMD3<Float>,
             in view: ARView
-        ) -> Float {
-            guard let frame = view.session.currentFrame else { return 1.0 }
+        ) -> CameraAddressContext {
+            guard let frame = view.session.currentFrame else {
+                return CameraAddressContext(
+                    distance: 1.0,
+                    heightAboveBall: 0.8,
+                    alongPuttAxis: 0,
+                    isAddressPosition: false,
+                    isFloorAddressHUD: false
+                )
+            }
             let cam = frame.camera.transform.columns.3
             let camPos = SIMD3<Float>(cam.x, cam.y, cam.z)
-            return simd_length(ballWorld - camPos)
+            let toCam = camPos - ballWorld
+            let distance = simd_length(toCam)
+            let heightAboveBall = toCam.y
+
+            let holeDelta = holeWorld - ballWorld
+            var forward = SIMD2<Float>(holeDelta.x, holeDelta.z)
+            let forwardLen = simd_length(forward)
+            if forwardLen > 1e-4 {
+                forward /= forwardLen
+            } else {
+                forward = SIMD2(0, 1)
+            }
+            let along = simd_dot(SIMD2(toCam.x, toCam.z), forward)
+            let isAddress = along < -0.08 || heightAboveBall < 0.38
+            let isFloorHUD = heightAboveBall < 0.36 && distance < 1.30
+
+            return CameraAddressContext(
+                distance: distance,
+                heightAboveBall: heightAboveBall,
+                alongPuttAxis: along,
+                isAddressPosition: isAddress,
+                isFloorAddressHUD: isFloorHUD
+            )
         }
 
         private func trajectorySignature(
@@ -2000,7 +2689,7 @@ struct Gate55ARAimView: UIViewRepresentable {
 
             let root = Entity()
             root.name = "trajectory"
-            let pathColor = UIColor(red: 0.15, green: 0.95, blue: 0.35, alpha: 0.8)
+            let pathColor = UIColor(red: 1, green: 0.15, blue: 0.12, alpha: 0.8)
             let step = max(1, localPoints.count / 80)
             var index = 0
             while index < localPoints.count - 1 {
@@ -2064,59 +2753,61 @@ private struct Gate1DiagnosticsSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("스캔 ID: \(scan.id)")
-                        .font(.caption)
-                    Text("기준 방식: \(scan.referenceMethod)")
-                    Text("경로: \(scan.pathMode.label) · 드리프트보정 \(scan.driftCorrected ? "Y" : "N")")
-                    Text("표면: \(scan.surfaceSource) · \(scan.surfaceVertexCount.formatted())점")
-                    Text(String(format: "홀 거리 %.2f m", scan.holeDistance))
-                    Text(String(format: "드리프트 %.2f mm", scan.result.driftMeters * 1_000))
-                    if !scan.driftCorrected {
-                        Text("편도 스캔 — 드리프트 미보정")
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("스캔 ID: \(scan.id)")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                        Text("기준 방식: \(scan.referenceMethod)")
+                        Text("경로: \(scan.pathMode.label) · 드리프트보정 \(scan.driftCorrected ? "Y" : "N")")
+                        Text("표면: \(scan.surfaceSource) · \(scan.surfaceVertexCount.formatted())점")
+                        Text(String(format: "홀 거리 %.2f m", scan.holeDistance))
+                        Text(String(format: "드리프트 %.2f mm", scan.result.driftMeters * 1_000))
+                        if !scan.driftCorrected {
+                            Text("편도 스캔 — 드리프트 미보정")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        Text(String(format: "limited %.1f%%", scan.limitedTrackingRatio * 100))
+                        Text(String(format: "빈 셀 %.1f%%", scan.result.corrected.emptyCellRatio * 100))
+                        Text(
+                            String(
+                                format: "볼앵커 (%.2f, %.2f, %.2f) track=%@",
+                                scan.ballAnchor.worldX,
+                                scan.ballAnchor.worldY,
+                                scan.ballAnchor.worldZ,
+                                scan.ballPlacementTrackingOK ? "OK" : "limited"
+                            )
+                        )
+                        .font(.caption2)
+                        Text(
+                            String(
+                                format: "홀앵커 (%.2f, %.2f, %.2f) track=%@",
+                                scan.holeAnchor.worldX,
+                                scan.holeAnchor.worldY,
+                                scan.holeAnchor.worldZ,
+                                scan.holePlacementTrackingOK ? "OK" : "limited"
+                            )
+                        )
+                        .font(.caption2)
+                        Text(
+                            String(
+                                format: "카메라시작Y %.2f · 복귀Y %.2f",
+                                scan.cameraStartPose.worldY,
+                                scan.cameraReturnPose.worldY
+                            )
+                        )
+                        .font(.caption2)
                     }
-                    Text(String(format: "limited %.1f%%", scan.limitedTrackingRatio * 100))
-                    Text(String(format: "빈 셀 %.1f%%", scan.result.corrected.emptyCellRatio * 100))
-                    Text(
-                        String(
-                            format: "볼앵커 (%.2f, %.2f, %.2f) track=%@",
-                            scan.ballAnchor.worldX,
-                            scan.ballAnchor.worldY,
-                            scan.ballAnchor.worldZ,
-                            scan.ballPlacementTrackingOK ? "OK" : "limited"
-                        )
-                    )
-                    .font(.caption2)
-                    Text(
-                        String(
-                            format: "홀앵커 (%.2f, %.2f, %.2f) track=%@",
-                            scan.holeAnchor.worldX,
-                            scan.holeAnchor.worldY,
-                            scan.holeAnchor.worldZ,
-                            scan.holePlacementTrackingOK ? "OK" : "limited"
-                        )
-                    )
-                    .font(.caption2)
-                    Text(
-                        String(
-                            format: "카메라시작Y %.2f · 복귀Y %.2f",
-                            scan.cameraStartPose.worldY,
-                            scan.cameraReturnPose.worldY
-                        )
-                    )
-                    .font(.caption2)
+                    .padding()
                 }
-                .padding()
+
+                Button("닫기", action: onDismiss)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal)
+                    .padding(.vertical, 16)
             }
             .navigationTitle("게이트 1 진단")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기", action: onDismiss)
-                }
-            }
         }
     }
 }

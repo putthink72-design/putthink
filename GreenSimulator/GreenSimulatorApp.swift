@@ -481,20 +481,12 @@ enum GreenSimMetrics {
     ) -> GreenSimulatorModel.PuttGuide {
         // 게이트 2의 기본 stopVelocity/timeFinal/timeDelta를 그대로 사용한다.
         // 홀 판정으로 조기 종료되지 않도록 가상 홀은 충분히 멀리 둔다.
-        let flat = FlatPuttPhysics.simulate(
-            configuration: FlatPuttConfiguration(
-                greenSpeed: greenSpeed,
-                slopeDegrees: 0,
-                initialVelocity: ranked.candidate.initialVelocity,
-                initialDirectionDegrees: 0,
-                holeDistance: 10_000,
-                holeDirectionDegrees: 0
-            ),
-            recordTrajectory: false
+        let flatDistance = Gate55Validation.flatDisplayEquivalentDistance(
+            initialVelocity: ranked.candidate.initialVelocity
         )
         return GreenSimulatorModel.PuttGuide(
-            flatEquivalentDistance: flat.arcLength,
-            distanceAdjustment: flat.arcLength - holeDistance,
+            flatEquivalentDistance: flatDistance,
+            distanceAdjustment: flatDistance - holeDistance,
             initialVelocity: ranked.candidate.initialVelocity,
             directionDegrees: ranked.candidate.directionDegrees,
             stopPosition: ranked.overrunStopPosition,

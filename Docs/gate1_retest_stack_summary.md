@@ -2,19 +2,19 @@
 
 > 명칭: 융합만의 before/after가 아니라 **현재 전체 스택**(시간축 깊이 융합·발 필터·메시 상한 등) 재측정.
 
-- 포함 회차(roundTrip만): **5**
-- 제외 회차: {'oneWay': 12, 'unknown': 18}
-- surface_source 비율: {'unknown': '5/5'}
+- 포함 회차(roundTrip만): **0**
+- 제외 회차: {'unknown': 11}
+- surface_source 비율: {}
 
 ## 이번 측정(현재 스택)
 
 | 지표 | 값 |
 |---|---:|
-| \|왕복 드리프트\| 평균 (mm) | 52.26 |
-| 회차 간 RMS 평균 (mm) | 69.04 |
-| detrend 노이즈 σ1.5 평균 (mm) | 7.76 |
-| 빈 셀 비율 평균 | 0.270 |
-| limited 비율 평균 | 0.000 |
+| \|왕복 드리프트\| 평균 (mm) | nan |
+| 회차 간 RMS 평균 (mm) | n/a |
+| detrend 노이즈 σ1.5 평균 (mm) | nan |
+| 빈 셀 비율 평균 | nan |
+| limited 비율 평균 | nan |
 
 ## 이전(문서 6.1 참고치) vs 이후 — 개선율
 
@@ -24,6 +24,6 @@
 | 회차 간 RMS (mm) | ~20 |  |  |
 | detrend 노이즈 σ1.5 (mm) | (현장값) |  |  |
 
-원시 CSV: `Docs/gate1_retest_temporal_fusion.csv`
+원시 CSV: `/tmp/gate1_rms_summary.csv`
 
 기술이전 문서 6.1/9.10 갱신은 CSV·본 표를 받아 별도 워드 문서에서 처리.

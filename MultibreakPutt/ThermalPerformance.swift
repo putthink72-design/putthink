@@ -67,6 +67,7 @@ enum WormDashesPerEdge: Int, CaseIterable, Identifiable {
 
 /// AR 조준선 근접 안정화 — 계산용 카메라-공 거리 하한(m).
 enum AimCalcDistanceFloor: Double, CaseIterable, Identifiable {
+    case cm10 = 0.10
     case cm20 = 0.20
     case cm25 = 0.25
     case cm30 = 0.30
@@ -81,6 +82,7 @@ enum AimCalcDistanceFloor: Double, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .cm10: return "매우 가까이에서만 선을 내림"
         case .cm20: return "아주 가까이에서만 선을 내림"
         case .cm25: return "약간 여유"
         case .cm30: return "권장 · 근접 시 선을 볼 아래로"

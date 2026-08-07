@@ -15,12 +15,11 @@
 		100000000000000000000008 /* Gate55GuidanceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Gate55GuidanceModel.swift */; };
 		100000000000000000000009 /* Gate55ExperimentRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* Gate55ExperimentRecorder.swift */; };
 		10000000000000000000000A /* ARReferenceMarkers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* ARReferenceMarkers.swift */; };
-		10000000000000000000000B /* Gate6RGBDepthDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* Gate6RGBDepthDetector.swift */; };
-		10000000000000000000000C /* Gate6ExperimentRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* Gate6ExperimentRecorder.swift */; };
 		10000000000000000000000D /* BrightMeshVisualizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* BrightMeshVisualizer.swift */; };
 		10000000000000000000000E /* ScanCoverageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* ScanCoverageTracker.swift */; };
 		10000000000000000000000F /* ThermalPerformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* ThermalPerformance.swift */; };
-		100000000000000000000010 /* PerformanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* PerformanceSettingsView.swift */; };
+		100000000000000000000012 /* OSDDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* OSDDesignSystem.swift */; };
+		100000000000000000000013 /* AppSettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AppSettingsSheet.swift */; };
 		100000000000000000000011 /* GroundScanFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* GroundScanFilter.swift */; };
 		100000000000000000000005 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* PuttPhysicsKit */; };
 		100000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* Assets.xcassets */; };
@@ -42,12 +41,11 @@
 		200000000000000000000008 /* Gate55GuidanceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate55GuidanceModel.swift; sourceTree = "<group>"; };
 		200000000000000000000009 /* Gate55ExperimentRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate55ExperimentRecorder.swift; sourceTree = "<group>"; };
 		20000000000000000000000A /* ARReferenceMarkers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARReferenceMarkers.swift; sourceTree = "<group>"; };
-		20000000000000000000000B /* Gate6RGBDepthDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate6RGBDepthDetector.swift; sourceTree = "<group>"; };
-		20000000000000000000000C /* Gate6ExperimentRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate6ExperimentRecorder.swift; sourceTree = "<group>"; };
 		20000000000000000000000D /* BrightMeshVisualizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrightMeshVisualizer.swift; sourceTree = "<group>"; };
 		20000000000000000000000E /* ScanCoverageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCoverageTracker.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* ThermalPerformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalPerformance.swift; sourceTree = "<group>"; };
-		200000000000000000000010 /* PerformanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceSettingsView.swift; sourceTree = "<group>"; };
+		200000000000000000000012 /* OSDDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSDDesignSystem.swift; sourceTree = "<group>"; };
+		200000000000000000000013 /* AppSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000011 /* GroundScanFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundScanFilter.swift; sourceTree = "<group>"; };
 		200000000000000000000005 /* MultibreakPutt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MultibreakPutt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -109,12 +107,11 @@
 				200000000000000000000008 /* Gate55GuidanceModel.swift */,
 				200000000000000000000009 /* Gate55ExperimentRecorder.swift */,
 				20000000000000000000000A /* ARReferenceMarkers.swift */,
-				20000000000000000000000B /* Gate6RGBDepthDetector.swift */,
-				20000000000000000000000C /* Gate6ExperimentRecorder.swift */,
 				20000000000000000000000D /* BrightMeshVisualizer.swift */,
 				20000000000000000000000E /* ScanCoverageTracker.swift */,
 				20000000000000000000000F /* ThermalPerformance.swift */,
-				200000000000000000000010 /* PerformanceSettingsView.swift */,
+				200000000000000000000012 /* OSDDesignSystem.swift */,
+				200000000000000000000013 /* AppSettingsSheet.swift */,
 				200000000000000000000011 /* GroundScanFilter.swift */,
 				200000000000000000000006 /* Assets.xcassets */,
 			);
@@ -296,12 +293,11 @@
 				100000000000000000000008 /* Gate55GuidanceModel.swift in Sources */,
 				100000000000000000000009 /* Gate55ExperimentRecorder.swift in Sources */,
 				10000000000000000000000A /* ARReferenceMarkers.swift in Sources */,
-				10000000000000000000000B /* Gate6RGBDepthDetector.swift in Sources */,
-				10000000000000000000000C /* Gate6ExperimentRecorder.swift in Sources */,
 				10000000000000000000000D /* BrightMeshVisualizer.swift in Sources */,
 				10000000000000000000000E /* ScanCoverageTracker.swift in Sources */,
 				10000000000000000000000F /* ThermalPerformance.swift in Sources */,
-				100000000000000000000010 /* PerformanceSettingsView.swift in Sources */,
+				100000000000000000000012 /* OSDDesignSystem.swift in Sources */,
+				100000000000000000000013 /* AppSettingsSheet.swift in Sources */,
 				100000000000000000000011 /* GroundScanFilter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

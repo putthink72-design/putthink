@@ -26,11 +26,20 @@ final class BrightMeshVisualizer {
     private var rootAnchor: AnchorEntity?
     private var entities: [UUID: AnchorEntities] = [:]
     private var depthGridEntity: ModelEntity?
-    private var rebuildCursor = 0
     private var lastGlobalRebuildTime: TimeInterval = 0
     private var lastDepthRebuildTime: TimeInterval = 0
     private var depthBuilding = false
     private var enabled = false
+    private var pipelinePrewarmAnchor: AnchorEntity?
+
+    /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
+    /// 스캔 시작 시 false로 바꾸면 이미 빌드된 메시가 즉시 나타난다.
+    var contentHidden = false {
+        didSet {
+            guard oldValue != contentHidden else { return }
+            rootAnchor?.isEnabled = !contentHidden
+        }
+    }
 
     private static let tentativeColor = UIColor.systemBlue
     private static let tentativeFillOpacity: Float = 0.5
@@ -38,8 +47,6 @@ final class BrightMeshVisualizer {
     private static let depthGridColor = UIColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 0.95)
     /// 앵커별 재생성 최소 간격.
     private static let perAnchorRebuildInterval: TimeInterval = 1.0
-    private static let globalRebuildInterval: TimeInterval = 0.18
-    private static let depthRebuildInterval: TimeInterval = 0.12
     private static let maxEdgesPerAnchor = 8_000
     private static let enableFillMesh = false
     /// 거리 무관 고정 반폭(m). 너무 굵으면 바닥을 가림.
@@ -55,17 +62,49 @@ final class BrightMeshVisualizer {
 
     var lineWidthPixels: Float = 2
     var coverageSnapshot: ScanCoverageSnapshot = .empty
+    /// 볼 지정 전 — 메시·depth 그리드를 더 촘촘히 갱신.
+    var burstMode = false
+
+    private var globalRebuildInterval: TimeInterval {
+        burstMode ? 0.07 : 0.18
+    }
+
+    private var depthRebuildInterval: TimeInterval {
+        burstMode ? 0.05 : 0.12
+    }
 
     func setEnabled(_ on: Bool, in view: ARView) {
         guard on != enabled else { return }
         enabled = on
         if on {
             let root = AnchorEntity(world: .zero)
+            root.isEnabled = !contentHidden
             view.scene.addAnchor(root)
             rootAnchor = root
         } else {
             teardown(in: view)
         }
+    }
+
+    /// Metal 파이프라인(머티리얼 셰이더) 사전 컴파일 — 첫 메시 표시 프레임의 히칭 제거.
+    /// 카메라 2m 전방 0.5mm 박스(서브픽셀)라 보이지 않지만 항상 프러스텀 안에 있어
+    /// 셰이더 컴파일이 확실히 일어난다. 월드 고정 위치는 프러스텀 컬링으로 컴파일이 안 될 수 있음.
+    func prewarmRenderPipelines(in view: ARView) {
+        guard pipelinePrewarmAnchor == nil else { return }
+        let anchor = AnchorEntity(.camera)
+        let materials: [RealityKit.Material] = [
+            Self.makeLineMaterial(color: Self.tentativeColor),
+            Self.makeLineMaterial(color: Self.stableColor),
+            Self.makeLineMaterial(color: Self.depthGridColor),
+            Self.makeFillMaterial(),
+        ]
+        for (index, material) in materials.enumerated() {
+            let entity = ModelEntity(mesh: .generateBox(size: 0.0005), materials: [material])
+            entity.position = SIMD3<Float>(Float(index) * 0.002 - 0.003, 0, -2.0)
+            anchor.addChild(entity)
+        }
+        view.scene.addAnchor(anchor)
+        pipelinePrewarmAnchor = anchor
     }
 
     func teardown(in view: ARView) {
@@ -75,7 +114,6 @@ final class BrightMeshVisualizer {
         rootAnchor = nil
         entities.removeAll()
         depthGridEntity = nil
-        rebuildCursor = 0
         enabled = false
         coverageSnapshot = .empty
         depthBuilding = false
@@ -111,12 +149,11 @@ final class BrightMeshVisualizer {
         // 2) sceneDepth 그리드 — 메시 유무·거리와 무관하게 근접 바닥도 표시
         updateDepthGrid(frame: frame, now: now, in: rootAnchor)
 
-        // 3) 프레임당 1개 메시 앵커 재생성 (가까운 것 우선)
+        // 3) 메시 앵커 재생성 — 가까운 것 우선, burst에서는 틱당 여러 개 (첫 공개 시 빠른 채움)
         guard !meshAnchors.isEmpty else { return }
-        guard now - lastGlobalRebuildTime >= Self.globalRebuildInterval else { return }
+        guard now - lastGlobalRebuildTime >= globalRebuildInterval else { return }
         let cameraWorld = frame.camera.transform
         let snapshot = coverageSnapshot
-        let count = meshAnchors.count
         let camPos = SIMD3<Float>(
             cameraWorld.columns.3.x,
             cameraWorld.columns.3.y,
@@ -129,6 +166,8 @@ final class BrightMeshVisualizer {
         }
         .sorted { $0.1 < $1.1 }
 
+        let rebuildBudget = burstMode ? 3 : 1
+        var scheduled = 0
         for rankedEntry in ranked {
             let index = rankedEntry.0
             let anchor = meshAnchors[index]
@@ -139,12 +178,10 @@ final class BrightMeshVisualizer {
 
             entity.building = true
             entity.lastRebuild = now
-            lastGlobalRebuildTime = now
-            rebuildCursor = (index + 1) % count
 
             guard let snapshotGeo = Self.snapshotGeometry(from: anchor) else {
                 entity.building = false
-                break
+                continue
             }
             let worldTransform = anchor.transform
 
@@ -166,7 +203,11 @@ final class BrightMeshVisualizer {
                     entity.building = false
                 }
             }
-            break
+            scheduled += 1
+            if scheduled >= rebuildBudget { break }
+        }
+        if scheduled > 0 {
+            lastGlobalRebuildTime = now
         }
     }
 
@@ -174,7 +215,7 @@ final class BrightMeshVisualizer {
 
     private func updateDepthGrid(frame: ARFrame, now: TimeInterval, in root: AnchorEntity) {
         guard !depthBuilding else { return }
-        guard now - lastDepthRebuildTime >= Self.depthRebuildInterval else { return }
+        guard now - lastDepthRebuildTime >= depthRebuildInterval else { return }
         guard let depthData = frame.sceneDepth else { return }
         let depthMap = depthData.depthMap
         let camera = frame.camera

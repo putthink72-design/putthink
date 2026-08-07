@@ -67,6 +67,7 @@ final class Gate55GuidanceModel: ObservableObject {
     }
 
     private var thermalObserver: NSObjectProtocol?
+    private var recomputeGeneration = 0
 
     init() {
         let stored = UserDefaults.standard.object(forKey: Self.greenSpeedKey) as? Double
@@ -125,6 +126,8 @@ final class Gate55GuidanceModel: ObservableObject {
     func recompute() {
         guard let context else { return }
         isComputing = true
+        recomputeGeneration += 1
+        let generation = recomputeGeneration
         thermalLevel = ThermalPerformance.level
         let greenSpeed = self.greenSpeed
         let mode = computeMode
@@ -144,6 +147,7 @@ final class Gate55GuidanceModel: ObservableObject {
                     directionPointCount: points
                 )
                 await MainActor.run {
+                    guard generation == self.recomputeGeneration else { return }
                     self.recommendation = result
                     self.forwardResult = nil
                     self.corridorIndex = result.defaultCorridorIndex
@@ -169,6 +173,7 @@ final class Gate55GuidanceModel: ObservableObject {
                     directionDegrees: beta
                 )
                 await MainActor.run {
+                    guard generation == self.recomputeGeneration else { return }
                     self.forwardResult = result
                     self.recommendation = nil
                     self.isComputing = false
@@ -195,12 +200,13 @@ final class Gate55GuidanceModel: ObservableObject {
         corridorIndex = clamped
         let ranked = rec.corridorCandidates[clamped]
         isApplyingCorridor = true
+        recomputeGeneration += 1
+        let generation = recomputeGeneration
         let greenSpeed = self.greenSpeed
         let snapshot = context
         Task.detached(priority: .userInitiated) {
-            let flat = Gate55Validation.flatEquivalentDistance(
-                initialVelocity: ranked.candidate.initialVelocity,
-                greenSpeed: greenSpeed
+            let flat = Gate55Validation.flatDisplayEquivalentDistance(
+                initialVelocity: ranked.candidate.initialVelocity
             )
             let forward = Gate55Validation.runForward(
                 context: snapshot,
@@ -210,6 +216,10 @@ final class Gate55GuidanceModel: ObservableObject {
                 recordTrajectory: true
             )
             await MainActor.run {
+                guard generation == self.recomputeGeneration else {
+                    self.isApplyingCorridor = false
+                    return
+                }
                 rec.initialVelocity = ranked.candidate.initialVelocity
                 rec.directionDegrees = ranked.candidate.directionDegrees
                 rec.stopPosition = ranked.overrunStopPosition
