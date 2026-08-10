@@ -153,7 +153,63 @@ enum ARReferenceMarkers {
         descriptor.positions = MeshBuffers.Positions(positions)
         descriptor.primitives = .triangles(indices)
         guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
-        return ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: color)])
+        var material = UnlitMaterial(color: color)
+        material.blending = .opaque
+        return ModelEntity(mesh: mesh, materials: [material])
+    }
+
+    /// 채움 리본 + 더 굵은 어두운 외곽선 — 야외 시인성용.
+    static func makePolylineRibbonOutlined(
+        points: [SIMD3<Float>],
+        width: Float,
+        color: UIColor,
+        outlineColor: UIColor = .white,
+        outlineWidthScale: Float = 1.65
+    ) -> Entity? {
+        guard points.count >= 2, width > 0 else { return nil }
+        let root = Entity()
+        root.name = "outlinedRibbon"
+        if let outline = makePolylineRibbon(
+            points: points,
+            width: width * outlineWidthScale,
+            color: outlineColor
+        ) {
+            root.addChild(outline)
+        }
+        guard let fill = makePolylineRibbon(points: points, width: width, color: color) else {
+            return root.children.isEmpty ? nil : root
+        }
+        root.addChild(fill)
+        return root
+    }
+
+    /// 단일 세그먼트 + 외곽선.
+    static func makeOutlinedLineSegment(
+        length: Float,
+        width: Float,
+        color: UIColor,
+        thickness: Float = 0.0016,
+        outlineColor: UIColor = .white,
+        outlineWidthScale: Float = 1.65
+    ) -> Entity {
+        let root = Entity()
+        let outline = makeLineEntity(
+            length: length,
+            width: width * outlineWidthScale,
+            color: outlineColor,
+            unlit: true,
+            thickness: thickness * 1.15
+        )
+        let fill = makeLineEntity(
+            length: length,
+            width: width,
+            color: color,
+            unlit: true,
+            thickness: thickness
+        )
+        root.addChild(outline)
+        root.addChild(fill)
+        return root
     }
 
     private static func worldTransform(at world: SIMD3<Float>) -> simd_float4x4 {

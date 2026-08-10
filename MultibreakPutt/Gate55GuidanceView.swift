@@ -964,12 +964,16 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var contourRoot: Entity?
         private var contourScanID: String?
         private var contourStyleVersionApplied = 0
-        private static let contourStyleVersion = 7
+        private static let contourStyleVersion = 11
+        private static let contourLineWidthPixels: Float = 2
+        /// 2px 환산값이 너무 얇을 때(근접·뷰포트 미준비) 최소 월드 폭.
+        private static let contourLineWidthWorldMin: Float = 0.0036
         private var gridFlowRoot: Entity?
         private var wormDashRoot: Entity?
         private var gridFlowScanID: String?
         private var gridFlowStyleVersionApplied = 0
-        private static let gridFlowStyleVersion = 12
+        private static let gridFlowStyleVersion = 15
+        private static let gridLineWidthPixels: Float = 2
         private var gridFlowWormWidthApplied: Float = 0
         private var lastVizMode: GreenSurfaceVizMode?
         private var overlayScanID: String?
@@ -994,6 +998,12 @@ struct Gate55ARAimView: UIViewRepresentable {
         private weak var hudARView: ARView?
         private var hudDisplayLink: CADisplayLink?
         private var hudSceneState: FloorHUDSceneState?
+        private struct TerrainVizContext {
+            var scan: CompletedScan
+            var mode: GreenSurfaceVizMode
+            var wormWidth: Float
+        }
+        private var terrainVizContext: TerrainVizContext?
         private var cachedHoleDirection: CGPoint?
         private var cachedAimDirection: CGPoint?
         private var smoothedHUDAnchor: CGPoint?
@@ -1178,6 +1188,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         ) {
             let session = view.session
             guard let scan else {
+                terrainVizContext = nil
                 aimEntity?.isEnabled = false
                 clearContours()
                 clearGridFlow()
@@ -1389,6 +1400,12 @@ struct Gate55ARAimView: UIViewRepresentable {
                 return
             }
 
+            if arVisibilityChanged && !arHiddenForHUD {
+                clearContours()
+                clearGridFlow()
+                lastVizMode = nil
+            }
+
             zeroLineEntity?.isEnabled = true
             aimEntity?.isEnabled = visible
             trajectoryRoot?.isEnabled = visible
@@ -1400,13 +1417,20 @@ struct Gate55ARAimView: UIViewRepresentable {
                 clearContours()
                 clearGridFlow()
             } else {
+                terrainVizContext = TerrainVizContext(
+                    scan: scan,
+                    mode: greenVizMode,
+                    wormWidth: wormWidth
+                )
                 updateTerrainViz(
                     mode: greenVizMode,
                     for: scan,
                     lift: contourLift,
                     transform: transform,
                     parent: overlays,
-                    wormWidth: wormWidth
+                    wormWidth: wormWidth,
+                    in: view,
+                    ballWorld: ballWorld
                 )
             }
 
@@ -1554,6 +1578,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             } else {
                 refreshFloorHUD(showLines: smoothedFloorAddressHUD)
             }
+            refreshTerrainVizIfNeeded(in: view)
         }
 
         private func hideFloorHUD() {
@@ -1959,11 +1984,74 @@ struct Gate55ARAimView: UIViewRepresentable {
                 return overlayRoot
             }
             overlayRoot?.removeFromParent()
+            // 오버레이 재생성 시 자식(등고·격자) 참조만 남고 씬에서 분리될 수 있음 — 캐시 무효화.
+            clearContours()
+            clearGridFlow()
             let root = Entity()
             root.name = "puttOverlays"
             ball.addChild(root)
             overlayRoot = root
             return root
+        }
+
+        private func isTerrainOverlayAttached(_ root: Entity?, to parent: Entity) -> Bool {
+            guard let root else { return false }
+            return root.parent === parent
+        }
+
+        private func isContourVizReady(parent: Entity, scanID: String, in view: ARView) -> Bool {
+            guard view.session.currentFrame != nil,
+                  contourScanID == scanID,
+                  isTerrainOverlayAttached(contourRoot, to: parent),
+                  let root = contourRoot,
+                  !root.children.isEmpty,
+                  contourStyleVersionApplied == Self.contourStyleVersion else {
+                return false
+            }
+            return true
+        }
+
+        private func isGridVizReady(parent: Entity, scanID: String, in view: ARView) -> Bool {
+            guard view.session.currentFrame != nil,
+                  gridFlowScanID == scanID,
+                  isTerrainOverlayAttached(gridFlowRoot, to: parent),
+                  let root = gridFlowRoot,
+                  !root.children.isEmpty,
+                  gridFlowStyleVersionApplied == Self.gridFlowStyleVersion else {
+                return false
+            }
+            return true
+        }
+
+        /// SwiftUI `updateUIView`만으로는 첫 AR 프레임·레이아웃 후 재빌드가 안 될 수 있음 — DisplayLink에서 보완.
+        private func refreshTerrainVizIfNeeded(in view: ARView) {
+            guard !smoothedFloorAddressHUD,
+                  let ctx = terrainVizContext,
+                  let ballEntity = ballAnchorEntity else { return }
+            let overlays = ensureOverlayRoot(under: ballEntity)
+            let ready: Bool
+            switch ctx.mode {
+            case .contours:
+                ready = isContourVizReady(parent: overlays, scanID: ctx.scan.id, in: view)
+            case .gridFlow:
+                ready = isGridVizReady(parent: overlays, scanID: ctx.scan.id, in: view)
+            }
+            guard !ready else { return }
+            let ballWorld = SIMD3<Float>(
+                Float(ctx.scan.ballAnchor.worldX),
+                Float(ctx.scan.ballAnchor.worldY),
+                Float(ctx.scan.ballAnchor.worldZ)
+            )
+            updateTerrainViz(
+                mode: ctx.mode,
+                for: ctx.scan,
+                lift: 0.006,
+                transform: ctx.scan.scanTransform,
+                parent: overlays,
+                wormWidth: ctx.wormWidth,
+                in: view,
+                ballWorld: ballWorld
+            )
         }
 
         private func clearOverlayRoot() {
@@ -1986,7 +2074,9 @@ struct Gate55ARAimView: UIViewRepresentable {
             lift: Float,
             transform: ScanCoordinateTransform,
             parent: Entity,
-            wormWidth: Float
+            wormWidth: Float,
+            in view: ARView,
+            ballWorld: SIMD3<Float>
         ) {
             if lastVizMode != mode {
                 clearContours()
@@ -1996,7 +2086,14 @@ struct Gate55ARAimView: UIViewRepresentable {
             switch mode {
             case .contours:
                 clearGridFlow()
-                updateContours(for: scan, lift: lift, transform: transform, parent: parent)
+                updateContours(
+                    for: scan,
+                    lift: lift,
+                    transform: transform,
+                    parent: parent,
+                    in: view,
+                    ballWorld: ballWorld
+                )
             case .gridFlow:
                 clearContours()
                 updateGridFlow(
@@ -2004,9 +2101,42 @@ struct Gate55ARAimView: UIViewRepresentable {
                     lift: lift,
                     transform: transform,
                     parent: parent,
-                    wormWidth: wormWidth
+                    wormWidth: wormWidth,
+                    in: view,
+                    ballWorld: ballWorld
                 )
             }
+        }
+
+        /// 화면 2px에 해당하는 월드 리본 폭 (카메라·볼 거리 기준).
+        private func terrainLineWidthWorld(
+            in view: ARView,
+            ballWorld: SIMD3<Float>,
+            pixels: Float
+        ) -> Float {
+            guard let frame = view.session.currentFrame else { return 0.004 }
+            let cam = frame.camera.transform.columns.3
+            let camPos = SIMD3<Float>(cam.x, cam.y, cam.z)
+            let distance = max(simd_length(camPos - ballWorld), 0.35)
+            let viewport = view.bounds.size
+            let orientation: UIInterfaceOrientation
+            if let scene = view.window?.windowScene {
+                orientation = scene.interfaceOrientation
+            } else {
+                orientation = viewport.width > viewport.height ? .landscapeRight : .portrait
+            }
+            let projection = frame.camera.projectionMatrix(
+                for: orientation,
+                viewportSize: viewport,
+                zNear: 0.001,
+                zFar: 1000
+            )
+            return ARReferenceMarkers.worldWidth(
+                forScreenPixels: pixels,
+                distanceMeters: distance,
+                viewportPixelHeight: Float(max(viewport.height, 1)),
+                projectionYScale: projection.columns.1.y
+            )
         }
 
         /// 볼 ARAnchor 로컬 좌표 (scanTransform 로컬 x/y → 볼 기준 오프셋).
@@ -2122,11 +2252,17 @@ struct Gate55ARAimView: UIViewRepresentable {
             for scan: CompletedScan,
             lift: Float,
             transform: ScanCoordinateTransform,
-            parent: Entity
+            parent: Entity,
+            in view: ARView,
+            ballWorld: SIMD3<Float>
         ) {
             let density = PerformanceSettings.effectiveOverlayDensity
-            if contourScanID == scan.id,
-               contourRoot != nil,
+            let arFrameReady = view.session.currentFrame != nil
+            if arFrameReady,
+               contourScanID == scan.id,
+               isTerrainOverlayAttached(contourRoot, to: parent),
+               let cached = contourRoot,
+               !cached.children.isEmpty,
                contourStyleVersionApplied == Self.contourStyleVersion,
                contourThermalApplied == ThermalPerformance.level,
                contourDensityApplied == density {
@@ -2135,6 +2271,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             clearContours()
 
             let thermal = ThermalPerformance.level
+            let map = scan.result.smoothed
             let config = ContourBuildConfiguration(
                 intervalMeters: density.contourIntervalMeters,
                 maxLevels: min(24, density.contourMaxPolylines),
@@ -2155,10 +2292,19 @@ struct Gate55ARAimView: UIViewRepresentable {
             let minLevel = levels.min() ?? 0
             let maxLevel = levels.max() ?? 0
             let levelSpan = max(maxLevel - minLevel, 1e-9)
+            let ballHeight = sampleHeight(map, localX: 0, localY: 0) ?? minLevel
+            let undulationScale = Float(min(1.2, 0.10 / max(maxLevel - minLevel, 1e-6)))
 
             let root = Entity()
             root.name = "contours"
-            let lineWidth: Float = 0.0036
+            let lineWidth = max(
+                terrainLineWidthWorld(
+                    in: view,
+                    ballWorld: ballWorld,
+                    pixels: Self.contourLineWidthPixels
+                ),
+                Self.contourLineWidthWorldMin
+            )
             var added = 0
 
             for line in polylines {
@@ -2173,11 +2319,12 @@ struct Gate55ARAimView: UIViewRepresentable {
                 var localPoints: [SIMD3<Float>] = []
                 localPoints.reserveCapacity(line.points.count)
                 for point in line.points {
+                    let pointLift = lift + Float(point.height - ballHeight) * undulationScale
                     localPoints.append(
                         ballLocalPoint(
                             localX: point.x,
                             localY: point.y,
-                            lift: lift,
+                            lift: pointLift,
                             transform: transform
                         )
                     )
@@ -2197,6 +2344,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     root.addChild(ribbon)
                     added += 1
                 } else {
+                    var segAdded = false
                     for index in 0..<(localPoints.count - 1) {
                         let a = localPoints[index]
                         let b = localPoints[index + 1]
@@ -2215,8 +2363,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                         seg.orientation = simd_quatf(from: SIMD3(0, 0, 1), to: dir)
                         seg.position = (a + b) * 0.5
                         root.addChild(seg)
+                        segAdded = true
                     }
-                    added += 1
+                    if segAdded { added += 1 }
                 }
             }
 
@@ -2234,13 +2383,13 @@ struct Gate55ARAimView: UIViewRepresentable {
             let t = min(max(normalizedElevation, 0), 1)
             // 낮음 → 높음: 파랑 · 하늘 · 초록 · 연두 · 노랑 · 주황 · 빨강
             let stops: [(Double, UIColor)] = [
-                (0.00, UIColor(red: 0.15, green: 0.35, blue: 0.95, alpha: 0.95)),
-                (0.17, UIColor(red: 0.20, green: 0.78, blue: 0.92, alpha: 0.95)),
-                (0.33, UIColor(red: 0.12, green: 0.72, blue: 0.28, alpha: 0.95)),
-                (0.50, UIColor(red: 0.55, green: 0.90, blue: 0.22, alpha: 0.95)),
-                (0.67, UIColor(red: 1.00, green: 0.86, blue: 0.12, alpha: 0.95)),
-                (0.83, UIColor(red: 1.00, green: 0.48, blue: 0.08, alpha: 0.95)),
-                (1.00, UIColor(red: 0.92, green: 0.18, blue: 0.14, alpha: 0.95))
+                (0.00, UIColor(red: 0.15, green: 0.35, blue: 0.95, alpha: 1)),
+                (0.17, UIColor(red: 0.20, green: 0.78, blue: 0.92, alpha: 1)),
+                (0.33, UIColor(red: 0.12, green: 0.72, blue: 0.28, alpha: 1)),
+                (0.50, UIColor(red: 0.55, green: 0.90, blue: 0.22, alpha: 1)),
+                (0.67, UIColor(red: 1.00, green: 0.86, blue: 0.12, alpha: 1)),
+                (0.83, UIColor(red: 1.00, green: 0.48, blue: 0.08, alpha: 1)),
+                (1.00, UIColor(red: 0.92, green: 0.18, blue: 0.14, alpha: 1))
             ]
             for index in 0..<(stops.count - 1) {
                 let (lo, loColor) = stops[index]
@@ -2297,13 +2446,19 @@ struct Gate55ARAimView: UIViewRepresentable {
             lift: Float,
             transform: ScanCoordinateTransform,
             parent: Entity,
-            wormWidth: Float
+            wormWidth: Float,
+            in view: ARView,
+            ballWorld: SIMD3<Float>
         ) {
             let density = PerformanceSettings.effectiveOverlayDensity
             let wormsOn = PerformanceSettings.wormAnimationEnabled
             let dashesPerEdge = PerformanceSettings.wormDashesPerEdge.rawValue
-            if gridFlowScanID == scan.id,
-               gridFlowRoot != nil,
+            let arFrameReady = view.session.currentFrame != nil
+            if arFrameReady,
+               gridFlowScanID == scan.id,
+               isTerrainOverlayAttached(gridFlowRoot, to: parent),
+               let cached = gridFlowRoot,
+               !cached.children.isEmpty,
                gridFlowStyleVersionApplied == Self.gridFlowStyleVersion,
                gridFlowThermalApplied == ThermalPerformance.level,
                gridFlowDensityApplied == density,
@@ -2349,8 +2504,12 @@ struct Gate55ARAimView: UIViewRepresentable {
             dashRoot.name = "wormDashes"
             root.addChild(dashRoot)
 
-            let gridColor = UIColor(white: 1.0, alpha: 0.28)
-            let gridWidth: Float = 0.0024
+            let gridColor = UIColor(white: 1.0, alpha: 1)
+            let gridWidth = terrainLineWidthWorld(
+                in: view,
+                ballWorld: ballWorld,
+                pixels: Self.gridLineWidthPixels
+            )
             let wormLiftExtra: Float = 0.0038
             let thickWorm = max(wormWidth, gridWidth * 3.5)
             let dashLength: Float = 0.048
@@ -2647,10 +2806,10 @@ struct Gate55ARAimView: UIViewRepresentable {
         private static func flowColor(slopeMagnitude: Double) -> UIColor {
             let t = min(max((slopeMagnitude - 0.010) / 0.09, 0), 1)
             let stops: [(Double, UIColor)] = [
-                (0.00, UIColor(red: 0.15, green: 0.92, blue: 0.98, alpha: 0.98)),
-                (0.35, UIColor(red: 0.35, green: 0.96, blue: 0.45, alpha: 0.98)),
-                (0.65, UIColor(red: 1.00, green: 0.84, blue: 0.18, alpha: 0.98)),
-                (1.00, UIColor(red: 1.00, green: 0.42, blue: 0.10, alpha: 0.98))
+                (0.00, UIColor(red: 0.15, green: 0.92, blue: 0.98, alpha: 1)),
+                (0.35, UIColor(red: 0.35, green: 0.96, blue: 0.45, alpha: 1)),
+                (0.65, UIColor(red: 1.00, green: 0.84, blue: 0.18, alpha: 1)),
+                (1.00, UIColor(red: 1.00, green: 0.42, blue: 0.10, alpha: 1))
             ]
             for index in 0..<(stops.count - 1) {
                 let (lo, loColor) = stops[index]
