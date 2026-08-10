@@ -813,6 +813,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private func confirmBallAnchor(_ pose: ScanPose) {
         guard flowState == .placingBall else { return }
         ballAnchor = pose
+        if let transform = session.currentFrame?.camera.transform {
+            coverageTracker.captureTiltReference(from: transform)
+        }
         cameraStartPose = currentCameraPose() ?? ScanPose(
             worldX: pose.worldX,
             worldY: pose.worldY + 0.9,

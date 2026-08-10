@@ -16,6 +16,7 @@ final class ScanCoverageTracker {
     private var lastProcessTime: TimeInterval = 0
     private var processing = false
     private(set) var latestSnapshot = ScanCoverageSnapshot.empty
+    private var tiltStabilizer = CameraTiltStabilizer(configuration: .scanDepth)
 
     func reset() {
         queue.async {
@@ -29,7 +30,13 @@ final class ScanCoverageTracker {
 
     /// 메인스레드를 막지 않는 리셋 (스캔 시작 버튼용).
     func resetAsync() {
+        tiltStabilizer.reset()
         reset()
+    }
+
+    /// 볼 확정 등 — 이후 depth 역투영 pitch/roll 기준.
+    func captureTiltReference(from cameraTransform: simd_float4x4) {
+        tiltStabilizer.captureReference(from: cameraTransform)
     }
 
     /// 프레임당 최대 한 번. 결과는 completion으로 메인 호출 권장.
@@ -52,7 +59,9 @@ final class ScanCoverageTracker {
 
         let depthMap = depthData.depthMap
         let confidenceMap = depthData.confidenceMap
-        let cameraTransform = frame.camera.transform
+        let rawCameraTransform = frame.camera.transform
+        // 걸음 pitch/roll 떨림이 depth 역투영 Y에 직접 들어가므로 yaw·위치만 유지하고 기울기 보정.
+        let cameraTransform = tiltStabilizer.stabilizedTransform(from: rawCameraTransform)
         let intrinsics = frame.camera.intrinsics
         let imageResolution = frame.camera.imageResolution
 
@@ -65,9 +74,9 @@ final class ScanCoverageTracker {
             sampleStep: Self.sampleStride
         )
         let cameraPosition = SIMD3<Float>(
-            cameraTransform.columns.3.x,
-            cameraTransform.columns.3.y,
-            cameraTransform.columns.3.z
+            rawCameraTransform.columns.3.x,
+            rawCameraTransform.columns.3.y,
+            rawCameraTransform.columns.3.z
         )
 
         queue.async { [weak self] in
