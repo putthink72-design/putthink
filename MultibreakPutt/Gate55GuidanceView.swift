@@ -372,7 +372,7 @@ struct Gate55GuidanceView: View {
 
     @ViewBuilder
     private var recommendationSection: some View {
-        if let rec = model.recommendation, rec.primary != nil {
+        if let rec = model.recommendation {
             OSDAimReadout(
                 horizontalDistance: rec.horizontalDistance,
                 flatEquivalentDistance: rec.flatEquivalentDistance,
@@ -391,13 +391,20 @@ struct Gate55GuidanceView: View {
                 ]
             )
 
-            if abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8 {
+            if !rec.searchTier.isHoleInVerified {
+                Text(rec.searchTier.statusLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+            }
+
+            if abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8,
+               rec.searchTier.isHoleInVerified {
                 Text("평탄한 면인데 |β|가 큽니다. 라이다 노이즈 가능성 — 볼·홀을 다시 지정하거나 조명을 바꿔 재스캔하세요.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(OSDPalette.accent.opacity(0.9))
             }
         } else {
-            Text("후보 없음 — 그린스피드나 볼·홀 배치를 확인하세요.")
+            Text("추천 계산 중이거나 스캔·그린스피드를 확인하세요.")
                 .font(.system(size: 13))
                 .foregroundStyle(OSDPalette.accent)
         }
@@ -446,8 +453,9 @@ struct Gate55GuidanceView: View {
 
     private func scanStatusText(_ scan: CompletedScan) -> String {
         String(
-            format: "기준 AR raycast · 볼→홀 %.2fm · %@",
+            format: "기준 AR raycast · 볼→홀 %.2fm · %@ · %@",
             scan.holeDistance,
+            scan.fieldMode.label,
             scan.driftCorrected ? "왕복" : "편도·미보정"
         )
     }
@@ -831,12 +839,12 @@ final class FloorAddressWorldHUDView: UIView {
             layer.lineJoin = .round
             self.layer.addSublayer(layer)
         }
-        holeLayer.strokeColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 1).cgColor
+        holeLayer.strokeColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 0.5).cgColor
         holeLayer.lineWidth = 4
-        aimLayer.strokeColor = UIColor.white.cgColor
+        aimLayer.strokeColor = UIColor(white: 1, alpha: 0.1).cgColor
         aimLayer.lineWidth = 5
         aimLayer.shadowColor = UIColor.white.cgColor
-        aimLayer.shadowOpacity = 0.45
+        aimLayer.shadowOpacity = 0.08
         aimLayer.shadowRadius = 8
         aimLayer.shadowOffset = .zero
 
@@ -1449,7 +1457,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     lift: pathLift,
                     width: zeroWidth,
                     thickness: 0.002,
-                    color: UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 1),
+                    color: UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 0.5),
                     transform: transform,
                     parent: overlays,
                     entity: &zeroLineEntity
@@ -1500,7 +1508,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     lift: aimLift,
                     width: aimWidth,
                     thickness: 0.0025,
-                    color: UIColor(white: 1, alpha: 1),
+                    color: UIColor(white: 1, alpha: 0.1),
                     transform: transform,
                     parent: overlays,
                     entity: &aimEntity
@@ -2257,6 +2265,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             ballWorld: SIMD3<Float>
         ) {
             let density = PerformanceSettings.effectiveOverlayDensity
+            let corridorMargins = PuttScanCorridor.margins(for: scan.fieldMode)
             let arFrameReady = view.session.currentFrame != nil
             if arFrameReady,
                contourScanID == scan.id,
@@ -2275,9 +2284,9 @@ struct Gate55ARAimView: UIViewRepresentable {
             let config = ContourBuildConfiguration(
                 intervalMeters: density.contourIntervalMeters,
                 maxLevels: min(24, density.contourMaxPolylines),
-                corridorHalfWidth: 1.8,
+                corridorHalfWidth: corridorMargins.displayHalfWidth,
                 holeDistance: scan.holeDistance,
-                corridorMargin: 0.7,
+                corridorMargin: corridorMargins.displayPastHoleMargin,
                 requireKnownCell: false,
                 smoothIterations: thermal >= .serious ? 2 : 4,
                 maxSegmentLength: thermal >= .serious ? 0.028 : 0.018
@@ -2451,6 +2460,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             ballWorld: SIMD3<Float>
         ) {
             let density = PerformanceSettings.effectiveOverlayDensity
+            let corridorMargins = PuttScanCorridor.margins(for: scan.fieldMode)
             let wormsOn = PerformanceSettings.wormAnimationEnabled
             let dashesPerEdge = PerformanceSettings.wormDashesPerEdge.rawValue
             let arFrameReady = view.session.currentFrame != nil
@@ -2474,9 +2484,9 @@ struct Gate55ARAimView: UIViewRepresentable {
             let map = scan.result.smoothed
             guard map.width > 1, map.height > 1 else { return }
 
-            let halfW = 1.35
+            let halfW = corridorMargins.displayHalfWidth
             let yMin = -0.2
-            let yMax = scan.holeDistance + 0.45
+            let yMax = scan.holeDistance + corridorMargins.displayPastHoleMargin
             let spacing = max(0.20, min(0.32, scan.holeDistance / 10.0)) * density.gridSpacingScale
             let sampleStep = spacing * (density == .sparse || thermal >= .serious ? 0.75 : 0.55)
 

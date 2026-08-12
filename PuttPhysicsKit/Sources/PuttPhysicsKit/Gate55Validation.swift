@@ -75,6 +75,7 @@ public struct Gate55Recommendation: Sendable, Equatable {
     /// 현재 선택 후보의 실제 오버런 거리(홀 지나 정지, m).
     public var overrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
+    public var searchTier: CandidateSearchTier
     public var candidateCount: Int
     public var trajectory: [TrajectorySample]
     public var primary: RankedPuttCandidate?
@@ -93,6 +94,7 @@ public struct Gate55Recommendation: Sendable, Equatable {
         stopPosition: PuttVector2,
         overrunDistance: Double,
         usedRelaxedCaptureRadius: Bool,
+        searchTier: CandidateSearchTier = .verified,
         candidateCount: Int,
         trajectory: [TrajectorySample],
         primary: RankedPuttCandidate?,
@@ -108,6 +110,7 @@ public struct Gate55Recommendation: Sendable, Equatable {
         self.stopPosition = stopPosition
         self.overrunDistance = overrunDistance
         self.usedRelaxedCaptureRadius = usedRelaxedCaptureRadius
+        self.searchTier = searchTier
         self.candidateCount = candidateCount
         self.trajectory = trajectory
         self.primary = primary
@@ -116,7 +119,14 @@ public struct Gate55Recommendation: Sendable, Equatable {
     }
 
     public var strokeGuidance: String {
-        String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
+        switch searchTier {
+        case .proximityEstimate:
+            return String(format: "%.1fm 추정 — 홀인 미검증", flatEquivalentDistance)
+        case .flatHeuristic:
+            return String(format: "%.1fm 거리 추정 — 브레이크 미반영", flatEquivalentDistance)
+        default:
+            return String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
+        }
     }
 }
 
@@ -269,22 +279,7 @@ public enum Gate55Validation {
         }
 
         guard let primary = selection.primary else {
-            return Gate55Recommendation(
-                horizontalDistance: horizontal,
-                flatEquivalentDistance: 0,
-                distanceAdjustment: 0,
-                elevationDelta: elevationDelta,
-                initialVelocity: 0,
-                directionDegrees: 0,
-                stopPosition: .zero,
-                overrunDistance: 0,
-                usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
-                candidateCount: selection.allCandidates.count,
-                trajectory: [],
-                primary: nil,
-                corridorCandidates: corridor,
-                defaultCorridorIndex: 0
-            )
+            preconditionFailure("CandidateSelector must always return a primary candidate")
         }
 
         let defaultIndex = corridor.firstIndex(where: {
@@ -312,6 +307,7 @@ public enum Gate55Validation {
             stopPosition: primary.overrunStopPosition,
             overrunDistance: primary.actualOverrunDistance,
             usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
+            searchTier: selection.searchTier,
             candidateCount: selection.allCandidates.count,
             trajectory: forward.trajectory,
             primary: primary,

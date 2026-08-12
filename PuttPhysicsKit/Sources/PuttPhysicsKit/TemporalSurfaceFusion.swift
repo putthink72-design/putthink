@@ -110,8 +110,9 @@ public final class TemporalSurfaceFusion {
         ballZ: Double,
         holeX: Double,
         holeZ: Double,
-        lateralMargin: Double = 1.25,
-        endpointMargin: Double = 0.5,
+        lateralMargin: Double = PuttScanCorridor.tuningMargins.lateralHalfWidth,
+        ballEndMargin: Double = PuttScanCorridor.tuningMargins.ballEndMargin,
+        pastHoleMargin: Double = PuttScanCorridor.tuningMargins.pastHoleMargin,
         heightTolerance: Double = 0.30
     ) -> [ScanVertex] {
         var output: [ScanVertex] = []
@@ -127,7 +128,8 @@ public final class TemporalSurfaceFusion {
                 holeX: holeX,
                 holeZ: holeZ,
                 lateralMargin: lateralMargin,
-                endpointMargin: endpointMargin
+                ballEndMargin: ballEndMargin,
+                pastHoleMargin: pastHoleMargin
             ) else { continue }
 
             // 지면 근처 프레임만 인덱스 단위로 골라 카메라 시점 정보를 유지한다.
@@ -196,7 +198,8 @@ public final class TemporalSurfaceFusion {
         holeX: Double,
         holeZ: Double,
         lateralMargin: Double,
-        endpointMargin: Double
+        ballEndMargin: Double,
+        pastHoleMargin: Double
     ) -> Bool {
         let dx = holeX - ballX
         let dz = holeZ - ballZ
@@ -208,8 +211,8 @@ public final class TemporalSurfaceFusion {
         let pz = z - ballZ
         let along = px * forwardX + pz * forwardZ
         let lateral = abs(px * forwardZ - pz * forwardX)
-        return along >= -endpointMargin
-            && along <= length + endpointMargin
+        return along >= -ballEndMargin
+            && along <= length + pastHoleMargin
             && lateral <= lateralMargin
     }
 

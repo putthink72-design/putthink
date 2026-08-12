@@ -1,3 +1,4 @@
+import PuttPhysicsKit
 import SwiftUI
 
 /// 톱니 아이콘으로 여는 통합 설정 — 목업 06·07 + 스캔/조준 전용 항목.
@@ -14,6 +15,9 @@ struct AppSettingsSheet: View {
 
     @ObservedObject var guidanceModel: Gate55GuidanceModel
     var onAimSettingsChanged: (() -> Void)?
+
+    @AppStorage(ScanFieldSettings.fieldModeKey)
+    private var scanFieldModeRaw: String = ScanFieldMode.tuning.rawValue
 
     @AppStorage(PerformanceSettings.recommendGridKey)
     private var recommendGridRaw: Int = RecommendScanGrid.balanced.rawValue
@@ -55,6 +59,10 @@ struct AppSettingsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    OSDSettingsSectionGroup(title: "필드 스캔") {
+                        fieldScanModeContent
+                    }
+
                     if mode == .scan {
                         OSDSettingsSectionGroup(title: "스캔 옵션") {
                             scanOptionsContent
@@ -121,9 +129,27 @@ struct AppSettingsSheet: View {
             PerformanceSettings.notifyDidChange()
             onAimSettingsChanged?()
         }
+        .onChange(of: scanFieldModeRaw) { _, _ in ScanFieldSettings.notifyDidChange() }
     }
 
     // MARK: - Scan
+
+    private var fieldScanModeContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            OSDSegmentedRow(
+                options: ScanFieldMode.allCases,
+                label: \.label,
+                selection: Binding(
+                    get: { ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning },
+                    set: { scanFieldModeRaw = $0.rawValue }
+                )
+            )
+            fieldHelp((ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning).settingsDetail)
+            if mode == .guidance {
+                fieldHelp("다음 스캔부터 적용됩니다. 이미 완료된 스캔의 높이맵은 바뀌지 않습니다.")
+            }
+        }
+    }
 
     private var scanOptionsContent: some View {
         VStack(alignment: .leading, spacing: 10) {

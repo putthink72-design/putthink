@@ -437,14 +437,20 @@ final class GreenSimulatorModel: ObservableObject {
 enum GreenSimText {
     static func status(for selection: CandidateSelectionResult) -> String {
         if selection.allCandidates.isEmpty {
-            return selection.usedRelaxedCaptureRadius
-                ? "반경 완화 재계산 후에도 후보 없음"
-                : "후보 없음"
+            return "후보 없음"
         }
-        if selection.usedRelaxedCaptureRadius {
+        switch selection.searchTier {
+        case .verified:
+            return "후보 \(selection.allCandidates.count)개"
+        case .relaxedCapture:
             return "반경 완화 재계산 결과 \(selection.allCandidates.count)개 확보"
+        case .expandedSearch:
+            return "확장 탐색 · 후보 \(selection.allCandidates.count)개"
+        case .proximityEstimate:
+            return "추정 경로 · 홀인 미검증"
+        case .flatHeuristic:
+            return "거리 추정 · 브레이크 미반영"
         }
-        return "후보 \(selection.allCandidates.count)개"
     }
 
     static func loadGreenIDs() -> [String] {

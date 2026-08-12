@@ -8,19 +8,22 @@ public struct RankedPuttCandidate: Sendable, Equatable {
     /// 홀을 지난 뒤 실제 정지까지 굴러간 거리(퍼트 방향 투영, m). Speed Corridor 정렬용.
     public var actualOverrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
+    public var searchTier: CandidateSearchTier
 
     public init(
         candidate: InitialConditionCandidate,
         overrunStopPosition: PuttVector2,
         distanceToOverrunTarget: Double,
         actualOverrunDistance: Double,
-        usedRelaxedCaptureRadius: Bool
+        usedRelaxedCaptureRadius: Bool,
+        searchTier: CandidateSearchTier = .verified
     ) {
         self.candidate = candidate
         self.overrunStopPosition = overrunStopPosition
         self.distanceToOverrunTarget = distanceToOverrunTarget
         self.actualOverrunDistance = actualOverrunDistance
         self.usedRelaxedCaptureRadius = usedRelaxedCaptureRadius
+        self.searchTier = searchTier
     }
 }
 
@@ -30,19 +33,22 @@ public struct CandidateSelectionResult: Sendable, Equatable {
     public var secondary: RankedPuttCandidate?
     public var overrunTarget: PuttVector2
     public var usedRelaxedCaptureRadius: Bool
+    public var searchTier: CandidateSearchTier
 
     public init(
         allCandidates: [RankedPuttCandidate],
         primary: RankedPuttCandidate?,
         secondary: RankedPuttCandidate?,
         overrunTarget: PuttVector2,
-        usedRelaxedCaptureRadius: Bool
+        usedRelaxedCaptureRadius: Bool,
+        searchTier: CandidateSearchTier = .verified
     ) {
         self.allCandidates = allCandidates
         self.primary = primary
         self.secondary = secondary
         self.overrunTarget = overrunTarget
         self.usedRelaxedCaptureRadius = usedRelaxedCaptureRadius
+        self.searchTier = searchTier
     }
 }
 
@@ -70,6 +76,7 @@ private final class LockedRankedCandidates: @unchecked Sendable {
 public enum CandidateSelector {
     public static let defaultOverrunDistance = 0.35
     public static let relaxedCaptureRadius = 0.5
+    public static let fallbackGridPointCount = 45
 
     public static func select<Terrain: TerrainField>(
         terrain: Terrain,
@@ -95,9 +102,147 @@ public enum CandidateSelector {
             y: holePosition.y + overrunDistance * direction.y
         )
 
-        var captureRadius = 0.054
-        var usedRelaxed = false
-        var raw = MultibreakPuttPhysics.scanExactGridParallel(
+        let expanded = expandedSearchBounds(
+            holeDistance: holeDistance,
+            minimumVelocity: minimumVelocity,
+            maximumVelocity: maximumVelocity,
+            minimumDirectionDegrees: minimumDirectionDegrees,
+            maximumDirectionDegrees: maximumDirectionDegrees
+        )
+        let fallbackPoints = min(fallbackGridPointCount, min(velocityPointCount, directionPointCount))
+
+        // ① 정상 홀인
+        if let result = scanHoleInCandidates(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition,
+            direction: direction,
+            overrunTarget: overrunTarget,
+            minimumVelocity: minimumVelocity,
+            maximumVelocity: maximumVelocity,
+            velocityPointCount: velocityPointCount,
+            minimumDirectionDegrees: minimumDirectionDegrees,
+            maximumDirectionDegrees: maximumDirectionDegrees,
+            directionPointCount: directionPointCount,
+            captureRadius: 0.054,
+            searchTier: .verified
+        ) {
+            return result
+        }
+
+        // ② 반경 완화
+        if let result = scanHoleInCandidates(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition,
+            direction: direction,
+            overrunTarget: overrunTarget,
+            minimumVelocity: minimumVelocity,
+            maximumVelocity: maximumVelocity,
+            velocityPointCount: velocityPointCount,
+            minimumDirectionDegrees: minimumDirectionDegrees,
+            maximumDirectionDegrees: maximumDirectionDegrees,
+            directionPointCount: directionPointCount,
+            captureRadius: relaxedCaptureRadius,
+            searchTier: .relaxedCapture
+        ) {
+            return result
+        }
+
+        // ③ 확장 탐색 + 완화 캡처
+        if let result = scanHoleInCandidates(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition,
+            direction: direction,
+            overrunTarget: overrunTarget,
+            minimumVelocity: expanded.minimumVelocity,
+            maximumVelocity: expanded.maximumVelocity,
+            velocityPointCount: fallbackPoints,
+            minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+            maximumDirectionDegrees: expanded.maximumDirectionDegrees,
+            directionPointCount: fallbackPoints,
+            captureRadius: relaxedCaptureRadius,
+            searchTier: .expandedSearch
+        ) {
+            return result
+        }
+
+        // ④ 홀 lateral miss 최소 추정
+        if let proximity = MultibreakPuttPhysics.scanBestHoleApproachParallel(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            minimumVelocity: expanded.minimumVelocity,
+            maximumVelocity: expanded.maximumVelocity,
+            velocityPointCount: fallbackPoints,
+            minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+            maximumDirectionDegrees: expanded.maximumDirectionDegrees,
+            directionPointCount: fallbackPoints
+        ) {
+            return rankCandidates(
+                raw: [proximity],
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: holePosition,
+                direction: direction,
+                overrunTarget: overrunTarget,
+                captureRadius: relaxedCaptureRadius,
+                usedRelaxed: true,
+                searchTier: .proximityEstimate
+            )
+        }
+
+        // ⑤ 평지 거리·고도 휴리스틱 (항상 1개)
+        let flatCandidate = flatHeuristicCandidate(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition
+        )
+        return rankCandidates(
+            raw: [flatCandidate],
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition,
+            direction: direction,
+            overrunTarget: overrunTarget,
+            captureRadius: relaxedCaptureRadius,
+            usedRelaxed: true,
+            searchTier: .flatHeuristic
+        )
+    }
+
+    private static func scanHoleInCandidates<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        holePosition: PuttVector2,
+        direction: PuttVector2,
+        overrunTarget: PuttVector2,
+        minimumVelocity: Double,
+        maximumVelocity: Double,
+        velocityPointCount: Int,
+        minimumDirectionDegrees: Double,
+        maximumDirectionDegrees: Double,
+        directionPointCount: Int,
+        captureRadius: Double,
+        searchTier: CandidateSearchTier
+    ) -> CandidateSelectionResult? {
+        let raw = MultibreakPuttPhysics.scanExactGridParallel(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
@@ -110,26 +255,35 @@ public enum CandidateSelector {
             directionPointCount: directionPointCount,
             captureRadius: captureRadius
         )
+        guard !raw.isEmpty else { return nil }
+        return rankCandidates(
+            raw: raw,
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: holePosition,
+            direction: direction,
+            overrunTarget: overrunTarget,
+            captureRadius: captureRadius,
+            usedRelaxed: captureRadius > 0.054 + 1e-9,
+            searchTier: searchTier
+        )
+    }
 
-        if raw.isEmpty {
-            captureRadius = relaxedCaptureRadius
-            usedRelaxed = true
-            raw = MultibreakPuttPhysics.scanExactGridParallel(
-                terrain: terrain,
-                greenSpeed: greenSpeed,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees,
-                minimumVelocity: minimumVelocity,
-                maximumVelocity: maximumVelocity,
-                velocityPointCount: velocityPointCount,
-                minimumDirectionDegrees: minimumDirectionDegrees,
-                maximumDirectionDegrees: maximumDirectionDegrees,
-                directionPointCount: directionPointCount,
-                captureRadius: captureRadius
-            )
-        }
-
-        // 후보별 오버런 시뮬레이션은 서로 독립이므로 병렬 실행(입력 순서 유지).
+    private static func rankCandidates<Terrain: TerrainField>(
+        raw: [InitialConditionCandidate],
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        holePosition: PuttVector2,
+        direction: PuttVector2,
+        overrunTarget: PuttVector2,
+        captureRadius: Double,
+        usedRelaxed: Bool,
+        searchTier: CandidateSearchTier
+    ) -> CandidateSelectionResult {
         let rankedSlots = LockedRankedCandidates(count: raw.count)
         DispatchQueue.concurrentPerform(iterations: raw.count) { index in
             let candidate = raw[index]
@@ -159,7 +313,8 @@ public enum CandidateSelector {
                     overrunStopPosition: overrun.finalPosition,
                     distanceToOverrunTarget: distance,
                     actualOverrunDistance: actualOverrun,
-                    usedRelaxedCaptureRadius: usedRelaxed
+                    usedRelaxedCaptureRadius: usedRelaxed,
+                    searchTier: searchTier
                 ),
                 at: index
             )
@@ -176,7 +331,84 @@ public enum CandidateSelector {
             primary: primary,
             secondary: secondary,
             overrunTarget: overrunTarget,
-            usedRelaxedCaptureRadius: usedRelaxed
+            usedRelaxedCaptureRadius: usedRelaxed,
+            searchTier: searchTier
         )
+    }
+
+    private static func expandedSearchBounds(
+        holeDistance: Double,
+        minimumVelocity: Double,
+        maximumVelocity: Double,
+        minimumDirectionDegrees: Double,
+        maximumDirectionDegrees: Double
+    ) -> (
+        minimumVelocity: Double,
+        maximumVelocity: Double,
+        minimumDirectionDegrees: Double,
+        maximumDirectionDegrees: Double
+    ) {
+        let directionLimit = holeDistance >= 7 ? 45.0 : 35.0
+        return (
+            minimumVelocity: min(minimumVelocity, max(0.8, 1.0 - holeDistance * 0.015)),
+            maximumVelocity: max(maximumVelocity, min(6.0, 1.2 + holeDistance * 0.35)),
+            minimumDirectionDegrees: min(minimumDirectionDegrees, -directionLimit),
+            maximumDirectionDegrees: max(maximumDirectionDegrees, directionLimit)
+        )
+    }
+
+    private static func flatHeuristicCandidate<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        holePosition: PuttVector2
+    ) -> InitialConditionCandidate {
+        let elevationDelta = terrain.height(at: holePosition) - terrain.height(at: .zero)
+        let targetFlat = max(0.5, holeDistance + elevationDelta * 0.65)
+        let velocity = velocityForFlatArcLength(targetFlat, greenSpeed: greenSpeed)
+        let result = MultibreakPuttPhysics.simulate(
+            configuration: MultibreakPuttConfiguration(
+                greenSpeed: greenSpeed,
+                initialVelocity: velocity,
+                initialDirectionDegrees: 0,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees
+            ),
+            terrain: terrain,
+            recordTrajectory: false,
+            ignoreCapture: true,
+            captureRadius: relaxedCaptureRadius
+        )
+        return InitialConditionCandidate(
+            initialVelocity: velocity,
+            directionDegrees: 0,
+            result: result
+        )
+    }
+
+    private static func velocityForFlatArcLength(_ target: Double, greenSpeed: Double) -> Double {
+        var lower = 0.4
+        var upper = 7.0
+        for _ in 0..<40 {
+            let mid = (lower + upper) * 0.5
+            let distance = FlatPuttPhysics.simulate(
+                configuration: FlatPuttConfiguration(
+                    greenSpeed: greenSpeed,
+                    slopeDegrees: 0,
+                    initialVelocity: mid,
+                    initialDirectionDegrees: 0,
+                    holeDistance: 10_000,
+                    holeDirectionDegrees: 0
+                ),
+                recordTrajectory: false
+            ).arcLength
+            if distance < target {
+                lower = mid
+            } else {
+                upper = mid
+            }
+        }
+        return (lower + upper) * 0.5
     }
 }

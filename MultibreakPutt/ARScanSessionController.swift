@@ -74,6 +74,8 @@ struct CompletedScan {
     /// 왕복이면 true. 편도면 false(드리프트 0으로 처리).
     let driftCorrected: Bool
     let pathMode: ScanPathMode
+    /// 스캔 완료 시점의 경기/튜닝 복도 프리셋.
+    let fieldMode: ScanFieldMode
     /// `temporal_scene_depth` 또는 관측 부족 시 `arkit_mesh_fallback`.
     let surfaceSource: String
     let surfaceVertexCount: Int
@@ -441,6 +443,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
         let pathMode = self.pathMode
         let driftCorrected = pathMode == .roundTrip
+        let fieldMode = ScanFieldSettings.fieldMode
+        let corridorMargins = PuttScanCorridor.margins(for: fieldMode)
 
 #if targetEnvironment(simulator)
         let returnCamera: ScanPose
@@ -511,6 +515,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     holePlacementTrackingOK: holeOK,
                     driftCorrected: driftCorrected,
                     pathMode: pathMode,
+                    fieldMode: fieldMode,
                     surfaceSource: surfaceSource,
                     surfaceVertexCount: surfaceVertexCount
                 )
@@ -523,8 +528,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     self.guidanceTrackingOK = !self.trackingLimited
                     let modeLabel = driftCorrected ? "왕복·드리프트보정" : "편도·드리프트미보정"
                     self.placementMessage = String(
-                        format: "기준: AR raycast · 볼-홀 %.2fm · %@",
+                        format: "기준: AR raycast · 볼-홀 %.2fm · %@ · %@",
                         holeDistance,
+                        fieldMode.label,
                         modeLabel
                     )
                     self.flowState = .complete
@@ -580,11 +586,13 @@ final class ARScanSessionController: NSObject, ObservableObject {
             let rawMeshVertices = Self.filterMeshVerticesForTerrain(
                 meshSnapshot.values.flatMap { $0 },
                 ball: ballAnchor,
-                hole: holeAnchor
+                hole: holeAnchor,
+                margins: corridorMargins
             )
             let fusedVertices = await coverage.fusedGroundVerticesAsync(
                 ball: ballAnchor,
-                hole: holeAnchor
+                hole: holeAnchor,
+                margins: corridorMargins
             )
             let usesFusedDepth = fusedVertices.count >= 100
             let vertices = usesFusedDepth ? fusedVertices : rawMeshVertices
@@ -629,6 +637,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     holePlacementTrackingOK: holeOK,
                     driftCorrected: driftCorrected,
                     pathMode: pathMode,
+                    fieldMode: fieldMode,
                     surfaceSource: surfaceSource,
                     surfaceVertexCount: surfaceVertexCount
                 )
@@ -641,8 +650,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     self.guidanceTrackingOK = !self.trackingLimited
                     let modeLabel = driftCorrected ? "왕복·드리프트보정" : "편도·드리프트미보정"
                     self.placementMessage = String(
-                        format: "기준: AR raycast · 볼-홀 %.2fm · %@",
+                        format: "기준: AR raycast · 볼-홀 %.2fm · %@ · %@",
                         holeDistance,
+                        fieldMode.label,
                         modeLabel
                     )
                     self.flowState = .complete
@@ -662,7 +672,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private static func filterMeshVerticesForTerrain(
         _ vertices: [ScanVertex],
         ball: ScanPose,
-        hole: ScanPose
+        hole: ScanPose,
+        margins: ScanCorridorMargins
     ) -> [ScanVertex] {
         let points = vertices.map {
             GroundScanFilter.Point(worldX: $0.worldX, worldY: $0.worldY, worldZ: $0.worldZ)
@@ -682,7 +693,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
                 x: vertex.worldX,
                 z: vertex.worldZ,
                 ball: ball,
-                hole: hole
+                hole: hole,
+                lateralMargin: margins.lateralHalfWidth,
+                ballEndMargin: margins.ballEndMargin,
+                pastHoleMargin: margins.pastHoleMargin
             )
             if inside {
                 kept.append(vertex)
@@ -702,14 +716,16 @@ final class ARScanSessionController: NSObject, ObservableObject {
         z: Double,
         ball: ScanPose,
         hole: ScanPose,
-        lateralMargin: Double = 1.4,
-        endpointMargin: Double = 0.6
+        lateralMargin: Double = PuttScanCorridor.tuningMargins.lateralHalfWidth,
+        ballEndMargin: Double = PuttScanCorridor.tuningMargins.ballEndMargin,
+        pastHoleMargin: Double = PuttScanCorridor.tuningMargins.pastHoleMargin
     ) -> Bool {
         let dx = hole.worldX - ball.worldX
         let dz = hole.worldZ - ball.worldZ
         let length = hypot(dx, dz)
         guard length > 1e-6 else {
-            return hypot(x - ball.worldX, z - ball.worldZ) <= lateralMargin + endpointMargin
+            return hypot(x - ball.worldX, z - ball.worldZ)
+                <= lateralMargin + max(ballEndMargin, pastHoleMargin)
         }
         let ux = dx / length
         let uz = dz / length
@@ -717,8 +733,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let pz = z - ball.worldZ
         let along = px * ux + pz * uz
         let lateral = abs(px * (-uz) + pz * ux)
-        return along >= -endpointMargin
-            && along <= length + endpointMargin
+        return along >= -ballEndMargin
+            && along <= length + pastHoleMargin
             && lateral <= lateralMargin
     }
 
@@ -888,6 +904,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                 holePlacementTrackingOK: !trackingLimited,
                 driftCorrected: scan.driftCorrected,
                 pathMode: scan.pathMode,
+                fieldMode: scan.fieldMode,
                 surfaceSource: scan.surfaceSource,
                 surfaceVertexCount: scan.surfaceVertexCount
             )

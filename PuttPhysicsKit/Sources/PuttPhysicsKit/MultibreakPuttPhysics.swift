@@ -334,3 +334,174 @@ private final class LockedMultibreakCandidateRows: @unchecked Sendable {
         return rows.flatMap { $0 }
     }
 }
+
+// MARK: - Proximity fallback (홀인 0개일 때 최근접 조준)
+
+public struct HoleApproachScore: Sendable, Equatable {
+    /// 홀 진행 방향 수직 miss(m). 작을수록 좋음.
+    public var lateralMissMeters: Double
+    /// 홀 평면까지 도달하지 못한 거리(m).
+    public var stoppedShortBy: Double
+
+    public var rankingValue: Double {
+        lateralMissMeters + stoppedShortBy * 2.5
+    }
+}
+
+public extension MultibreakPuttPhysics {
+    /// 홀에 가장 가깝게 지나간 lateral miss와 멈춤 여부를 평가한다.
+    static func evaluateHoleApproach<Terrain: TerrainField>(
+        configuration: MultibreakPuttConfiguration,
+        terrain: Terrain
+    ) -> (score: HoleApproachScore, result: FlatPuttResult) {
+        let holeBeta = configuration.holeDirectionDegrees * .pi / 180.0
+        let holePosition = PuttVector2(
+            x: configuration.holeDistance * sin(holeBeta),
+            y: configuration.holeDistance * cos(holeBeta)
+        )
+        let forward = PuttVector2(x: sin(holeBeta), y: cos(holeBeta))
+
+        var position1 = PuttVector2(x: 0, y: 0)
+        var velocity1 = PuttVector2(
+            x: configuration.initialVelocity * sin(configuration.initialDirectionDegrees * .pi / 180.0),
+            y: configuration.initialVelocity * cos(configuration.initialDirectionDegrees * .pi / 180.0)
+        )
+        var result = FlatPuttResult()
+        var arcLength = 0.0
+        var minLateralAtHole = Double.infinity
+        var maxAlong = 0.0
+        let iterationCount = Int((configuration.timeFinal / configuration.timeDelta).rounded()) + 1
+
+        for _ in 0..<iterationCount {
+            result.numberOfSteps += 1
+            let slope = terrain.localSlope(at: position1)
+            let acceleration = computeGlobalAcceleration(
+                velocity: velocity1,
+                slope: slope,
+                greenSpeed: configuration.greenSpeed
+            )
+            let velocity2 = PuttVector2(
+                x: velocity1.x + acceleration.ax * configuration.timeDelta,
+                y: velocity1.y + acceleration.ay * configuration.timeDelta
+            )
+            let position2 = PuttVector2(
+                x: position1.x + velocity1.x * configuration.timeDelta
+                    + 0.5 * acceleration.ax * configuration.timeDelta * configuration.timeDelta,
+                y: position1.y + velocity1.y * configuration.timeDelta
+                    + 0.5 * acceleration.ay * configuration.timeDelta * configuration.timeDelta
+            )
+            result.ballSpeedForHole = max(velocity2.magnitude, 1e-9)
+
+            let offset = PuttVector2(
+                x: position2.x - holePosition.x,
+                y: position2.y - holePosition.y
+            )
+            let along = offset.x * forward.x + offset.y * forward.y
+            let lateral = abs(offset.x * forward.y - offset.y * forward.x)
+            maxAlong = max(maxAlong, along)
+            if along >= -0.04 {
+                minLateralAtHole = min(minLateralAtHole, lateral)
+            }
+
+            if velocity2.magnitude < configuration.stopVelocity {
+                result.ballStopIf = 1
+                position1 = position2
+                velocity1 = velocity2
+                break
+            }
+
+            arcLength += hypot(position2.x - position1.x, position2.y - position1.y)
+            position1 = position2
+            velocity1 = velocity2
+        }
+
+        if !minLateralAtHole.isFinite {
+            let offset = PuttVector2(
+                x: position1.x - holePosition.x,
+                y: position1.y - holePosition.y
+            )
+            minLateralAtHole = hypot(offset.x, offset.y)
+        }
+
+        let stoppedShortBy = max(0, configuration.holeDistance - maxAlong)
+        result.arcLength = arcLength
+        result.finalPosition = position1
+        result.finalVelocity = velocity1
+
+        return (
+            HoleApproachScore(
+                lateralMissMeters: minLateralAtHole,
+                stoppedShortBy: stoppedShortBy
+            ),
+            result
+        )
+    }
+
+    /// v·β 격자에서 홀 lateral miss가 최소인 조건 1개를 고른다.
+    static func scanBestHoleApproachParallel<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double = 0,
+        minimumVelocity: Double,
+        maximumVelocity: Double,
+        velocityPointCount: Int,
+        minimumDirectionDegrees: Double,
+        maximumDirectionDegrees: Double,
+        directionPointCount: Int,
+        stopVelocity: Double = 0.01,
+        timeFinal: Double = 20,
+        timeDelta: Double = 0.01
+    ) -> InitialConditionCandidate? {
+        let velocities = exactValues(
+            minimum: minimumVelocity,
+            maximum: maximumVelocity,
+            count: velocityPointCount
+        )
+        let directions = exactValues(
+            minimum: minimumDirectionDegrees,
+            maximum: maximumDirectionDegrees,
+            count: directionPointCount
+        )
+
+        let best = LockedBestHoleApproach()
+        DispatchQueue.concurrentPerform(iterations: velocities.count) { index in
+            let velocity = velocities[index]
+            for direction in directions {
+                let configuration = MultibreakPuttConfiguration(
+                    greenSpeed: greenSpeed,
+                    initialVelocity: velocity,
+                    initialDirectionDegrees: direction,
+                    stopVelocity: stopVelocity,
+                    timeFinal: timeFinal,
+                    timeDelta: timeDelta,
+                    holeDistance: holeDistance,
+                    holeDirectionDegrees: holeDirectionDegrees
+                )
+                let evaluated = evaluateHoleApproach(configuration: configuration, terrain: terrain)
+                let candidate = InitialConditionCandidate(
+                    initialVelocity: velocity,
+                    directionDegrees: direction,
+                    result: evaluated.result
+                )
+                best.consider(evaluated.score.rankingValue, candidate)
+            }
+        }
+        return best.candidate
+    }
+}
+
+private final class LockedBestHoleApproach: @unchecked Sendable {
+    private let lock = NSLock()
+    private var score = Double.infinity
+    private(set) var candidate: InitialConditionCandidate?
+
+    func consider(_ score: Double, _ candidate: InitialConditionCandidate) {
+        lock.lock()
+        if score < self.score {
+            self.score = score
+            self.candidate = candidate
+        }
+        lock.unlock()
+    }
+}

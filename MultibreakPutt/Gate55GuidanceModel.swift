@@ -153,16 +153,22 @@ final class Gate55GuidanceModel: ObservableObject {
                     self.corridorIndex = result.defaultCorridorIndex
                     self.isComputing = false
                     let gridNote = "\(points)×\(points)"
-                    if result.primary == nil {
-                        self.statusMessage = result.usedRelaxedCaptureRadius
-                            ? "반경 완화 재계산 후에도 후보 없음 (\(gridNote))"
-                            : "후보 없음 (\(gridNote))"
-                    } else if result.usedRelaxedCaptureRadius {
-                        self.statusMessage =
-                            "반경 완화 · 후보 \(result.candidateCount)개 (\(gridNote))"
-                    } else {
+                    switch result.searchTier {
+                    case .verified:
                         self.statusMessage =
                             "후보 \(result.candidateCount)개 · 코리도 \(result.corridorCandidates.count)단계 (\(gridNote))"
+                    case .relaxedCapture:
+                        self.statusMessage =
+                            "반경 완화 · 후보 \(result.candidateCount)개 (\(gridNote))"
+                    case .expandedSearch:
+                        self.statusMessage =
+                            "확장 탐색 · 후보 \(result.candidateCount)개 (\(gridNote))"
+                    case .proximityEstimate:
+                        self.statusMessage =
+                            "추정 경로 · 홀인 미검증 (\(gridNote))"
+                    case .flatHeuristic:
+                        self.statusMessage =
+                            "거리 추정 · 브레이크 미반영 (\(gridNote))"
                     }
                 }
             case .forward:

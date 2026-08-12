@@ -122,7 +122,11 @@ final class ScanCoverageTracker {
     }
 
     /// 완료 시점의 다중 프레임 융합 지면. 호출 스레드를 막지 않는다.
-    func fusedGroundVerticesAsync(ball: ScanPose, hole: ScanPose) async -> [ScanVertex] {
+    func fusedGroundVerticesAsync(
+        ball: ScanPose,
+        hole: ScanPose,
+        margins: ScanCorridorMargins = PuttScanCorridor.tuningMargins
+    ) async -> [ScanVertex] {
         await withCheckedContinuation { continuation in
             queue.async {
                 let vertices = self.surfaceFusion.fusedVertices(
@@ -131,6 +135,9 @@ final class ScanCoverageTracker {
                     ballZ: ball.worldZ,
                     holeX: hole.worldX,
                     holeZ: hole.worldZ,
+                    lateralMargin: margins.lateralHalfWidth,
+                    ballEndMargin: margins.ballEndMargin,
+                    pastHoleMargin: margins.pastHoleMargin,
                     heightTolerance: 0.22
                 )
                 // 융합 후에도 잔여 발 스파이크를 한 번 더 제거

@@ -339,6 +339,11 @@ struct ScanFlowView: View {
             Text(controller.coverageQualityMessage)
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.9))
+
+            Text("스캔 모드: \(ScanFieldSettings.fieldMode.label) · \(ScanFieldSettings.fieldMode.settingsDetail)")
+                .font(.caption2)
+                .foregroundStyle(OSDPalette.textTertiary)
+                .lineLimit(2)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

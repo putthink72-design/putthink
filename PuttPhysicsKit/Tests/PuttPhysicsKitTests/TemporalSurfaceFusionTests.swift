@@ -149,4 +149,53 @@ final class TemporalSurfaceFusionTests: XCTestCase {
         XCTAssertEqual(vertices.count, 1)
         XCTAssertEqual(vertices[0].worldY, 0.30, accuracy: 0.001)
     }
+
+    func testIncludesTerrainUpToPastHoleMargin() {
+        let fusion = TemporalSurfaceFusion(cellSize: 0.05)
+        for frame in 0..<4 {
+            fusion.ingestFrame(
+                [
+                    .init(worldX: 0.01, worldY: 0.30, worldZ: 1.01, timestamp: Double(frame)),
+                    .init(worldX: 0.01, worldY: 0.31, worldZ: 2.75, timestamp: Double(frame))
+                ],
+                timestamp: Double(frame),
+                cameraXZ: SIMD2<Double>(Double(frame) * 0.2, 0)
+            )
+        }
+        let vertices = fusion.fusedVertices(
+            referenceHeight: 0.30,
+            ballX: 0,
+            ballZ: 0,
+            holeX: 0,
+            holeZ: 2
+        )
+        XCTAssertTrue(vertices.contains { abs($0.worldZ - 2.75) < 0.08 })
+    }
+
+    func testCompetitionModeIncludesPastHoleTerrain() {
+        let fusion = TemporalSurfaceFusion(cellSize: 0.05)
+        for frame in 0..<4 {
+            fusion.ingestFrame(
+                [
+                    .init(worldX: 0.01, worldY: 0.30, worldZ: 1.01, timestamp: Double(frame)),
+                    .init(worldX: 0.01, worldY: 0.31, worldZ: 2.75, timestamp: Double(frame))
+                ],
+                timestamp: Double(frame),
+                cameraXZ: SIMD2<Double>(Double(frame) * 0.2, 0)
+            )
+        }
+        let competition = PuttScanCorridor.margins(for: .competition)
+        let vertices = fusion.fusedVertices(
+            referenceHeight: 0.30,
+            ballX: 0,
+            ballZ: 0,
+            holeX: 0,
+            holeZ: 2,
+            lateralMargin: competition.lateralHalfWidth,
+            ballEndMargin: competition.ballEndMargin,
+            pastHoleMargin: competition.pastHoleMargin
+        )
+        XCTAssertTrue(vertices.contains { abs($0.worldZ - 2.75) < 0.08 })
+        XCTAssertTrue(vertices.contains { abs($0.worldZ - 1.01) < 0.08 })
+    }
 }
