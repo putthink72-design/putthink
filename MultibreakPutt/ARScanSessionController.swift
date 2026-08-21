@@ -167,16 +167,53 @@ final class ARScanSessionController: NSObject, ObservableObject {
     override init() {
         super.init()
         session.delegate = self
-        // 앱 시작 즉시 카메라·LiDAR 가동 — ARView 부착을 기다리지 않음 (cold start 단축).
-        prewarmCameraPreview()
+        applyPathModeForFieldMode()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScanFieldSettingsDidChange),
+            name: ScanFieldSettings.didChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 경기 → 편도, 튜닝 → 왕복.
+    func applyPathModeForFieldMode() {
+        guard !gate1RetestLockRoundTrip else { return }
+        switch ScanFieldSettings.fieldMode {
+        case .competition:
+            pathMode = .oneWay
+        case .tuning:
+            pathMode = .roundTrip
+        }
+    }
+
+    @objc private func handleScanFieldSettingsDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPathModeForFieldMode()
+        }
     }
 
     /// 스캔 구성(트래킹+LiDAR 메시+raw sceneDepth)이 현재 세션에서 돌아가는 중인지.
-    private(set) var scanConfigActive = false
+    @Published private(set) var scanConfigActive = false
+    /// idle 워밍업·스캔 시작 직전 LiDAR session.run 진행 중.
+    @Published private(set) var isPrewarmingPipeline = false
     /// 스캔 직후 커버리지 등 무거운 작업을 잠시 미룸(메시 수집·표시와 분리).
     private var heavyWorkAllowedAfter: CFTimeInterval = 0
     /// 볼 지정 전까지 메시 정점을 촘촘히 수집.
     private(set) var meshCaptureBurstActive = false
+
+    /// idle 화면에서 스캔 시작 버튼을 켤 수 있는지.
+    var scanStartReady: Bool {
+#if targetEnvironment(simulator)
+        true
+#else
+        scanConfigActive && !isPrewarmingPipeline
+#endif
+    }
 
     /// 메시 오버레이를 켜도 되는지 (스캔 진행 중만 — idle 워밍업은 화면에 표시하지 않음).
     var meshVisualizationAllowed: Bool {
@@ -216,26 +253,31 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     /// idle 동안 LiDAR+depth 파이프라인을 미리 올려 둔다(정점 수집·표시는 끔).
-    /// 시작 버튼에서는 session.run을 생략해 메인스레드 행업을 피한다.
+    /// session.run은 다음 run loop에서 실행해 UI·버튼 탭이 즉시 반응하게 한다.
+    private var prewarmTaskPending = false
+
     private func prewarmLiDARPipelineIfNeeded() {
 #if !targetEnvironment(simulator)
         guard flowState == .idle else { return }
-        guard !scanConfigActive else { return }
+        guard !scanConfigActive, !prewarmTaskPending else { return }
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
               ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
-        else {
-            let configuration = ARWorldTrackingConfiguration()
-            configuration.worldAlignment = .gravity
-            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-                configuration.frameSemantics.insert(.sceneDepth)
+        else { return }
+
+        prewarmTaskPending = true
+        isPrewarmingPipeline = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.prewarmTaskPending = false
+                self.isPrewarmingPipeline = false
             }
-            session.run(configuration, options: [])
-            return
+            guard self.flowState == .idle, !self.scanConfigActive else { return }
+            self.meshCaptureEnabled = false
+            self.session.run(Self.makeScanConfiguration(), options: [])
+            self.scanConfigActive = true
         }
-        meshCaptureEnabled = false
-        session.run(Self.makeScanConfiguration(), options: [])
-        scanConfigActive = true
-        // ARKit이 내부 ARMeshAnchor만 쌓음 — 표시·정점 복사는 스캔 시작 후.
 #endif
     }
 
@@ -261,6 +303,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     func startScan() {
         guard flowState == .idle || isTerminalState else { return }
+
+        applyPathModeForFieldMode()
 
         let reusingPrewarmedPipeline = scanConfigActive
 
@@ -317,19 +361,32 @@ final class ARScanSessionController: NSObject, ObservableObject {
             return
         }
 
+        if reusingPrewarmedPipeline {
+            meshCaptureEnabled = true
+            beginPlacingBallPhase()
+            snapshotExistingMeshAnchors()
+        } else {
+            flowState = .preparing
+            placementMessage = "LiDAR와 AR 트래킹 준비 중…"
+            trackingDescription = "준비 중"
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.flowState == .preparing else { return }
+                self.isPrewarmingPipeline = true
+                self.session.run(Self.makeScanConfiguration(), options: [])
+                self.scanConfigActive = true
+                self.meshCaptureEnabled = true
+                self.isPrewarmingPipeline = false
+                self.beginPlacingBallPhase()
+            }
+        }
+#endif
+    }
+
+    private func beginPlacingBallPhase() {
         flowState = .placingBall
         placementMessage = "바닥을 향해 천천히 움직이세요. 메시가 쌓이면 볼을 지정할 수 있습니다."
         trackingDescription = "스캔 중"
-
-        if reusingPrewarmedPipeline {
-            snapshotExistingMeshAnchors()
-        } else {
-            let config = Self.makeScanConfiguration()
-            session.run(config, options: [])
-            scanConfigActive = true
-            meshCaptureEnabled = true
-        }
-#endif
     }
 
     /// UI에서 "볼 기준점 지정" 버튼을 눌렀을 때.

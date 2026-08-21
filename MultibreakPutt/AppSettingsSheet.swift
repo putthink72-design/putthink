@@ -63,10 +63,8 @@ struct AppSettingsSheet: View {
                         fieldScanModeContent
                     }
 
-                    if mode == .scan {
-                        OSDSettingsSectionGroup(title: "스캔 옵션") {
-                            scanOptionsContent
-                        }
+                    OSDSettingsSectionGroup(title: "스캔 옵션") {
+                        scanOptionsContent
                     }
 
                     OSDSettingsSectionGroup(title: "조준 보정") {
@@ -129,7 +127,12 @@ struct AppSettingsSheet: View {
             PerformanceSettings.notifyDidChange()
             onAimSettingsChanged?()
         }
-        .onChange(of: scanFieldModeRaw) { _, _ in ScanFieldSettings.notifyDidChange() }
+        .onChange(of: scanFieldModeRaw) { _, _ in
+            ScanFieldSettings.notifyDidChange()
+            DispatchQueue.main.async {
+                controller.applyPathModeForFieldMode()
+            }
+        }
     }
 
     // MARK: - Scan
@@ -153,33 +156,35 @@ struct AppSettingsSheet: View {
 
     private var scanOptionsContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OSDSettingsToggleRow(
-                title: "재측정(왕복 고정)",
-                isOn: $controller.gate1RetestLockRoundTrip
-            )
-            if controller.gate1RetestLockRoundTrip {
-                fieldHelp("게이트1 전체 스택 재측정 모드 — 편도 회차는 시작할 수 없습니다. path_mode=roundTrip만 기록됩니다.")
+            if mode == .scan {
+                OSDSettingsToggleRow(
+                    title: "재측정(왕복 고정)",
+                    isOn: $controller.gate1RetestLockRoundTrip
+                )
+                if controller.gate1RetestLockRoundTrip {
+                    fieldHelp("게이트1 전체 스택 재측정 모드 — 편도 회차는 시작할 수 없습니다. path_mode=roundTrip만 기록됩니다.")
+                }
             }
 
             Text("스캔 경로")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(OSDPalette.textSecondary)
-            OSDSegmentedRow(
-                options: ScanPathMode.allCases,
-                label: \.label,
-                selection: Binding(
-                    get: { controller.pathMode },
-                    set: { controller.pathMode = $0 }
-                )
-            )
-            .disabled(controller.gate1RetestLockRoundTrip)
-            fieldHelp(controller.pathMode.detail)
+            if (ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning) == .competition {
+                OSDSettingsKVRow(title: "경로", value: "편도 · 홀 지정 직후 계산")
+                fieldHelp("경기 모드는 편도로 고정됩니다.")
+            } else {
+                OSDSettingsKVRow(title: "경로", value: "왕복 · 드리프트 보정")
+                fieldHelp("튜닝 모드는 왕복으로 고정됩니다. 홀 지정 후 볼로 돌아와 스캔을 종료하세요.")
+            }
 
             Text(String(format: "스무딩 σ: %.2f셀", controller.sigma))
                 .font(.system(size: 12))
                 .foregroundStyle(OSDPalette.textPrimary)
             Slider(value: $controller.sigma, in: 0.5...3, step: 0.25)
                 .tint(OSDPalette.accent)
+            if mode == .guidance {
+                fieldHelp("다음 스캔부터 적용됩니다.")
+            }
         }
     }
 

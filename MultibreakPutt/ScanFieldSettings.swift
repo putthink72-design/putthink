@@ -27,7 +27,7 @@ extension ScanFieldMode {
     var settingsDetail: String {
         switch self {
         case .competition:
-            return "볼→홀 편도 스캔. 볼 뒤 0.5m·홀 뒤 ~1m까지 높이맵에 포함됩니다."
+            return "편도 스캔 · 홀 지정 직후 계산. 볼 뒤 0.5m·홀 뒤 ~1m까지 높이맵에 포함됩니다."
         case .tuning:
             return "왕복 스캔·알고리즘 검증용(기본). 볼 뒤 0.5m·홀 뒤 ~1m."
         }

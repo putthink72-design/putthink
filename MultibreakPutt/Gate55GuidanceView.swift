@@ -841,7 +841,7 @@ final class FloorAddressWorldHUDView: UIView {
         }
         holeLayer.strokeColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 0.5).cgColor
         holeLayer.lineWidth = 4
-        aimLayer.strokeColor = UIColor(white: 1, alpha: 0.1).cgColor
+        aimLayer.strokeColor = UIColor(white: 1, alpha: 0.9).cgColor
         aimLayer.lineWidth = 5
         aimLayer.shadowColor = UIColor.white.cgColor
         aimLayer.shadowOpacity = 0.08
@@ -1508,7 +1508,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     lift: aimLift,
                     width: aimWidth,
                     thickness: 0.0025,
-                    color: UIColor(white: 1, alpha: 0.1),
+                    color: UIColor(white: 1, alpha: 0.9),
                     transform: transform,
                     parent: overlays,
                     entity: &aimEntity

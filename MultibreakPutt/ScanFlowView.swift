@@ -241,7 +241,19 @@ struct ScanFlowView: View {
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            OSDPrimaryButton(title: "스캔 시작") {
+            if !controller.scanStartReady {
+                HStack(spacing: 8) {
+                    ProgressView().tint(OSDPalette.accent)
+                    Text("LiDAR 준비 중…")
+                        .font(.caption)
+                        .foregroundStyle(OSDPalette.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            OSDPrimaryButton(
+                title: "스캔 시작",
+                enabled: controller.scanStartReady
+            ) {
                 controller.startScan()
             }
             if let exportError {
