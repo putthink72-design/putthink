@@ -198,4 +198,42 @@ final class TemporalSurfaceFusionTests: XCTestCase {
         XCTAssertTrue(vertices.contains { abs($0.worldZ - 2.75) < 0.08 })
         XCTAssertTrue(vertices.contains { abs($0.worldZ - 1.01) < 0.08 })
     }
+
+    func testPrunePrefersBallToCameraSegmentOverFarFlank() {
+        let fusion = TemporalSurfaceFusion(cellSize: 0.05, maximumCellCount: 10)
+        let ball = SIMD2<Double>(0, 0)
+        for index in 0..<6 {
+            let x = Double(index) * 0.05
+            for frame in 0..<4 {
+                fusion.ingestFrame(
+                    [.init(worldX: x, worldY: 0.30, worldZ: 0.06, timestamp: Double(frame))],
+                    timestamp: Double(frame),
+                    cameraXZ: SIMD2<Double>(0, Double(frame) * 0.2),
+                    keepNearBallXZ: ball
+                )
+            }
+        }
+        for index in 0..<16 {
+            let x = 4.0 + Double(index) * 0.05
+            for frame in 4..<8 {
+                fusion.ingestFrame(
+                    [.init(worldX: x, worldY: 0.30, worldZ: 8.0, timestamp: Double(frame))],
+                    timestamp: Double(frame),
+                    cameraXZ: SIMD2<Double>(0, 8),
+                    keepNearBallXZ: ball
+                )
+            }
+        }
+        XCTAssertLessThanOrEqual(fusion.observedCellCount, 10)
+        let vertices = fusion.fusedVertices(
+            referenceHeight: 0.30,
+            ballX: 0,
+            ballZ: 0,
+            holeX: 0,
+            holeZ: 8,
+            lateralMargin: 3.0
+        )
+        XCTAssertTrue(vertices.contains { $0.worldZ < 0.2 })
+        XCTAssertFalse(vertices.contains { $0.worldX > 3.5 })
+    }
 }

@@ -3,12 +3,14 @@ import Combine
 import Foundation
 import PuttPhysicsKit
 import RealityKit
+import simd
 import UIKit
 
 enum ScanFlowState: Equatable {
     case idle
     case preparing
     case placingBall
+    case behindBallSweep
     case walkingToHole
     case placingHole
     case returningToBall
@@ -67,7 +69,10 @@ struct CompletedScan {
     let cameraStartPose: ScanPose
     let cameraReturnPose: ScanPose
     let holeDistance: Double
+    /// 조준·홀 재앵커에 쓰는 현재 볼→홀 변환.
     let scanTransform: ScanCoordinateTransform
+    /// 높이맵을 만든 볼→홀 변환. 재앵커해도 바꾸지 않는다(등고·격자 샘플 정합).
+    let terrainTransform: ScanCoordinateTransform
     let referenceMethod: String
     let ballPlacementTrackingOK: Bool
     let holePlacementTrackingOK: Bool
@@ -79,6 +84,11 @@ struct CompletedScan {
     /// `temporal_scene_depth` 또는 관측 부족 시 `arkit_mesh_fallback`.
     let surfaceSource: String
     let surfaceVertexCount: Int
+    let lidarProfile: LiDARDeviceProfile
+    /// 볼 뒤 사선 Phase 품질 로그.
+    let behindBallSweepStats: BehindBallSweepGate.Stats
+    /// STEP 3 걷기 복도 Phase 품질 로그.
+    let walkCorridorStats: WalkCorridorGate.Stats
 
     /// Gate55Validation 호환 — 지면 볼 앵커.
     var startPose: ScanPose { ballAnchor }
@@ -92,6 +102,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     static let minimumHoleDistance = 0.05
 
     let session = ARSession()
+    let lidarProfile = LiDARDeviceProfile.resolve()
 
     @Published private(set) var flowState: ScanFlowState = .idle
     @Published private(set) var trackingDescription = "대기 중"
@@ -103,6 +114,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
     @Published private(set) var ballAnchor: ScanPose?
     @Published private(set) var holeAnchor: ScanPose?
     @Published private(set) var placementMessage: String?
+    /// 스캔 중 LiDAR 권장 화면 구역·틀기 게이지.
+    @Published private(set) var lidarTwistGuidance: LiDARTwistGuidanceState?
+    /// 볼 뒤 사선 Phase 진행·품질 게이지.
+    @Published private(set) var behindBallSweepGuidance: BehindBallSweepGuidanceState?
     /// AR 뷰가 화면 중앙 raycast를 수행하도록 요청한다.
     @Published var placementRequest: PlacementKind?
     @Published var sigma = 1.5
@@ -131,6 +146,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var lastMeshVertexPublishTime: TimeInterval = 0
     private var pendingMeshVertexCount = 0
     private var lastMeshCaptureTime: TimeInterval = 0
+    private var lastTwistGuidanceUpdate: CFTimeInterval = 0
+    private var lastBehindBallGuidanceUpdate: CFTimeInterval = 0
+    private var behindBallSweepStatsSnapshot = BehindBallSweepGate.Stats.empty
+    private var walkCorridorStatsSnapshot = WalkCorridorGate.Stats.empty
+    private var lastWalkTwistInBandSample: CFTimeInterval = 0
 
     private var cameraStartPose: ScanPose?
     private var cameraReturnPose: ScanPose?
@@ -152,8 +172,18 @@ final class ARScanSessionController: NSObject, ObservableObject {
         return hypot(hole.worldX - ball.worldX, hole.worldZ - ball.worldZ)
     }
 
+    /// 볼 뒤 사선 Phase — 언제든 다음 단계로(품질은 참고).
+    var canFinishBehindBallSweep: Bool {
+        flowState == .behindBallSweep
+    }
+
     /// 볼 지정 전에 LiDAR 메시가 충분히 형성됐는지. 최소 정점 수 기준.
-    static let meshReadyVertexThreshold = 400
+    static let meshReadyVertexThreshold = 180
+
+    /// STEP 3 — 홀이 가까울 수 있으므로 품질 게이트와 무관하게 항상 허용.
+    var canBeginHolePlacement: Bool {
+        flowState == .walkingToHole
+    }
 
     /// 볼 기준점을 지정해도 될 만큼 메시가 준비됐는지.
     var meshReady: Bool {
@@ -174,6 +204,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
             name: ScanFieldSettings.didChangeNotification,
             object: nil
         )
+        // 상용 스캐너와 같이 앱 기동과 동시에 LiDAR 세션을 올린다(ARView 부착 전에도 가능).
+        prewarmLiDARPipelineIfNeeded()
     }
 
     deinit {
@@ -207,6 +239,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private(set) var meshCaptureBurstActive = false
 
     /// idle 화면에서 스캔 시작 버튼을 켤 수 있는지.
+    /// 상용 LiDAR 앱과 같이 session.run 직후 바로 시작. tracking.normal 대기는 20초급 멈춤을 만든다.
     var scanStartReady: Bool {
 #if targetEnvironment(simulator)
         true
@@ -215,10 +248,15 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #endif
     }
 
+    /// ARKit 트래킹이 아직 초기화 중인지 (스캔 시작 대기 표시용).
+    @Published private(set) var trackingInitializing = true
+    /// idle 워밍업 중 관측된 ARMeshAnchor 수 (시작 버튼 UX용).
+    @Published private(set) var warmupMeshAnchorCount = 0
+
     /// 메시 오버레이를 켜도 되는지 (스캔 진행 중만 — idle 워밍업은 화면에 표시하지 않음).
     var meshVisualizationAllowed: Bool {
         switch flowState {
-        case .placingBall, .walkingToHole, .placingHole, .returningToBall, .preparing:
+        case .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .preparing:
             return true
         default:
             return false
@@ -230,14 +268,33 @@ final class ARScanSessionController: NSObject, ObservableObject {
         flowState == .idle && scanConfigActive
     }
 
-    /// 스캔용 ARKit 구성. 분류(classification)와 smoothedSceneDepth는 쓰지 않으므로
-    /// 요청하지 않는다(초기 가동 부하·발열 절감, 정확도 영향 없음 — 융합은 raw depth 사용).
+    /// 스캔용 ARKit 구성.
+    /// Apple: 쓰지 않는 옵션은 켜지 말 것(분류·평면·환경텍스처·고해상도 영상은 초기 메시를 늦춘다).
+    /// 상용 스캐너는 `.mesh` + raw `sceneDepth` + 가장 가벼운 videoFormat만 켠다.
     private static func makeScanConfiguration() -> ARWorldTrackingConfiguration {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
+        configuration.planeDetection = []
+        configuration.environmentTexturing = .none
         configuration.sceneReconstruction = .mesh
         configuration.frameSemantics.insert(.sceneDepth)
+        if let format = lightestScanVideoFormat() {
+            configuration.videoFormat = format
+        }
         return configuration
+    }
+
+    /// 픽셀 수·프레임이 가장 가벼운 지원 포맷. LiDAR 메시는 영상 해상도와 무관하다.
+    private static func lightestScanVideoFormat() -> ARConfiguration.VideoFormat? {
+        let formats = ARWorldTrackingConfiguration.supportedVideoFormats
+        let ranked = formats.filter { $0.framesPerSecond >= 30 }
+        let pool = ranked.isEmpty ? formats : ranked
+        return pool.min { a, b in
+            let ap = a.imageResolution.width * a.imageResolution.height
+            let bp = b.imageResolution.width * b.imageResolution.height
+            if ap != bp { return ap < bp }
+            return a.framesPerSecond < b.framesPerSecond
+        }
     }
 
     /// 화면 진입 직후 LiDAR 메시 파이프라인을 즉시 올린다(정점 수집·표시는 스캔 시작까지 끔).
@@ -252,8 +309,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         prewarmCameraPreview()
     }
 
-    /// idle 동안 LiDAR+depth 파이프라인을 미리 올려 둔다(정점 수집·표시는 끔).
-    /// session.run은 다음 run loop에서 실행해 UI·버튼 탭이 즉시 반응하게 한다.
+    /// idle 동안 LiDAR+depth 파이프라인을 미리 올린다. session.run은 비동기이므로 여기서 바로 호출한다.
     private var prewarmTaskPending = false
 
     private func prewarmLiDARPipelineIfNeeded() {
@@ -266,18 +322,12 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
         prewarmTaskPending = true
         isPrewarmingPipeline = true
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            defer {
-                self.prewarmTaskPending = false
-                self.isPrewarmingPipeline = false
-            }
-            guard self.flowState == .idle, !self.scanConfigActive else { return }
-            self.meshCaptureEnabled = false
-            self.session.run(Self.makeScanConfiguration(), options: [])
-            self.scanConfigActive = true
-        }
+        meshCaptureEnabled = true
+        session.run(Self.makeScanConfiguration(), options: [])
+        scanConfigActive = true
+        warmupMeshAnchorCount = 0
+        isPrewarmingPipeline = false
+        prewarmTaskPending = false
 #endif
     }
 
@@ -327,7 +377,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         lastMeshVertexPublishTime = 0
         pendingMeshVertexCount = 0
         meshCaptureBurstActive = true
-        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.12
+        // depth 복사는 백그라운드. 상용 앱처럼 스캔 시작 직후부터 커버리지를 쌓는다.
+        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.05
 
         if reusingPrewarmedPipeline {
             // 워밍업된 ARMeshAnchor·세션 유지 — 버퍼/카운트/session.run 재시작 없음.
@@ -364,20 +415,19 @@ final class ARScanSessionController: NSObject, ObservableObject {
         if reusingPrewarmedPipeline {
             meshCaptureEnabled = true
             beginPlacingBallPhase()
-            snapshotExistingMeshAnchors()
-        } else {
-            flowState = .preparing
-            placementMessage = "LiDAR와 AR 트래킹 준비 중…"
-            trackingDescription = "준비 중"
+            // 메인에서 대량 정점 복사를 바로 하지 않음 — 다음 틱에 스냅샷.
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                guard self.flowState == .preparing else { return }
-                self.isPrewarmingPipeline = true
-                self.session.run(Self.makeScanConfiguration(), options: [])
-                self.scanConfigActive = true
-                self.meshCaptureEnabled = true
-                self.isPrewarmingPipeline = false
-                self.beginPlacingBallPhase()
+                self?.snapshotExistingMeshAnchors()
+            }
+        } else {
+            isPrewarmingPipeline = true
+            session.run(Self.makeScanConfiguration(), options: [])
+            scanConfigActive = true
+            meshCaptureEnabled = true
+            isPrewarmingPipeline = false
+            beginPlacingBallPhase()
+            DispatchQueue.main.async { [weak self] in
+                self?.snapshotExistingMeshAnchors()
             }
         }
 #endif
@@ -385,7 +435,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private func beginPlacingBallPhase() {
         flowState = .placingBall
-        placementMessage = "바닥을 향해 천천히 움직이세요. 메시가 쌓이면 볼을 지정할 수 있습니다."
+        placementMessage = "바닥을 비추면 메시가 바로 보입니다. 볼 중심에 십자선을 맞추세요."
         trackingDescription = "스캔 중"
     }
 
@@ -404,9 +454,28 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #endif
     }
 
-    /// 홀까지 스캔 후 홀 지정 단계로 진입.
+    /// 호환용 — UI에서 볼 뒤 STEP을 제거했으므로 호출되면 걷기로만 보냄.
+    func finishBehindBallSweep() {
+        guard flowState == .behindBallSweep else { return }
+        advanceToWalkingAfterBehindBallSweep()
+    }
+
+    private func advanceToWalkingAfterBehindBallSweep() {
+        coverageTracker.setPhase(.walkCorridor)
+        coverageTracker.resetWalkCorridorAccumulator()
+        walkCorridorStatsSnapshot = .empty
+        flowState = .walkingToHole
+        behindBallSweepGuidance = nil
+        placementMessage = nil
+    }
+
+    /// 홀까지 스캔 후 홀 지정 단계로 진입. 짧은 퍼트도 언제든 가능.
     func beginHolePlacement() {
         guard flowState == .walkingToHole, ballAnchor != nil else { return }
+        enterHolePlacement()
+    }
+
+    private func enterHolePlacement() {
         flowState = .placingHole
         placementMessage = "화면 중앙 십자선을 실제 홀컵 중심에 맞춘 뒤 지정하세요."
     }
@@ -502,6 +571,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let driftCorrected = pathMode == .roundTrip
         let fieldMode = ScanFieldSettings.fieldMode
         let corridorMargins = PuttScanCorridor.margins(for: fieldMode)
+        let lidarProfile = self.lidarProfile
+        let behindBallStats = self.behindBallSweepStatsSnapshot
+        let walkStats = self.walkCorridorStatsSnapshot
 
 #if targetEnvironment(simulator)
         let returnCamera: ScanPose
@@ -567,6 +639,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     cameraReturnPose: pipelineReturn,
                     holeDistance: holeDistance,
                     scanTransform: transform,
+                    terrainTransform: transform,
                     referenceMethod: Self.referenceMethod,
                     ballPlacementTrackingOK: ballOK,
                     holePlacementTrackingOK: holeOK,
@@ -574,7 +647,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     pathMode: pathMode,
                     fieldMode: fieldMode,
                     surfaceSource: surfaceSource,
-                    surfaceVertexCount: surfaceVertexCount
+                    surfaceVertexCount: surfaceVertexCount,
+                    lidarProfile: lidarProfile,
+                    behindBallSweepStats: behindBallStats,
+                    walkCorridorStats: walkStats
                 )
                 await MainActor.run {
                     self.stopLiDARReconstructionKeepingWorld()
@@ -689,6 +765,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     cameraReturnPose: pipelineReturn,
                     holeDistance: holeDistance,
                     scanTransform: transform,
+                    terrainTransform: transform,
                     referenceMethod: Self.referenceMethod,
                     ballPlacementTrackingOK: ballOK,
                     holePlacementTrackingOK: holeOK,
@@ -696,7 +773,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     pathMode: pathMode,
                     fieldMode: fieldMode,
                     surfaceSource: surfaceSource,
-                    surfaceVertexCount: surfaceVertexCount
+                    surfaceVertexCount: surfaceVertexCount,
+                    lidarProfile: lidarProfile,
+                    behindBallSweepStats: behindBallStats,
+                    walkCorridorStats: walkStats
                 )
                 await MainActor.run {
                     self.stopLiDARReconstructionKeepingWorld()
@@ -812,6 +892,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
         guidanceTrackingOK = true
         resetCoverageState()
         flowState = .idle
+        lidarTwistGuidance = nil
+        behindBallSweepGuidance = nil
+        behindBallSweepStatsSnapshot = .empty
+        walkCorridorStatsSnapshot = .empty
+        lastWalkTwistInBandSample = 0
         // LiDAR 끄고, idle에서 다시 워밍업
         stopLiDARReconstructionKeepingWorld()
         prewarmCameraPreview()
@@ -851,16 +936,16 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private var isCoverageActiveState: Bool {
         switch flowState {
-        case .preparing, .placingBall, .walkingToHole, .placingHole, .returningToBall:
+        case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall:
             return true
         default:
             return false
         }
     }
 
-    /// ARMeshAnchor 정점 수집 (스캔 진행 중만).
+    /// ARMeshAnchor 정점 수집 — 스캔 중 + idle 워밍업(시작 시 버퍼가 비지 않게).
     private var isMeshCaptureState: Bool {
-        meshCaptureEnabled && isCoverageActiveState
+        meshCaptureEnabled && (isCoverageActiveState || meshWarmupActive)
     }
 
     /// 스캔 데이터 수집이 끝나면 LiDAR 메시·sceneDepth를 끄고 월드 트래킹만 유지한다.
@@ -896,11 +981,15 @@ final class ARScanSessionController: NSObject, ObservableObject {
             timestamp: pose.timestamp
         )
         ballPlacementTrackingOK = !trackingLimited
-        placementMessage = String(
-            format: "볼 기준점 지정 완료 (%.2f, %.2f, %.2f)",
-            pose.worldX, pose.worldY, pose.worldZ
-        )
+        coverageTracker.setPhase(.walkCorridor)
+        coverageTracker.resetWalkCorridorAccumulator()
+        coverageTracker.resetBehindBallAccumulator()
+        behindBallSweepStatsSnapshot = .empty
+        walkCorridorStatsSnapshot = .empty
+        behindBallSweepGuidance = nil
+        // 별도 「볼 뒤 대기」 STEP 없음 — 걷기부터 항상 사선 스캔.
         flowState = .walkingToHole
+        placementMessage = nil
     }
 
     private func confirmHoleAnchor(_ pose: ScanPose) {
@@ -956,6 +1045,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
                 cameraReturnPose: scan.cameraReturnPose,
                 holeDistance: distance,
                 scanTransform: transform,
+                terrainTransform: scan.terrainTransform,
                 referenceMethod: Self.referenceMethod,
                 ballPlacementTrackingOK: scan.ballPlacementTrackingOK,
                 holePlacementTrackingOK: !trackingLimited,
@@ -963,7 +1053,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
                 pathMode: scan.pathMode,
                 fieldMode: scan.fieldMode,
                 surfaceSource: scan.surfaceSource,
-                surfaceVertexCount: scan.surfaceVertexCount
+                surfaceVertexCount: scan.surfaceVertexCount,
+                lidarProfile: scan.lidarProfile,
+                behindBallSweepStats: scan.behindBallSweepStats,
+                walkCorridorStats: scan.walkCorridorStats
             )
             holeAnchor = pose
             guidanceTrackingEvents.removeAll()
@@ -982,6 +1075,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         cameraStartPose = ScanPose(worldX: 0, worldY: 1.2, worldZ: 0, timestamp: 0)
         ballPlacementTrackingOK = true
         placementMessage = "시뮬레이터 볼 기준 (0, 0.3, 0)"
+        coverageTracker.setPhase(.walkCorridor)
+        coverageTracker.resetWalkCorridorAccumulator()
         flowState = .walkingToHole
     }
 
@@ -1091,11 +1186,221 @@ final class ARScanSessionController: NSObject, ObservableObject {
         return vertices
     }
 #endif
+
+    // MARK: - LiDAR twist guidance
+
+    private var showsLiDARTwistGuidance: Bool {
+        switch flowState {
+        case .walkingToHole, .placingHole, .returningToBall:
+            return ballAnchor != nil
+        default:
+            return false
+        }
+    }
+
+    private var showsBehindBallSweepGuidance: Bool {
+        flowState == .behindBallSweep && ballAnchor != nil
+    }
+
+    private func updateBehindBallSweepGuidance(frame: ARFrame, stats: BehindBallSweepGate.Stats) {
+        guard showsBehindBallSweepGuidance else {
+            if behindBallSweepGuidance != nil { behindBallSweepGuidance = nil }
+            return
+        }
+        let now = CACurrentMediaTime()
+        guard now - lastBehindBallGuidanceUpdate >= 0.12 else { return }
+        lastBehindBallGuidanceUpdate = now
+
+        let pitchOK = Self.isLookingAtGround(cameraTransform: frame.camera.transform)
+        let cellProgress = min(
+            1,
+            Double(stats.acceptedCells) / Double(BehindBallSweepGate.requiredAcceptedCells)
+        )
+        let timeProgress = min(
+            1,
+            stats.durationSeconds / BehindBallSweepGate.minimumDurationSeconds
+        )
+        let frameProgress = min(
+            1,
+            Double(stats.goodFrames) / Double(BehindBallSweepGate.minimumGoodFrames)
+        )
+        let progress = min(1, max(cellProgress, 0.65 * max(timeProgress, frameProgress)))
+        let canContinue = stats.qualityMet
+        let statusText: String
+        if canContinue {
+            statusText = "참고 품질 OK"
+        } else if stats.acceptedCells < BehindBallSweepGate.requiredAcceptedCells {
+            statusText = "홀 방향 바닥을 더 훑으면 좋음"
+        } else if stats.durationSeconds < BehindBallSweepGate.minimumDurationSeconds {
+            statusText = "조금 더 유지하면 좋음"
+        } else {
+            statusText = "각도·거리 확인"
+        }
+        let next = BehindBallSweepGuidanceState(
+            progress: progress,
+            acceptedCells: stats.acceptedCells,
+            requiredCells: BehindBallSweepGate.requiredAcceptedCells,
+            durationSeconds: stats.durationSeconds,
+            pitchOK: pitchOK,
+            canContinue: canContinue,
+            statusText: statusText
+        )
+        behindBallSweepStatsSnapshot = stats
+        if behindBallSweepGuidance != next {
+            behindBallSweepGuidance = next
+        }
+    }
+
+    private func updateLiDARTwistGuidance(frame: ARFrame) {
+        guard showsLiDARTwistGuidance, let ball = ballAnchor else {
+            if lidarTwistGuidance != nil { lidarTwistGuidance = nil }
+            return
+        }
+        let now = CACurrentMediaTime()
+        guard now - lastTwistGuidanceUpdate >= 0.1 else { return }
+        lastTwistGuidanceUpdate = now
+
+        let orientation = Self.interfaceOrientation()
+        let viewport = UIScreen.main.bounds.size
+        var xs: [Double] = []
+        if let x = Self.normalizedScreenX(
+            worldX: ball.worldX,
+            worldY: ball.worldY,
+            worldZ: ball.worldZ,
+            frame: frame,
+            orientation: orientation,
+            viewport: viewport
+        ) {
+            xs.append(x)
+        }
+        if let hole = holeAnchor,
+           let x = Self.normalizedScreenX(
+            worldX: hole.worldX,
+            worldY: hole.worldY,
+            worldZ: hole.worldZ,
+            frame: frame,
+            orientation: orientation,
+            viewport: viewport
+           ) {
+            xs.append(x)
+        }
+        let markerX = xs.isEmpty ? nil : xs.reduce(0, +) / Double(xs.count)
+        let profile = lidarProfile
+        let inBand = markerX.map { profile.isInTargetBand(normalizedX: $0) } ?? false
+        let pitchOK = Self.isLookingAtGround(cameraTransform: frame.camera.transform)
+
+        var walkProgress: Double?
+        var walkDistance: Double?
+        var walkRibbon: Int?
+        var walkCanArrive: Bool?
+        var walkStatus: String?
+        if flowState == .walkingToHole {
+            let stats = coverageTracker.latestWalkCorridorStats
+            walkCorridorStatsSnapshot = stats
+            if now - lastWalkTwistInBandSample >= 0.33 {
+                lastWalkTwistInBandSample = now
+                coverageTracker.applyWalkTwistInBand(inBand, frameTimestamp: frame.timestamp)
+            }
+            walkProgress = WalkCorridorGate.progress(stats: stats)
+            walkDistance = stats.maxDistanceFromBall
+            walkRibbon = stats.ribbonCells
+            walkCanArrive = stats.qualityMet
+            if stats.qualityMet {
+                walkStatus = "참고 품질 OK"
+            } else if stats.maxDistanceFromBall < WalkCorridorGate.minWalkDistanceFromBall {
+                walkStatus = "홀 쪽으로 더 걸으면 좋음"
+            } else if stats.ribbonCells < WalkCorridorGate.requiredRibbonCells {
+                walkStatus = "라인 리본 더 채우면 좋음"
+            } else {
+                walkStatus = "스캔 중"
+            }
+        }
+
+        let next = LiDARTwistGuidanceState(
+            bandMinX: profile.targetScreenBandMinX,
+            bandMaxX: profile.targetScreenBandMaxX,
+            markerNormalizedX: markerX,
+            inBand: inBand,
+            actionText: profile.twistActionLabel(normalizedX: markerX),
+            statusText: {
+                if markerX != nil {
+                    return inBand ? "화면 안 · OK" : "볼·홀을 화면 안으로"
+                }
+                return "볼·홀이 화면 밖"
+            }(),
+            pitchLookingAtGround: pitchOK,
+            walkProgress: walkProgress,
+            walkDistanceMeters: walkDistance,
+            walkRibbonCells: walkRibbon,
+            walkCanArrive: walkCanArrive,
+            walkStatusText: walkStatus
+        )
+        if lidarTwistGuidance != next {
+            lidarTwistGuidance = next
+        }
+    }
+
+    private static func interfaceOrientation() -> UIInterfaceOrientation {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        return scene?.interfaceOrientation ?? .portrait
+    }
+
+    private static func normalizedScreenX(
+        worldX: Double,
+        worldY: Double,
+        worldZ: Double,
+        frame: ARFrame,
+        orientation: UIInterfaceOrientation,
+        viewport: CGSize
+    ) -> Double? {
+        let world = SIMD3<Float>(Float(worldX), Float(worldY), Float(worldZ))
+        let point = frame.camera.projectPoint(world, orientation: orientation, viewportSize: viewport)
+        guard point.x.isFinite, point.y.isFinite, viewport.width > 1 else { return nil }
+        let cam = frame.camera.transform.inverse * SIMD4<Float>(world.x, world.y, world.z, 1)
+        guard cam.z < -0.05 else { return nil }
+        let x = Double(point.x / viewport.width)
+        guard x >= -0.15, x <= 1.15 else { return nil }
+        return min(max(x, 0), 1)
+    }
+
+    /// 걷기·사선 스캔: 바닥을 비스듬히 비추는 자세.
+    /// 폰을 바닥과 수직(세워 듦) → fail. 살짝 숙여 바닥을 보면 OK. 완전히 내려다보는 nadir도 허용.
+    private static func isLookingAtGround(cameraTransform: simd_float4x4) -> Bool {
+        let look = SIMD3<Float>(
+            -cameraTransform.columns.2.x,
+            -cameraTransform.columns.2.y,
+            -cameraTransform.columns.2.z
+        )
+        let length = simd_length(look)
+        guard length > 1e-5 else { return false }
+        let down = SIMD3<Float>(0, -1, 0)
+        let cosAngle = simd_dot(look / length, down)
+        // cos≈0: 수평(세워 듦) · cos≈1: 직하방. 약 8°~85° 하향을 OK.
+        return cosAngle > 0.14 && cosAngle < 0.99
+    }
 }
 
 extension ARScanSessionController: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let state = flowState
+        if state == .idle, scanConfigActive {
+            let meshCount = frame.anchors.lazy.filter { $0 is ARMeshAnchor }.count
+            var initializing = false
+            if case .limited(.initializing) = frame.camera.trackingState {
+                initializing = true
+            }
+            if meshCount != warmupMeshAnchorCount || initializing != trackingInitializing {
+                DispatchQueue.main.async {
+                    self.warmupMeshAnchorCount = meshCount
+                    self.trackingInitializing = initializing
+                    if case .normal = frame.camera.trackingState {
+                        self.trackingInitializing = false
+                    }
+                }
+            }
+        }
         if state == .preparing {
             DispatchQueue.main.async {
                 guard self.flowState == .preparing else { return }
@@ -1105,16 +1410,36 @@ extension ARScanSessionController: ARSessionDelegate {
             }
         }
 
+        updateLiDARTwistGuidance(frame: frame)
+
         // Polycam형 커버리지: 스캔 직후 유예 뒤에 depth 샘플링 (첫 LiDAR 가동과 겹치면 행업).
         if isCoverageActiveState,
            meshCaptureEnabled,
            CACurrentMediaTime() >= heavyWorkAllowedAfter {
             let limited = trackingLimited
-            let ballY = self.ballAnchor?.worldY
-            coverageTracker.process(frame: frame, trackingLimited: limited, ballY: ballY) { [weak self] snapshot in
+            let ball = self.ballAnchor
+            let ballY = ball?.worldY
+            let ballXZ = ball.map { SIMD2<Double>($0.worldX, $0.worldZ) }
+            let phase: ScanDepthPhase = state == .behindBallSweep ? .behindBallSweep : .walkCorridor
+            coverageTracker.process(
+                frame: frame,
+                trackingLimited: limited,
+                phase: phase,
+                ball: ball,
+                ballY: ballY,
+                ballXZ: ballXZ
+            ) { [weak self] snapshot in
                 guard let self, self.isCoverageActiveState else { return }
                 self.applyCoverageSnapshot(snapshot)
+                if self.flowState == .behindBallSweep {
+                    let stats = self.coverageTracker.latestBehindBallStats
+                    self.updateBehindBallSweepGuidance(frame: frame, stats: stats)
+                } else if self.flowState == .walkingToHole {
+                    self.walkCorridorStatsSnapshot = self.coverageTracker.latestWalkCorridorStats
+                }
             }
+        } else if showsBehindBallSweepGuidance {
+            updateBehindBallSweepGuidance(frame: frame, stats: behindBallSweepStatsSnapshot)
         }
     }
 
@@ -1150,34 +1475,47 @@ extension ARScanSessionController: ARSessionDelegate {
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
         let description: String
         let limited: Bool
+        let timestamp = session.currentFrame?.timestamp ?? 0
+        let meshAnchorCount = session.currentFrame?.anchors.filter { $0 is ARMeshAnchor }.count ?? 0
+        let initializing: Bool
         switch camera.trackingState {
         case .normal:
             description = "정상"
             limited = false
+            initializing = false
         case .notAvailable:
             description = "사용 불가"
             limited = true
+            initializing = false
         case .limited(let reason):
             limited = true
             switch reason {
             case .initializing:
                 description = "제한됨: 초기화 중"
+                initializing = true
             case .excessiveMotion:
                 description = "제한됨: 움직임이 너무 빠름"
+                initializing = false
             case .insufficientFeatures:
                 description = "제한됨: 특징점 부족"
+                initializing = false
             case .relocalizing:
                 description = "제한됨: 위치 재탐색 중"
+                initializing = false
             @unknown default:
                 description = "제한됨"
+                initializing = false
             }
         }
-        let timestamp = session.currentFrame?.timestamp ?? 0
         DispatchQueue.main.async {
             self.trackingDescription = description
             self.trackingLimited = limited
+            self.trackingInitializing = initializing
+            if self.flowState == .idle {
+                self.warmupMeshAnchorCount = meshAnchorCount
+            }
             switch self.flowState {
-            case .preparing, .placingBall, .walkingToHole, .placingHole, .returningToBall:
+            case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall:
                 self.trackingEvents.append(
                     TrackingEvent(timestamp: timestamp, state: description, isLimited: limited)
                 )

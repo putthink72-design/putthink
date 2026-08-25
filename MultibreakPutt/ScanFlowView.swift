@@ -88,7 +88,13 @@ struct ScanFlowView: View {
                         .padding(.top, 8)
                 }
 
-                if let message = controller.placementMessage {
+                if let twist = controller.lidarTwistGuidance, showsTwistCards {
+                    LiDARTwistGuidanceCards(guidance: twist)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 8)
+                }
+
+                if let message = controller.placementMessage, showsPlacementBanner {
                     Text(message)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white)
@@ -111,6 +117,25 @@ struct ScanFlowView: View {
                 .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
                 .padding(.bottom, OSDTopChromeMetrics.floatingCardBottomPadding)
             }
+        }
+    }
+
+    /// STEP 2/3에서는 안내 카드가 있으므로 파란 placement 배너는 숨김.
+    private var showsPlacementBanner: Bool {
+        switch controller.flowState {
+        case .behindBallSweep, .walkingToHole:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private var showsTwistCards: Bool {
+        switch controller.flowState {
+        case .walkingToHole, .placingHole, .returningToBall:
+            return true
+        default:
+            return false
         }
     }
 
@@ -172,14 +197,29 @@ struct ScanFlowView: View {
                     referenceStatusCompact
                 }
             }
+        case .behindBallSweep:
+            // 레거시 상태 — 바로 걷기로 넘김.
+            OSDOnboardCard {
+                stepPanel(
+                    step: "STEP 2 / 2",
+                    title: "홀까지 사선 스캔",
+                    body: controller.lidarProfile.puttLineScreenHint,
+                    button: "홀 방향 걷기로",
+                    action: controller.finishBehindBallSweep,
+                    enabled: true
+                ) {
+                    referenceStatusCompact
+                }
+            }
         case .walkingToHole:
             OSDOnboardCard {
                 stepPanel(
                     step: "STEP 2 / 2",
-                    title: "홀까지 스캔하세요",
-                    body: "바닥 메시가 이어지도록 천천히 홀까지 걸어가세요.",
+                    title: "홀까지 사선 스캔",
+                    body: "\(controller.lidarProfile.puttLineScreenHint) 홀이 가까우면 바로 지정해도 됩니다.",
                     button: "홀 도착 · 홀 지정",
-                    action: controller.beginHolePlacement
+                    action: controller.beginHolePlacement,
+                    enabled: true
                 ) {
                     referenceStatusCompact
                 }
@@ -236,23 +276,14 @@ struct ScanFlowView: View {
 
     private var idleOnboardCard: some View {
         OSDOnboardCard {
-            Text("볼과 홀컵 사이의 그린을 스캔하면\n퍼팅 경로를 안내합니다.")
+            Text("볼·홀 사이 그린을 스캔합니다.\n바닥을 약 30° 사선으로 비추며 홀까지 걸으세요.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            if !controller.scanStartReady {
-                HStack(spacing: 8) {
-                    ProgressView().tint(OSDPalette.accent)
-                    Text("LiDAR 준비 중…")
-                        .font(.caption)
-                        .foregroundStyle(OSDPalette.textSecondary)
-                }
-                .frame(maxWidth: .infinity)
-            }
             OSDPrimaryButton(
                 title: "스캔 시작",
-                enabled: controller.scanStartReady
+                enabled: true
             ) {
                 controller.startScan()
             }
@@ -324,7 +355,7 @@ struct ScanFlowView: View {
 
     private var showsCoverageUI: Bool {
         switch controller.flowState {
-        case .preparing, .placingBall, .walkingToHole, .placingHole, .returningToBall, .processing:
+        case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .processing:
             return true
         default:
             return false
@@ -333,14 +364,16 @@ struct ScanFlowView: View {
 
     private var coverageBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Label("파랑(선+면)=추가 스캔", systemImage: "square.grid.3x3.fill")
-                    .foregroundStyle(Color.blue)
-                Label("흰 선=완료", systemImage: "checkmark.circle")
-                    .foregroundStyle(Color.white)
-                Spacer()
+            if !isCompactCoverage {
+                HStack(spacing: 10) {
+                    Label("파랑(선+면)=추가 스캔", systemImage: "square.grid.3x3.fill")
+                        .foregroundStyle(Color.blue)
+                    Label("흰 선=완료", systemImage: "checkmark.circle")
+                        .foregroundStyle(Color.white)
+                    Spacer()
+                }
+                .font(.caption2.weight(.semibold))
             }
-            .font(.caption2.weight(.semibold))
 
             Text(controller.coverageSnapshot.statusLine)
                 .font(.caption.monospacedDigit().weight(.semibold))
@@ -348,19 +381,31 @@ struct ScanFlowView: View {
             ProgressView(value: controller.coverageSnapshot.stableRatio)
                 .tint(OSDPalette.accent)
 
-            Text(controller.coverageQualityMessage)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.9))
+            if !isCompactCoverage {
+                Text(controller.coverageQualityMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.9))
 
-            Text("스캔 모드: \(ScanFieldSettings.fieldMode.label) · \(ScanFieldSettings.fieldMode.settingsDetail)")
-                .font(.caption2)
-                .foregroundStyle(OSDPalette.textTertiary)
-                .lineLimit(2)
+                Text("스캔 모드: \(ScanFieldSettings.fieldMode.label) · \(ScanFieldSettings.fieldMode.settingsDetail)")
+                    .font(.caption2)
+                    .foregroundStyle(OSDPalette.textTertiary)
+                    .lineLimit(2)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(OSDPalette.glassStrong, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
+    }
+
+    /// STEP 2/3에서는 안내 카드가 많아 커버리지를 한 줄로 줄임.
+    private var isCompactCoverage: Bool {
+        switch controller.flowState {
+        case .behindBallSweep, .walkingToHole:
+            return true
+        default:
+            return false
+        }
     }
 
     private var selectedRegion: PuttPhysicsKit.NormalizedRegion {
@@ -432,6 +477,8 @@ private struct PlacementARView: UIViewRepresentable {
         view.renderOptions.insert(.disableMotionBlur)
         view.renderOptions.insert(.disableDepthOfField)
         view.renderOptions.insert(.disableGroundingShadows)
+        view.renderOptions.insert(.disableCameraGrain)
+        view.renderOptions.insert(.disableHDR)
         context.coordinator.arView = view
         context.coordinator.attachDisplayLink(controller: controller)
         // 머티리얼 셰이더를 미리 컴파일 — 첫 메시 표시 히칭 제거.
@@ -445,6 +492,12 @@ private struct PlacementARView: UIViewRepresentable {
         context.coordinator.arView = uiView
         context.coordinator.controller = controller
         context.coordinator.lineWidthPixels = 2
+        // Apple 샘플·상용 스캐너: ARKit GPU 메시를 즉시 그림. CPU 리본 재생성과 별개.
+        if controller.meshVisualizationAllowed {
+            uiView.debugOptions.insert(.showSceneUnderstanding)
+        } else {
+            uiView.debugOptions.remove(.showSceneUnderstanding)
+        }
         if controller.meshVisualizationAllowed {
             let wasVisible = context.coordinator.meshEnabled && !context.coordinator.meshHidden
             context.coordinator.meshEnabled = true
@@ -459,8 +512,10 @@ private struct PlacementARView: UIViewRepresentable {
             context.coordinator.meshHidden = true
             context.coordinator.brightMesh.contentHidden = true
         } else {
-            context.coordinator.meshEnabled = false
-            context.coordinator.brightMesh.setEnabled(false, in: uiView)
+            // teardown 금지 — 숨김만. (setEnabled false는 워밍업 메시를 버려 깜빡임·소실 유발)
+            context.coordinator.meshEnabled = true
+            context.coordinator.meshHidden = true
+            context.coordinator.brightMesh.contentHidden = true
         }
         context.coordinator.syncMarkers(
             in: uiView,
@@ -519,7 +574,7 @@ private struct PlacementARView: UIViewRepresentable {
             self.controller = controller
             guard displayLink == nil else { return }
             let link = CADisplayLink(target: self, selector: #selector(onDisplayLink))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 15, preferred: 12)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 24)
             link.add(to: .main, forMode: .common)
             displayLink = link
         }
@@ -547,12 +602,12 @@ private struct PlacementARView: UIViewRepresentable {
             let burst = controller.meshCaptureBurstActive && !meshHidden
             if burst != burstRateApplied {
                 link.preferredFrameRateRange = burst
-                    ? CAFrameRateRange(minimum: 15, maximum: 30, preferred: 24)
-                    : CAFrameRateRange(minimum: 8, maximum: 15, preferred: 12)
+                    ? CAFrameRateRange(minimum: 24, maximum: 45, preferred: 30)
+                    : CAFrameRateRange(minimum: 12, maximum: 24, preferred: 18)
                 burstRateApplied = burst
             }
             // 숨김 워밍업은 여유 있게, 첫 공개 burst는 촘촘히 갱신.
-            let tickInterval: TimeInterval = meshHidden ? 0.12 : (burst ? 0.04 : 0.08)
+            let tickInterval: TimeInterval = meshHidden ? 0.08 : (burst ? 0.033 : 0.06)
             guard link.timestamp - lastMeshTick >= tickInterval else { return }
             lastMeshTick = link.timestamp
             brightMesh.setEnabled(true, in: view)

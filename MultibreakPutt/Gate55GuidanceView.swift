@@ -453,10 +453,11 @@ struct Gate55GuidanceView: View {
 
     private func scanStatusText(_ scan: CompletedScan) -> String {
         String(
-            format: "기준 AR raycast · 볼→홀 %.2fm · %@ · %@",
+            format: "기준 AR raycast · 볼→홀 %.2fm · %@ · %@ · %@",
             scan.holeDistance,
             scan.fieldMode.label,
-            scan.driftCorrected ? "왕복" : "편도·미보정"
+            scan.driftCorrected ? "왕복" : "편도·미보정",
+            scan.lidarProfile.productName
         )
     }
 
@@ -972,7 +973,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var contourRoot: Entity?
         private var contourScanID: String?
         private var contourStyleVersionApplied = 0
-        private static let contourStyleVersion = 11
+        private static let contourStyleVersion = 13
         private static let contourLineWidthPixels: Float = 2
         /// 2px 환산값이 너무 얇을 때(근접·뷰포트 미준비) 최소 월드 폭.
         private static let contourLineWidthWorldMin: Float = 0.0036
@@ -980,7 +981,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var wormDashRoot: Entity?
         private var gridFlowScanID: String?
         private var gridFlowStyleVersionApplied = 0
-        private static let gridFlowStyleVersion = 15
+        private static let gridFlowStyleVersion = 16
         private static let gridLineWidthPixels: Float = 2
         private var gridFlowWormWidthApplied: Float = 0
         private var lastVizMode: GreenSurfaceVizMode?
@@ -1305,6 +1306,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lockedBallPose = scan.ballAnchor
             }
             if lockedHolePose != scan.holeAnchor {
+                clearContours()
+                clearGridFlow()
+                lastVizMode = nil
                 ARReferenceMarkers.removeWorldLocked(
                     session: session,
                     in: view,
@@ -2264,6 +2268,8 @@ struct Gate55ARAimView: UIViewRepresentable {
             in view: ARView,
             ballWorld: SIMD3<Float>
         ) {
+            // transform: 조준선용. 등고 배치는 scan.terrainTransform 사용.
+            _ = transform
             let density = PerformanceSettings.effectiveOverlayDensity
             let corridorMargins = PuttScanCorridor.margins(for: scan.fieldMode)
             let arFrameReady = view.session.currentFrame != nil
@@ -2284,14 +2290,32 @@ struct Gate55ARAimView: UIViewRepresentable {
             let config = ContourBuildConfiguration(
                 intervalMeters: density.contourIntervalMeters,
                 maxLevels: min(24, density.contourMaxPolylines),
-                corridorHalfWidth: corridorMargins.displayHalfWidth,
+                // 격자는 ±3m 프레임, 등고는 퍼트 라인 근처 실측만 — 외삽·플랭크 평행선이
+                // 노란 경로선 오른쪽으로 밀려 보이는 현상을 줄인다.
+                corridorHalfWidth: min(corridorMargins.displayHalfWidth, 1.5),
                 holeDistance: scan.holeDistance,
                 corridorMargin: corridorMargins.displayPastHoleMargin,
-                requireKnownCell: false,
+                requireKnownCell: true,
+                requireMeasuredCell: true,
                 smoothIterations: thermal >= .serious ? 2 : 4,
                 maxSegmentLength: thermal >= .serious ? 0.028 : 0.018
             )
             var polylines = ContourLineBuilder.build(map: scan.result.smoothed, configuration: config)
+            if polylines.isEmpty {
+                // 실측이 너무 성기면 보간 셀까지 허용하되, 전역 외삽(false)은 쓰지 않는다.
+                let fallback = ContourBuildConfiguration(
+                    intervalMeters: config.intervalMeters,
+                    maxLevels: config.maxLevels,
+                    corridorHalfWidth: config.corridorHalfWidth,
+                    holeDistance: config.holeDistance,
+                    corridorMargin: config.corridorMargin,
+                    requireKnownCell: true,
+                    requireMeasuredCell: false,
+                    smoothIterations: config.smoothIterations,
+                    maxSegmentLength: config.maxSegmentLength
+                )
+                polylines = ContourLineBuilder.build(map: scan.result.smoothed, configuration: fallback)
+            }
             if polylines.isEmpty {
                 polylines = ContourLineBuilder.build(map: scan.result.corrected, configuration: config)
             }
@@ -2315,10 +2339,16 @@ struct Gate55ARAimView: UIViewRepresentable {
                 Self.contourLineWidthWorldMin
             )
             var added = 0
+            // 높이맵을 만든 좌표계로 배치. 홀 재앵커 후 scanTransform만 바뀌면 등고가 옆으로 밀린다.
+            let terrainTransform = scan.terrainTransform
 
             for line in polylines {
                 guard added < density.contourMaxPolylines else { break }
                 guard line.points.count >= 3 else { continue }
+
+                let minAbsX = ContourLineBuilder.minAbsLateral(line)
+                // 퍼트 라인에서 너무 먼 플랭크-only 등고는 시인성만 해치고 “오른쪽 치우침”처럼 보인다.
+                guard minAbsX <= 1.35 else { continue }
 
                 // 높이맵 상대고도: 높을수록 큰 값(worldY − 볼). 정규화 1=최고→빨강, 0=최저→파랑
                 // (GreenSimulator elevationColor · ScanExporter heatColor와 동일 방향)
@@ -2334,7 +2364,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                             localX: point.x,
                             localY: point.y,
                             lift: pointLift,
-                            transform: transform
+                            transform: terrainTransform
                         )
                     )
                 }
@@ -2343,7 +2373,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                 for i in 1..<localPoints.count {
                     length += simd_distance(localPoints[i - 1], localPoints[i])
                 }
-                guard length > 0.25 else { continue }
+                // 라인 근처 짧은 횡단 등고는 살리고, 먼 긴 평행선만 길이로 거르지 않도록 완화.
+                let minLength: Float = minAbsX < 0.55 ? 0.10 : 0.22
+                guard length > minLength else { continue }
 
                 if let ribbon = ARReferenceMarkers.makePolylineRibbon(
                     points: localPoints,
@@ -2484,7 +2516,8 @@ struct Gate55ARAimView: UIViewRepresentable {
             let map = scan.result.smoothed
             guard map.width > 1, map.height > 1 else { return }
 
-            let halfW = corridorMargins.displayHalfWidth
+            // 표시만 ±1.5m(전체 3m). ±3m(6m)는 선·웜 엔티티가 과도해 발열/다운 유발.
+            let halfW = min(corridorMargins.displayHalfWidth, 1.5)
             let yMin = -0.2
             let yMax = scan.holeDistance + corridorMargins.displayPastHoleMargin
             let spacing = max(0.20, min(0.32, scan.holeDistance / 10.0)) * density.gridSpacingScale

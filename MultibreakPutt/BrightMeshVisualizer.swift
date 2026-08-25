@@ -25,6 +25,9 @@ final class BrightMeshVisualizer {
 
     private var rootAnchor: AnchorEntity?
     private var entities: [UUID: AnchorEntities] = [:]
+    /// ARKit이 한두 프레임 메시 앵커를 비우면 전부 지워지지 않도록 유예.
+    private var missingMeshFrames: [UUID: Int] = [:]
+    private static let meshMissingGraceFrames = 12
     private var depthGridEntity: ModelEntity?
     private var lastGlobalRebuildTime: TimeInterval = 0
     private var lastDepthRebuildTime: TimeInterval = 0
@@ -46,19 +49,19 @@ final class BrightMeshVisualizer {
     private static let stableColor = UIColor.white
     private static let depthGridColor = UIColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 0.95)
     /// 앵커별 재생성 최소 간격.
-    private static let perAnchorRebuildInterval: TimeInterval = 1.0
-    private static let maxEdgesPerAnchor = 8_000
+    private static let perAnchorRebuildInterval: TimeInterval = 0.55
+    private static let maxEdgesPerAnchor = 5_000
     private static let enableFillMesh = false
     /// 거리 무관 고정 반폭(m). 너무 굵으면 바닥을 가림.
     private static let ribbonHalfWidth: Float = 0.0010
     private static let depthGridHalfWidth: Float = 0.0008
-    private static let depthSampleCols = 28
-    private static let depthSampleRows = 36
+    private static let depthSampleCols = 22
+    private static let depthSampleRows = 28
     /// depth 유효 거리 (LiDAR 실용 범위).
     private static let depthMinMeters: Float = 0.12
     private static let depthMaxMeters: Float = 4.5
 
-    private let buildQueue = DispatchQueue(label: "trueputt.mesh-build", qos: .utility)
+    private let buildQueue = DispatchQueue(label: "trueputt.mesh-build", qos: .userInitiated)
 
     var lineWidthPixels: Float = 2
     var coverageSnapshot: ScanCoverageSnapshot = .empty
@@ -66,11 +69,11 @@ final class BrightMeshVisualizer {
     var burstMode = false
 
     private var globalRebuildInterval: TimeInterval {
-        burstMode ? 0.07 : 0.18
+        burstMode ? 0.04 : 0.12
     }
 
     private var depthRebuildInterval: TimeInterval {
-        burstMode ? 0.05 : 0.12
+        burstMode ? 0.033 : 0.08
     }
 
     func setEnabled(_ on: Bool, in view: ARView) {
@@ -113,6 +116,7 @@ final class BrightMeshVisualizer {
         }
         rootAnchor = nil
         entities.removeAll()
+        missingMeshFrames.removeAll()
         depthGridEntity = nil
         enabled = false
         coverageSnapshot = .empty
@@ -125,10 +129,11 @@ final class BrightMeshVisualizer {
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         let now = frame.timestamp
 
-        // 1) 매 프레임: transform만 갱신
+        // 1) 매 프레임: transform만 갱신. 앵커가 잠깐 비어도 즉시 삭제하지 않음.
         var liveIDs = Set<UUID>()
         for anchor in meshAnchors {
             liveIDs.insert(anchor.identifier)
+            missingMeshFrames[anchor.identifier] = 0
             let transform = Transform(matrix: anchor.transform)
             if let existing = entities[anchor.identifier] {
                 existing.fill.transform = transform
@@ -139,11 +144,22 @@ final class BrightMeshVisualizer {
                 entities[anchor.identifier] = entity
             }
         }
-        for (id, entity) in entities where !liveIDs.contains(id) {
-            entity.fill.removeFromParent()
-            entity.tentativeLines.removeFromParent()
-            entity.stableLines.removeFromParent()
-            entities.removeValue(forKey: id)
+        if meshAnchors.isEmpty, !entities.isEmpty {
+            // 일시적 공백 — 기존 메시 유지(스캔 시작 직후 깜빡임·소실 방지).
+            for id in entities.keys {
+                missingMeshFrames[id, default: 0] += 1
+            }
+        } else {
+            for (id, entity) in entities where !liveIDs.contains(id) {
+                let misses = (missingMeshFrames[id] ?? 0) + 1
+                missingMeshFrames[id] = misses
+                guard misses >= Self.meshMissingGraceFrames else { continue }
+                entity.fill.removeFromParent()
+                entity.tentativeLines.removeFromParent()
+                entity.stableLines.removeFromParent()
+                entities.removeValue(forKey: id)
+                missingMeshFrames.removeValue(forKey: id)
+            }
         }
 
         // 2) sceneDepth 그리드 — 메시 유무·거리와 무관하게 근접 바닥도 표시
@@ -166,7 +182,7 @@ final class BrightMeshVisualizer {
         }
         .sorted { $0.1 < $1.1 }
 
-        let rebuildBudget = burstMode ? 3 : 1
+        let rebuildBudget = burstMode ? 4 : 2
         var scheduled = 0
         for rankedEntry in ranked {
             let index = rankedEntry.0
@@ -186,12 +202,22 @@ final class BrightMeshVisualizer {
             let worldTransform = anchor.transform
 
             buildQueue.async { [weak entity] in
-                let split = Self.computeSplit(
-                    positions: snapshotGeo.positions,
-                    triangles: snapshotGeo.triangles,
-                    worldTransform: worldTransform,
-                    snapshot: snapshot
-                )
+                let split: SplitBuffers
+                if snapshot.stableCellCount == 0 {
+                    // 첫 공개: 커버리지 분류 생략 — 리본만 빠르게 그림.
+                    split = Self.computeFastTentative(
+                        positions: snapshotGeo.positions,
+                        triangles: snapshotGeo.triangles,
+                        worldTransform: worldTransform
+                    )
+                } else {
+                    split = Self.computeSplit(
+                        positions: snapshotGeo.positions,
+                        triangles: snapshotGeo.triangles,
+                        worldTransform: worldTransform,
+                        snapshot: snapshot
+                    )
+                }
                 let fillMesh = Self.generateMesh(split.fill, name: "fill")
                 let tentativeMesh = Self.generateMesh(split.tentativeLines, name: "blue")
                 let stableMesh = Self.generateMesh(split.stableLines, name: "white")
@@ -440,6 +466,29 @@ final class BrightMeshVisualizer {
             return nil
         }
         return GeometrySnapshot(positions: positions, triangles: tri)
+    }
+
+    private static func computeFastTentative(
+        positions: [SIMD3<Float>],
+        triangles: [UInt32],
+        worldTransform: simd_float4x4
+    ) -> SplitBuffers {
+        var result = SplitBuffers()
+        let inv = worldTransform.inverse
+        let up4 = inv * SIMD4<Float>(0, 1, 0, 0)
+        var upLocal = SIMD3<Float>(up4.x, up4.y, up4.z)
+        if simd_length_squared(upLocal) < 1e-8 {
+            upLocal = SIMD3(0, 1, 0)
+        } else {
+            upLocal = simd_normalize(upLocal)
+        }
+        buildRibbon(
+            triangles: triangles,
+            positions: positions,
+            upLocal: upLocal,
+            into: &result.tentativeLines
+        )
+        return result
     }
 
     private static func computeSplit(

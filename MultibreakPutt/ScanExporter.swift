@@ -42,7 +42,17 @@ enum ScanExporter {
             sigmaNoiseMeasurements: sigmaMeasurements,
             repeatScanRMS: repeatRMS,
             pathMode: scan.pathMode.rawValue,
-            surfaceSource: scan.surfaceSource
+            surfaceSource: scan.surfaceSource,
+            lidarMachineIdentifier: scan.lidarProfile.machineIdentifier,
+            lidarLayout: scan.lidarProfile.layout.rawValue,
+            behindBallSweepDurationSeconds: scan.behindBallSweepStats.durationSeconds,
+            behindBallSweepAcceptedCells: scan.behindBallSweepStats.acceptedCells,
+            behindBallSweepQualityMet: scan.behindBallSweepStats.qualityMet,
+            walkCorridorDurationSeconds: scan.walkCorridorStats.durationSeconds,
+            walkCorridorRibbonCells: scan.walkCorridorStats.ribbonCells,
+            walkCorridorMaxDistanceMeters: scan.walkCorridorStats.maxDistanceFromBall,
+            walkCorridorQualityMet: scan.walkCorridorStats.qualityMet,
+            walkCorridorInBandRatio: scan.walkCorridorStats.inBandRatio
         )
 
         let encoder = JSONEncoder()

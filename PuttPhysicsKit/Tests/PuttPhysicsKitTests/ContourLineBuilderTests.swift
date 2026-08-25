@@ -96,6 +96,112 @@ final class ContourLineBuilderTests: XCTestCase {
         XCTAssertEqual(smoothed.last?.x ?? -1, 0.10, accuracy: 1e-12)
     }
 
+    func testAlongTrackSlopeContoursAreCrossTrackNearCenter() {
+        // y(퍼트) 방향 경사 → 등고는 대략 상수 y, x를 가로지름. 축이 바뀌면 |x|≈y로 “오른쪽”에 보임.
+        let map = makeRampMap(
+            slopeAlongY: 0.02,
+            width: 41,
+            height: 41,
+            originX: -1.0,
+            originY: 0
+        )
+        let lines = ContourLineBuilder.build(
+            map: map,
+            configuration: ContourBuildConfiguration(
+                intervalMeters: 0.01,
+                maxLevels: 12,
+                corridorHalfWidth: 1.0,
+                holeDistance: 2.0,
+                corridorMargin: 0.1,
+                requireKnownCell: false,
+                requireMeasuredCell: false,
+                smoothIterations: 1
+            )
+        )
+        XCTAssertFalse(lines.isEmpty)
+        var meanAbsX = 0.0
+        var meanYSpan = 0.0
+        var meanXSpan = 0.0
+        for line in lines {
+            let xs = line.points.map(\.x)
+            let ys = line.points.map(\.y)
+            meanAbsX += xs.map(abs).reduce(0, +) / Double(xs.count)
+            meanYSpan += (ys.max() ?? 0) - (ys.min() ?? 0)
+            meanXSpan += (xs.max() ?? 0) - (xs.min() ?? 0)
+        }
+        let n = Double(lines.count)
+        meanAbsX /= n
+        meanYSpan /= n
+        meanXSpan /= n
+        XCTAssertLessThan(meanAbsX, 0.55, "횡단 등고의 평균 |x|는 복도 중앙 근처여야 함")
+        XCTAssertGreaterThan(meanXSpan, meanYSpan, "퍼트 방향 경사 등고는 x 방향으로 더 길어야 함 (축 스왑 방지)")
+    }
+
+    func testMeasuredOnlySkipsExtrapolatedFlank() {
+        var values = Array(repeating: 0.0, count: 21 * 21)
+        var measured = Array(repeating: false, count: 21 * 21)
+        // 오른쪽 플랭크(x≥0.3)만 실측 + y 경사
+        for y in 0..<21 {
+            for x in 0..<21 {
+                let wx = -0.5 + Double(x) * 0.05
+                if wx >= 0.3 {
+                    values[y * 21 + x] = Double(y) * 0.01
+                    measured[y * 21 + x] = true
+                }
+            }
+        }
+        // 왼쪽은 외삽처럼 값이 채워졌지만 measured=false
+        for y in 0..<21 {
+            for x in 0..<21 where !measured[y * 21 + x] {
+                values[y * 21 + x] = Double(y) * 0.01
+            }
+        }
+        let map = HeightMap(
+            cellSize: 0.05,
+            originX: -0.5,
+            originY: 0,
+            width: 21,
+            height: 21,
+            values: values,
+            measuredMask: measured,
+            interpolatedMask: measured.map { !$0 }
+        )
+        let measuredOnly = ContourLineBuilder.build(
+            map: map,
+            configuration: ContourBuildConfiguration(
+                intervalMeters: 0.01,
+                maxLevels: 10,
+                corridorHalfWidth: 0.5,
+                requireKnownCell: true,
+                requireMeasuredCell: true,
+                smoothIterations: 0,
+                maxSegmentLength: 0.05
+            )
+        )
+        XCTAssertFalse(measuredOnly.isEmpty)
+        for line in measuredOnly {
+            let meanX = ContourLineBuilder.meanLateral(line)
+            XCTAssertGreaterThan(meanX, 0.15, "실측-only면 등고 무게중심이 오른쪽 실측 구역에 있어야 함")
+        }
+        let anyCell = ContourLineBuilder.build(
+            map: map,
+            configuration: ContourBuildConfiguration(
+                intervalMeters: 0.01,
+                maxLevels: 10,
+                corridorHalfWidth: 0.5,
+                requireKnownCell: false,
+                requireMeasuredCell: false,
+                smoothIterations: 0,
+                maxSegmentLength: 0.05
+            )
+        )
+        XCTAssertFalse(anyCell.isEmpty)
+        // 전체 셀이면 횡단 등고가 중앙까지 뻗어 mean |x|가 더 작아질 수 있음
+        let measuredMeanAbs = measuredOnly.map { ContourLineBuilder.minAbsLateral($0) }.min() ?? 99
+        let anyMeanAbs = anyCell.map { ContourLineBuilder.minAbsLateral($0) }.min() ?? 99
+        XCTAssertGreaterThanOrEqual(measuredMeanAbs, anyMeanAbs - 0.05)
+    }
+
     private func makeRampMap(
         slopeAlongY: Double,
         width: Int,

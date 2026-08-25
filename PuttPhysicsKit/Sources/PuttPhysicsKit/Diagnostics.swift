@@ -37,6 +37,16 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
     public let pathMode: String?
     /// `temporal_scene_depth` / `arkit_mesh_fallback` 등.
     public let surfaceSource: String?
+    public let lidarMachineIdentifier: String?
+    public let lidarLayout: String?
+    public let behindBallSweepDurationSeconds: Double?
+    public let behindBallSweepAcceptedCells: Int?
+    public let behindBallSweepQualityMet: Bool?
+    public let walkCorridorDurationSeconds: Double?
+    public let walkCorridorRibbonCells: Int?
+    public let walkCorridorMaxDistanceMeters: Double?
+    public let walkCorridorQualityMet: Bool?
+    public let walkCorridorInBandRatio: Double?
 
     public init(
         generatedAt: Date,
@@ -48,7 +58,17 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
         sigmaNoiseMeasurements: [SigmaNoiseMeasurement],
         repeatScanRMS: [RepeatScanRMS],
         pathMode: String? = nil,
-        surfaceSource: String? = nil
+        surfaceSource: String? = nil,
+        lidarMachineIdentifier: String? = nil,
+        lidarLayout: String? = nil,
+        behindBallSweepDurationSeconds: Double? = nil,
+        behindBallSweepAcceptedCells: Int? = nil,
+        behindBallSweepQualityMet: Bool? = nil,
+        walkCorridorDurationSeconds: Double? = nil,
+        walkCorridorRibbonCells: Int? = nil,
+        walkCorridorMaxDistanceMeters: Double? = nil,
+        walkCorridorQualityMet: Bool? = nil,
+        walkCorridorInBandRatio: Double? = nil
     ) {
         self.generatedAt = generatedAt
         self.driftMillimeters = driftMillimeters
@@ -60,6 +80,16 @@ public struct ScanDiagnostics: Codable, Sendable, Equatable {
         self.repeatScanRMS = repeatScanRMS
         self.pathMode = pathMode
         self.surfaceSource = surfaceSource
+        self.lidarMachineIdentifier = lidarMachineIdentifier
+        self.lidarLayout = lidarLayout
+        self.behindBallSweepDurationSeconds = behindBallSweepDurationSeconds
+        self.behindBallSweepAcceptedCells = behindBallSweepAcceptedCells
+        self.behindBallSweepQualityMet = behindBallSweepQualityMet
+        self.walkCorridorDurationSeconds = walkCorridorDurationSeconds
+        self.walkCorridorRibbonCells = walkCorridorRibbonCells
+        self.walkCorridorMaxDistanceMeters = walkCorridorMaxDistanceMeters
+        self.walkCorridorQualityMet = walkCorridorQualityMet
+        self.walkCorridorInBandRatio = walkCorridorInBandRatio
     }
 }
 

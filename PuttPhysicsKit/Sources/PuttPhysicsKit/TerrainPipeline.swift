@@ -68,10 +68,17 @@ public enum DriftCorrector {
 }
 
 public enum HeightMapRasterizer {
+    /// 메시 구멍만 이웃 평균. 한쪽 스캔의 반대 플랭크는 경사 외삽.
+    public static let maxInterpolationGapMeters = 0.10
+
     public static func rasterize(
         vertices: [LocalVertex],
         cellSize: Double = 0.05,
-        maximumCellCount: Int = 1_000_000
+        maximumCellCount: Int = 1_000_000,
+        fillMinX: Double? = nil,
+        fillMaxX: Double? = nil,
+        fillMinY: Double? = nil,
+        fillMaxY: Double? = nil
     ) throws -> HeightMap {
         guard cellSize > 0 else { throw TerrainPipelineError.invalidCellSize }
         guard let first = vertices.first else { throw TerrainPipelineError.noVertices }
@@ -86,6 +93,10 @@ public enum HeightMapRasterizer {
             minY = min(minY, vertex.y)
             maxY = max(maxY, vertex.y)
         }
+        if let fillMinX { minX = min(minX, fillMinX) }
+        if let fillMaxX { maxX = max(maxX, fillMaxX) }
+        if let fillMinY { minY = min(minY, fillMinY) }
+        if let fillMaxY { maxY = max(maxY, fillMaxY) }
 
         let originX = floor(minX / cellSize) * cellSize
         let originY = floor(minY / cellSize) * cellSize
@@ -113,7 +124,8 @@ public enum HeightMapRasterizer {
             values: values,
             knownMask: measured,
             width: width,
-            height: height
+            height: height,
+            cellSize: cellSize
         )
 
         return HeightMap(
@@ -141,19 +153,27 @@ public enum HeightMapRasterizer {
         values: [Double],
         knownMask: [Bool],
         width: Int,
-        height: Int
+        height: Int,
+        cellSize: Double
     ) -> (values: [Double], interpolated: [Bool]) {
         var result = values
         var known = knownMask
         var interpolated = Array(repeating: false, count: values.count)
         guard known.contains(true) else { return (result, interpolated) }
 
-        while known.contains(false) {
+        let (distance, nearest) = nearestMeasuredMap(
+            knownMask: knownMask,
+            width: width,
+            height: height
+        )
+        let maxGapCells = max(1, Int((maxInterpolationGapMeters / cellSize).rounded(.up)))
+
+        while true {
             var additions: [(index: Int, value: Double)] = []
             for y in 0..<height {
                 for x in 0..<width {
                     let index = y * width + x
-                    guard !known[index] else { continue }
+                    guard !known[index], distance[index] <= maxGapCells else { continue }
                     var sum = 0.0
                     var weightSum = 0.0
                     for dy in -1...1 {
@@ -180,7 +200,107 @@ public enum HeightMapRasterizer {
                 interpolated[addition.index] = true
             }
         }
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * width + x
+                guard !known[index] else { continue }
+                let source = nearest[index]
+                guard source >= 0 else { continue }
+                let sx = source % width
+                let sy = source / width
+                let (gx, gy) = measuredGradient(
+                    x: sx,
+                    y: sy,
+                    values: values,
+                    measuredMask: knownMask,
+                    width: width,
+                    height: height,
+                    cellSize: cellSize
+                )
+                let dx = Double(x - sx) * cellSize
+                let dy = Double(y - sy) * cellSize
+                result[index] = values[source] + gx * dx + gy * dy
+                interpolated[index] = true
+            }
+        }
         return (result, interpolated)
+    }
+
+    private static func nearestMeasuredMap(
+        knownMask: [Bool],
+        width: Int,
+        height: Int
+    ) -> (distance: [Int], nearest: [Int]) {
+        let count = width * height
+        var distance = Array(repeating: Int.max, count: count)
+        var nearest = Array(repeating: -1, count: count)
+        var queue: [Int] = []
+        queue.reserveCapacity(count / 4)
+        for index in knownMask.indices where knownMask[index] {
+            distance[index] = 0
+            nearest[index] = index
+            queue.append(index)
+        }
+        var head = 0
+        let steps = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        while head < queue.count {
+            let index = queue[head]
+            head += 1
+            let x = index % width
+            let y = index / width
+            for (dx, dy) in steps {
+                let nx = x + dx
+                let ny = y + dy
+                guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                let neighbor = ny * width + nx
+                let next = distance[index] + 1
+                if next < distance[neighbor] {
+                    distance[neighbor] = next
+                    nearest[neighbor] = nearest[index]
+                    queue.append(neighbor)
+                }
+            }
+        }
+        return (distance, nearest)
+    }
+
+    private static func measuredGradient(
+        x: Int,
+        y: Int,
+        values: [Double],
+        measuredMask: [Bool],
+        width: Int,
+        height: Int,
+        cellSize: Double
+    ) -> (Double, Double) {
+        func measured(_ cx: Int, _ cy: Int) -> Double? {
+            guard cx >= 0, cx < width, cy >= 0, cy < height else { return nil }
+            let index = cy * width + cx
+            guard measuredMask[index] else { return nil }
+            return values[index]
+        }
+        let gx: Double
+        if let right = measured(x + 1, y), let left = measured(x - 1, y) {
+            gx = (right - left) / (2 * cellSize)
+        } else if let right = measured(x + 1, y), let center = measured(x, y) {
+            gx = (right - center) / cellSize
+        } else if let left = measured(x - 1, y), let center = measured(x, y) {
+            gx = (center - left) / cellSize
+        } else {
+            gx = 0
+        }
+        let gy: Double
+        if let up = measured(x, y + 1), let down = measured(x, y - 1) {
+            gy = (up - down) / (2 * cellSize)
+        } else if let up = measured(x, y + 1), let center = measured(x, y) {
+            gy = (up - center) / cellSize
+        } else if let down = measured(x, y - 1), let center = measured(x, y) {
+            gy = (center - down) / cellSize
+        } else {
+            gy = 0
+        }
+        return (gx, gy)
     }
 }
 
@@ -330,8 +450,27 @@ public enum TerrainPipeline {
         let cameraReturnY = (cameraReturnPose ?? returnPose).worldY
         let drift = cameraReturnY - cameraStartY
         let correctedVertices = DriftCorrector.correct(local, drift: drift)
-        let uncorrected = try HeightMapRasterizer.rasterize(vertices: local, cellSize: cellSize)
-        let corrected = try HeightMapRasterizer.rasterize(vertices: correctedVertices, cellSize: cellSize)
+        let margins = PuttScanCorridor.tuningMargins
+        let holeDistance = hypot(
+            holePose.worldX - startPose.worldX,
+            holePose.worldZ - startPose.worldZ
+        )
+        let uncorrected = try HeightMapRasterizer.rasterize(
+            vertices: local,
+            cellSize: cellSize,
+            fillMinX: -margins.lateralHalfWidth,
+            fillMaxX: margins.lateralHalfWidth,
+            fillMinY: -margins.ballEndMargin,
+            fillMaxY: holeDistance + margins.pastHoleMargin
+        )
+        let corrected = try HeightMapRasterizer.rasterize(
+            vertices: correctedVertices,
+            cellSize: cellSize,
+            fillMinX: -margins.lateralHalfWidth,
+            fillMaxX: margins.lateralHalfWidth,
+            fillMinY: -margins.ballEndMargin,
+            fillMaxY: holeDistance + margins.pastHoleMargin
+        )
         let smoothed = GaussianSmoother.smooth(corrected, sigma: sigma)
         let gradient = GradientFieldBuilder.build(from: smoothed)
         return TerrainPipelineResult(

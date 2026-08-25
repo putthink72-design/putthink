@@ -105,7 +105,7 @@ final class ScanCoverageTests: XCTestCase {
             ScanCoverage.evaluateQuality(
                 trackingLimited: false,
                 speed: 0.2,
-                meanDepth: 3.2,
+                meanDepth: 4.7,
                 hasSamples: true
             ),
             .tooFar
@@ -139,6 +139,33 @@ final class ScanCoverageTests: XCTestCase {
             cameraToWorld: cameraToWorld
         )
         XCTAssertNil(rejected)
+    }
+
+    func testUnprojectAllowsFiveMeterLiDARRange() {
+        var intrinsics = matrix_identity_float3x3
+        intrinsics[0, 0] = 200
+        intrinsics[1, 1] = 200
+        intrinsics[2, 0] = 100
+        intrinsics[2, 1] = 100
+        let cameraToWorld = matrix_identity_float4x4
+        XCTAssertNotNil(
+            ScanCoverage.unproject(
+                depthX: 100,
+                depthY: 100,
+                depthMeters: 4.0,
+                intrinsics: intrinsics,
+                cameraToWorld: cameraToWorld
+            )
+        )
+        XCTAssertNil(
+            ScanCoverage.unproject(
+                depthX: 100,
+                depthY: 100,
+                depthMeters: 5.5,
+                intrinsics: intrinsics,
+                cameraToWorld: cameraToWorld
+            )
+        )
     }
 
     func testCoverageDoesNotAffectIsolationContract() {

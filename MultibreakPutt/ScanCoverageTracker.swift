@@ -6,17 +6,32 @@ import simd
 /// ARKit sceneDepth → ScanCoverage 순수 코어 브리지.
 /// 배경 큐에서 샘플링하고, 메인에는 스냅샷만 전달한다.
 final class ScanCoverageTracker {
-    static let processInterval: TimeInterval = 0.33
+    static let processInterval: TimeInterval = 0.20
     /// depth 맵 다운샘플 스텝 (픽셀).
     private static let sampleStride = 8
 
     private let coverage = ScanCoverage()
-    private let surfaceFusion = TemporalSurfaceFusion(cellSize: 0.01)
-    private let queue = DispatchQueue(label: "trueputt.scan-coverage", qos: .utility)
+    private let surfaceFusion = TemporalSurfaceFusion(cellSize: 0.02)
+    private let queue = DispatchQueue(label: "trueputt.scan-coverage", qos: .userInitiated)
     private var lastProcessTime: TimeInterval = 0
     private var processing = false
     private(set) var latestSnapshot = ScanCoverageSnapshot.empty
     private var tiltStabilizer = CameraTiltStabilizer(configuration: .scanDepth)
+    private var scanPhase: ScanDepthPhase = .walkCorridor
+    private var behindBallStartTime: TimeInterval = 0
+    private var behindBallProcessedFrames = 0
+    private var behindBallAcceptedSamples = 0
+    private var behindBallAcceptedCellKeys: Set<Int64> = []
+    private var behindBallGoodFrames = 0
+    private(set) var latestBehindBallStats = BehindBallSweepGate.Stats.empty
+    private var walkStartTime: TimeInterval = 0
+    private var walkProcessedFrames = 0
+    private var walkRibbonSamples = 0
+    private var walkRibbonCellKeys: Set<Int64> = []
+    private var walkGoodFrames = 0
+    private var walkMaxDistanceFromBall = 0.0
+    private var walkInBandFrameCount = 0
+    private(set) var latestWalkCorridorStats = WalkCorridorGate.Stats.empty
 
     func reset() {
         queue.async {
@@ -25,6 +40,59 @@ final class ScanCoverageTracker {
             self.lastProcessTime = 0
             self.processing = false
             self.latestSnapshot = .empty
+            self.resetBehindBallAccumulatorLocked()
+            self.resetWalkCorridorAccumulatorLocked()
+        }
+    }
+
+    func setPhase(_ phase: ScanDepthPhase) {
+        queue.async {
+            self.scanPhase = phase
+            if phase == .behindBallSweep {
+                self.resetBehindBallAccumulatorLocked()
+            } else if phase == .walkCorridor {
+                self.resetWalkCorridorAccumulatorLocked()
+            }
+        }
+    }
+
+    func resetBehindBallAccumulator() {
+        queue.async {
+            self.resetBehindBallAccumulatorLocked()
+        }
+    }
+
+    func resetWalkCorridorAccumulator() {
+        queue.async {
+            self.resetWalkCorridorAccumulatorLocked()
+        }
+    }
+
+    private func resetBehindBallAccumulatorLocked() {
+        behindBallStartTime = 0
+        behindBallProcessedFrames = 0
+        behindBallAcceptedSamples = 0
+        behindBallAcceptedCellKeys.removeAll(keepingCapacity: true)
+        behindBallGoodFrames = 0
+        latestBehindBallStats = .empty
+    }
+
+    private func resetWalkCorridorAccumulatorLocked() {
+        walkStartTime = 0
+        walkProcessedFrames = 0
+        walkRibbonSamples = 0
+        walkRibbonCellKeys.removeAll(keepingCapacity: true)
+        walkGoodFrames = 0
+        walkMaxDistanceFromBall = 0
+        walkInBandFrameCount = 0
+        latestWalkCorridorStats = .empty
+    }
+
+    func behindBallSweepStats(now: TimeInterval) async -> BehindBallSweepGate.Stats {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: self.behindBallStatsSnapshot(now: now))
+            }
         }
     }
 
@@ -41,10 +109,14 @@ final class ScanCoverageTracker {
 
     /// 프레임당 최대 한 번. 결과는 completion으로 메인 호출 권장.
     /// `ballY`가 있으면 볼보다 과도하게 높은 점(발)을 융합에서 제외한다.
+    /// `ballXZ`가 있으면 편도 걸을 때 볼→카메라 구간 셀을 우선 보존한다.
     func process(
         frame: ARFrame,
         trackingLimited: Bool,
+        phase: ScanDepthPhase = .walkCorridor,
+        ball: ScanPose? = nil,
         ballY: Double? = nil,
+        ballXZ: SIMD2<Double>? = nil,
         completion: @escaping (ScanCoverageSnapshot) -> Void
     ) {
         let now = frame.timestamp
@@ -57,22 +129,13 @@ final class ScanCoverageTracker {
         lastProcessTime = now
         processing = true
 
+        // depth 픽셀 복사는 백그라운드에서 — 메인에서 하면 스캔 시작 직후 수 초~수십 초 멈춘 것처럼.
         let depthMap = depthData.depthMap
         let confidenceMap = depthData.confidenceMap
         let rawCameraTransform = frame.camera.transform
-        // 걸음 pitch/roll 떨림이 depth 역투영 Y에 직접 들어가므로 yaw·위치만 유지하고 기울기 보정.
         let cameraTransform = tiltStabilizer.stabilizedTransform(from: rawCameraTransform)
         let intrinsics = frame.camera.intrinsics
         let imageResolution = frame.camera.imageResolution
-
-        let samples = Self.copyDepthSamples(
-            depthMap: depthMap,
-            confidenceMap: confidenceMap,
-            cameraIntrinsics: intrinsics,
-            imageResolution: imageResolution,
-            cameraToWorld: cameraTransform,
-            sampleStep: Self.sampleStride
-        )
         let cameraPosition = SIMD3<Float>(
             rawCameraTransform.columns.3.x,
             rawCameraTransform.columns.3.y,
@@ -80,7 +143,18 @@ final class ScanCoverageTracker {
         )
 
         queue.async { [weak self] in
+            defer {
+                self?.processing = false
+            }
             guard let self else { return }
+            let samples = Self.copyDepthSamples(
+                depthMap: depthMap,
+                confidenceMap: confidenceMap,
+                cameraIntrinsics: intrinsics,
+                imageResolution: imageResolution,
+                cameraToWorld: cameraTransform,
+                sampleStep: Self.sampleStride
+            )
             let snapshot = self.coverage.ingest(
                 points: samples,
                 cameraPosition: cameraPosition,
@@ -103,18 +177,90 @@ final class ScanCoverageTracker {
                 cameraZ: Double(cameraPosition.z),
                 ballY: ballY
             )
-            let fusionSamples = cleaned.map {
-                TemporalSurfaceFusion.Sample(
-                    worldX: $0.worldX,
-                    worldY: $0.worldY,
-                    worldZ: $0.worldZ,
-                    timestamp: now
+            let cameraXZ = SIMD2<Double>(Double(cameraPosition.x), Double(cameraPosition.z))
+            let fusionSamples: [TemporalSurfaceFusion.Sample]
+            if phase == .behindBallSweep, let ball {
+                let lookX = Double(-rawCameraTransform.columns.2.x)
+                let lookZ = Double(-rawCameraTransform.columns.2.z)
+                if let forward = BehindBallSweepGate.forwardDirection(lookX: lookX, lookZ: lookZ) {
+                    let context = BehindBallSweepGate.Context(
+                        ballX: ball.worldX,
+                        ballY: ball.worldY,
+                        ballZ: ball.worldZ,
+                        cameraX: Double(cameraPosition.x),
+                        cameraY: Double(cameraPosition.y),
+                        cameraZ: Double(cameraPosition.z),
+                        forwardX: forward.x,
+                        forwardZ: forward.z
+                    )
+                    var acceptedInFrame = 0
+                    if self.behindBallStartTime == 0 {
+                        self.behindBallStartTime = now
+                    }
+                    self.behindBallProcessedFrames += 1
+                    var gated: [GroundScanFilter.Point] = []
+                    gated.reserveCapacity(cleaned.count)
+                    for point in cleaned {
+                        let sample = BehindBallSweepGate.Sample(
+                            worldX: point.worldX,
+                            worldY: point.worldY,
+                            worldZ: point.worldZ,
+                            confidence: 2
+                        )
+                        guard BehindBallSweepGate.accepts(sample: sample, context: context) else { continue }
+                        gated.append(point)
+                        acceptedInFrame += 1
+                        self.behindBallAcceptedSamples += 1
+                        let key = BehindBallSweepGate.cellKey(x: point.worldX, z: point.worldZ)
+                        self.behindBallAcceptedCellKeys.insert(key)
+                    }
+                    if acceptedInFrame >= BehindBallSweepGate.goodFrameSampleThreshold {
+                        self.behindBallGoodFrames += 1
+                    }
+                    fusionSamples = gated.map {
+                        TemporalSurfaceFusion.Sample(
+                            worldX: $0.worldX,
+                            worldY: $0.worldY,
+                            worldZ: $0.worldZ,
+                            timestamp: now
+                        )
+                    }
+                } else {
+                    fusionSamples = []
+                }
+                self.latestBehindBallStats = self.behindBallStatsSnapshot(now: now)
+            } else {
+                fusionSamples = cleaned.map {
+                    TemporalSurfaceFusion.Sample(
+                        worldX: $0.worldX,
+                        worldY: $0.worldY,
+                        worldZ: $0.worldZ,
+                        timestamp: now
+                    )
+                }
+                if phase == .walkCorridor, let ball {
+                    self.accumulateWalkCorridor(
+                        cleaned: cleaned,
+                        ball: ball,
+                        cameraPosition: cameraPosition,
+                        rawCameraTransform: rawCameraTransform,
+                        now: now
+                    )
+                }
+            }
+            // prune 끝점은 카메라(볼→현재 위치). 옆으로 밀면 등고가 라인 한쪽으로 치우침.
+            let pathEndXZ = cameraXZ
+            if !fusionSamples.isEmpty {
+                self.surfaceFusion.ingestFrame(
+                    fusionSamples,
+                    timestamp: now,
+                    cameraXZ: cameraXZ,
+                    keepNearBallXZ: ballXZ,
+                    keepNearPathEndXZ: phase == .behindBallSweep ? ballXZ : pathEndXZ
                 )
             }
-            let cameraXZ = SIMD2<Double>(Double(cameraPosition.x), Double(cameraPosition.z))
-            self.surfaceFusion.ingestFrame(fusionSamples, timestamp: now, cameraXZ: cameraXZ)
+            self.scanPhase = phase
             self.latestSnapshot = snapshot
-            self.processing = false
             DispatchQueue.main.async {
                 completion(snapshot)
             }
@@ -241,5 +387,104 @@ final class ScanCoverageTracker {
         }
 
         return points
+    }
+
+    private func behindBallStatsSnapshot(now: TimeInterval) -> BehindBallSweepGate.Stats {
+        let duration = behindBallStartTime > 0 ? max(0, now - behindBallStartTime) : 0
+        let stats = BehindBallSweepGate.Stats(
+            durationSeconds: duration,
+            processedFrames: behindBallProcessedFrames,
+            acceptedSamples: behindBallAcceptedSamples,
+            acceptedCells: behindBallAcceptedCellKeys.count,
+            goodFrames: behindBallGoodFrames,
+            qualityMet: false
+        )
+        return BehindBallSweepGate.Stats(
+            durationSeconds: stats.durationSeconds,
+            processedFrames: stats.processedFrames,
+            acceptedSamples: stats.acceptedSamples,
+            acceptedCells: stats.acceptedCells,
+            goodFrames: stats.goodFrames,
+            qualityMet: BehindBallSweepGate.qualityMet(stats: stats)
+        )
+    }
+
+    private func accumulateWalkCorridor(
+        cleaned: [GroundScanFilter.Point],
+        ball: ScanPose,
+        cameraPosition: SIMD3<Float>,
+        rawCameraTransform: simd_float4x4,
+        now: TimeInterval
+    ) {
+        let lookX = Double(-rawCameraTransform.columns.2.x)
+        let lookZ = Double(-rawCameraTransform.columns.2.z)
+        guard let forward = BehindBallSweepGate.forwardDirection(lookX: lookX, lookZ: lookZ) else { return }
+        let context = WalkCorridorGate.Context(
+            ballX: ball.worldX,
+            ballY: ball.worldY,
+            ballZ: ball.worldZ,
+            cameraX: Double(cameraPosition.x),
+            cameraY: Double(cameraPosition.y),
+            cameraZ: Double(cameraPosition.z),
+            forwardX: forward.x,
+            forwardZ: forward.z
+        )
+        if walkStartTime == 0 {
+            walkStartTime = now
+        }
+        walkProcessedFrames += 1
+        walkMaxDistanceFromBall = max(walkMaxDistanceFromBall, context.distanceFromBallXZ)
+
+        var ribbonInFrame = 0
+        for point in cleaned {
+            let sample = WalkCorridorGate.Sample(
+                worldX: point.worldX,
+                worldY: point.worldY,
+                worldZ: point.worldZ,
+                confidence: 2
+            )
+            guard WalkCorridorGate.countsTowardRibbon(sample: sample, context: context) else { continue }
+            ribbonInFrame += 1
+            walkRibbonSamples += 1
+            walkRibbonCellKeys.insert(WalkCorridorGate.cellKey(x: point.worldX, z: point.worldZ))
+        }
+        if ribbonInFrame >= WalkCorridorGate.goodFrameSampleThreshold {
+            walkGoodFrames += 1
+        }
+        latestWalkCorridorStats = walkCorridorStatsSnapshot(now: now)
+    }
+
+    private func walkCorridorStatsSnapshot(now: TimeInterval) -> WalkCorridorGate.Stats {
+        let duration = walkStartTime > 0 ? max(0, now - walkStartTime) : 0
+        let stats = WalkCorridorGate.Stats(
+            durationSeconds: duration,
+            processedFrames: walkProcessedFrames,
+            ribbonSamples: walkRibbonSamples,
+            ribbonCells: walkRibbonCellKeys.count,
+            goodFrames: walkGoodFrames,
+            maxDistanceFromBall: walkMaxDistanceFromBall,
+            inBandFrameCount: walkInBandFrameCount,
+            qualityMet: false
+        )
+        return WalkCorridorGate.Stats(
+            durationSeconds: stats.durationSeconds,
+            processedFrames: stats.processedFrames,
+            ribbonSamples: stats.ribbonSamples,
+            ribbonCells: stats.ribbonCells,
+            goodFrames: stats.goodFrames,
+            maxDistanceFromBall: stats.maxDistanceFromBall,
+            inBandFrameCount: stats.inBandFrameCount,
+            qualityMet: WalkCorridorGate.qualityMet(stats: stats)
+        )
+    }
+
+    func applyWalkTwistInBand(_ inBand: Bool, frameTimestamp: TimeInterval) {
+        queue.async {
+            guard self.scanPhase == .walkCorridor else { return }
+            if inBand {
+                self.walkInBandFrameCount += 1
+            }
+            self.latestWalkCorridorStats = self.walkCorridorStatsSnapshot(now: frameTimestamp)
+        }
     }
 }

@@ -49,6 +49,31 @@ final class Gate1PipelineTests: XCTestCase {
         XCTAssertEqual(map.value(x: 1, y: 0), 3, accuracy: 1e-12)
     }
 
+    func testOneSidedScanExtrapolatesCrossSlopeInsteadOfFlattening() throws {
+        let cell = 0.05
+        let vertices = [
+            LocalVertex(x: 0.20, y: 1.00, height: 0.008, progress: 0),
+            LocalVertex(x: 0.25, y: 1.00, height: 0.010, progress: 0),
+            LocalVertex(x: 0.30, y: 1.00, height: 0.012, progress: 0),
+            LocalVertex(x: 0.20, y: 1.05, height: 0.008, progress: 0),
+            LocalVertex(x: 0.25, y: 1.05, height: 0.010, progress: 0),
+            LocalVertex(x: 0.30, y: 1.05, height: 0.012, progress: 0)
+        ]
+        let map = try HeightMapRasterizer.rasterize(
+            vertices: vertices,
+            cellSize: cell,
+            fillMinX: -0.20,
+            fillMaxX: 0.35,
+            fillMinY: 0.90,
+            fillMaxY: 1.15
+        )
+        let column = Int(round((-0.10 - map.originX) / cell))
+        let row = Int(round((1.00 - map.originY) / cell))
+        let height = map.value(x: column, y: row)
+        XCTAssertEqual(height, -0.004, accuracy: 0.003)
+        XCTAssertLessThan(height, 0.002)
+    }
+
     func testGaussianSmoothingReducesImpulseAndPreservesConstantMap() {
         let constant = makeMap(width: 7, height: 7, values: Array(repeating: 2, count: 49))
         XCTAssertEqual(GaussianSmoother.smooth(constant, sigma: 1.5).values, constant.values)
@@ -117,9 +142,12 @@ final class Gate1PipelineTests: XCTestCase {
         )
 
         XCTAssertEqual(result.driftMeters, 0.02, accuracy: 1e-12)
-        XCTAssertEqual(result.uncorrected.values.last!, 0.02, accuracy: 1e-12)
-        XCTAssertEqual(result.corrected.values.last!, 0, accuracy: 1e-12)
+        let holeCol = Int(round((0 - result.uncorrected.originX) / result.uncorrected.cellSize))
+        let holeRow = Int(round((1 - result.uncorrected.originY) / result.uncorrected.cellSize))
+        XCTAssertEqual(result.uncorrected.value(x: holeCol, y: holeRow), 0.02, accuracy: 1e-12)
+        XCTAssertEqual(result.corrected.value(x: holeCol, y: holeRow), 0, accuracy: 1e-12)
         XCTAssertEqual(result.gradient.width, result.smoothed.width)
+        XCTAssertGreaterThanOrEqual(result.smoothed.width, 100)
     }
 
     func testSigmaSweepAndRepeatScanRMSProduceDiagnostics() {

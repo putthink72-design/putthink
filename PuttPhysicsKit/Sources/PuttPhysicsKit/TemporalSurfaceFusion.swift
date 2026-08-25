@@ -18,12 +18,12 @@ public final class TemporalSurfaceFusion {
         }
     }
 
-    /// 그린 언듈레이션 보존을 위해 1cm 셀을 기본으로 한다.
-    public static let defaultCellSize = 0.01
+    /// 5cm 높이맵보다 촘촘하되, 12m 편도에서 1cm×4.5만 셀이면 볼 쪽을 너무 일찍 버린다.
+    public static let defaultCellSize = 0.02
     public static let minimumFramesPerCell = 3
     public static let maximumFramesPerCell = 24
-    /// 야외 장거리 스캔 시 메모리 폭증 방지.
-    public static let maximumCellCount = 45_000
+    /// 약 36m² @ 2cm — 12m × 한쪽 3m 편도 스트립.
+    public static let defaultMaximumCellCount = 90_000
     /// 서로 다른 카메라 위치에서 관측돼야 grazing-angle 편향을 제거할 수 있다.
     public static let minimumViewpoints = 2
     public static let viewpointSeparation = 0.12
@@ -37,11 +37,17 @@ public final class TemporalSurfaceFusion {
     }
 
     private let cellSize: Double
+    private let maximumCellCount: Int
     private var cells: [Int64: Cell] = [:]
 
-    public init(cellSize: Double = defaultCellSize) {
+    public init(
+        cellSize: Double = defaultCellSize,
+        maximumCellCount: Int = defaultMaximumCellCount
+    ) {
         precondition(cellSize > 0)
+        precondition(maximumCellCount > 0)
         self.cellSize = cellSize
+        self.maximumCellCount = maximumCellCount
     }
 
     public func reset() {
@@ -54,7 +60,9 @@ public final class TemporalSurfaceFusion {
     public func ingestFrame(
         _ samples: [Sample],
         timestamp: TimeInterval,
-        cameraXZ: SIMD2<Double>? = nil
+        cameraXZ: SIMD2<Double>? = nil,
+        keepNearBallXZ: SIMD2<Double>? = nil,
+        keepNearPathEndXZ: SIMD2<Double>? = nil
     ) {
         var frameBuckets: [Int64: [Double]] = [:]
         for sample in samples where sample.worldY.isFinite {
@@ -77,22 +85,41 @@ public final class TemporalSurfaceFusion {
             }
             cells[key] = cell
         }
-        pruneIfNeeded(keepingNear: cameraXZ, now: timestamp)
+        pruneIfNeeded(
+            keepingNear: cameraXZ,
+            keepNearBallXZ: keepNearBallXZ,
+            keepNearPathEndXZ: keepNearPathEndXZ ?? cameraXZ,
+            now: timestamp
+        )
     }
 
-    /// 오래된·먼 셀부터 제거해 상한을 지킨다.
-    private func pruneIfNeeded(keepingNear cameraXZ: SIMD2<Double>?, now: TimeInterval) {
-        guard cells.count > Self.maximumCellCount else { return }
-        let overflow = cells.count - Self.maximumCellCount
+    /// 볼이 있으면 볼→카메라 구간 밖의 셀부터 버린다. 카메라 거리만 쓰면 홀 도착 때 볼 쪽 경사가 사라진다.
+    private func pruneIfNeeded(
+        keepingNear cameraXZ: SIMD2<Double>?,
+        keepNearBallXZ: SIMD2<Double>?,
+        keepNearPathEndXZ: SIMD2<Double>?,
+        now: TimeInterval
+    ) {
+        guard cells.count > maximumCellCount else { return }
+        let overflow = cells.count - maximumCellCount
+        let pathEnd = keepNearPathEndXZ ?? cameraXZ
         let ranked = cells.map { key, cell -> (Int64, Double) in
             let center = Self.cellCenter(key: key, cellSize: cellSize)
             let dist: Double
-            if let cameraXZ {
+            if let ball = keepNearBallXZ, let pathEnd {
+                dist = Self.distanceToSegment(
+                    px: center.x,
+                    pz: center.z,
+                    ax: ball.x,
+                    az: ball.y,
+                    bx: pathEnd.x,
+                    bz: pathEnd.y
+                )
+            } else if let cameraXZ {
                 dist = hypot(center.x - cameraXZ.x, center.z - cameraXZ.y)
             } else {
                 dist = 0
             }
-            // 멀고 오래된 셀 우선 삭제
             let age = max(0, now - cell.lastTimestamp)
             return (key, dist + age * 0.15)
         }
@@ -214,6 +241,24 @@ public final class TemporalSurfaceFusion {
         return along >= -ballEndMargin
             && along <= length + pastHoleMargin
             && lateral <= lateralMargin
+    }
+
+    static func distanceToSegment(
+        px: Double,
+        pz: Double,
+        ax: Double,
+        az: Double,
+        bx: Double,
+        bz: Double
+    ) -> Double {
+        let abx = bx - ax
+        let abz = bz - az
+        let lengthSquared = abx * abx + abz * abz
+        if lengthSquared < 1e-12 {
+            return hypot(px - ax, pz - az)
+        }
+        let t = min(max(((px - ax) * abx + (pz - az) * abz) / lengthSquared, 0), 1)
+        return hypot(px - ax - t * abx, pz - az - t * abz)
     }
 
     /// 최소 분리 거리 이상 떨어진 카메라 위치를 그리디로 군집화해 개수를 센다.

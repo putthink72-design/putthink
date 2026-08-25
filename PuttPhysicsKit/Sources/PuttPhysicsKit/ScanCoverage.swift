@@ -95,9 +95,10 @@ public final class ScanCoverage {
     public static let minConfidence: UInt8 = 1 // medium+
     public static let observationsForStable = 3
     public static let minDepthMeters: Float = 0.25
-    public static let maxDepthMeters: Float = 3.5
+    /// iPhone LiDAR 실사용 거리. 편도·한쪽 스캔에서 라인 건너편을 보기 위해 3.5m보다 넓게 둔다.
+    public static let maxDepthMeters: Float = 5.0
     public static let tooCloseMeters: Float = 0.35
-    public static let tooFarMeters: Float = 2.8
+    public static let tooFarMeters: Float = 4.5
     public static let tooFastMetersPerSecond: Float = 1.2
     public static let maxCells = 40_000
 

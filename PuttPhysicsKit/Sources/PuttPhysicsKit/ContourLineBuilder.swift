@@ -34,8 +34,10 @@ public struct ContourBuildConfiguration: Sendable, Equatable {
     /// 홀까지 거리(m). corridor와 함께 y∈[-margin, hole+margin] 클립.
     public var holeDistance: Double?
     public var corridorMargin: Double
-    /// 측정(또는 보간)된 셀만 사용.
+    /// 측정(또는 보간)된 셀만 사용. `requireMeasuredCell`이 우선.
     public var requireKnownCell: Bool
+    /// 실측 셀만 사용. 전역 경사 외삽으로 생긴 가짜 등고(플랭크 평행선)를 막는다.
+    public var requireMeasuredCell: Bool
     /// Chaikin 코너 절삭 반복 횟수(0=원시 marching squares).
     public var smoothIterations: Int
     /// 스무딩 후 최대 세그먼트 길이(m). 이보다 길면 보간으로 쪼갬.
@@ -48,6 +50,7 @@ public struct ContourBuildConfiguration: Sendable, Equatable {
         holeDistance: Double? = nil,
         corridorMargin: Double = 0.4,
         requireKnownCell: Bool = true,
+        requireMeasuredCell: Bool = false,
         smoothIterations: Int = 3,
         maxSegmentLength: Double = 0.03
     ) {
@@ -57,6 +60,7 @@ public struct ContourBuildConfiguration: Sendable, Equatable {
         self.holeDistance = holeDistance
         self.corridorMargin = corridorMargin
         self.requireKnownCell = requireKnownCell
+        self.requireMeasuredCell = requireMeasuredCell
         self.smoothIterations = smoothIterations
         self.maxSegmentLength = maxSegmentLength
     }
@@ -90,7 +94,24 @@ public enum ContourLineBuilder {
                 result.append(ContourPolyline(level: level, points: points))
             }
         }
-        return result
+        return prioritizeNearPuttLine(result)
+    }
+
+    /// 퍼트 라인(|x| 최소)에 가까운 등고를 앞에 둔다 — AR 예산에서 플랭크만 남는 것을 줄인다.
+    public static func prioritizeNearPuttLine(_ lines: [ContourPolyline]) -> [ContourPolyline] {
+        lines.sorted { minAbsLateral($0) < minAbsLateral($1) }
+    }
+
+    public static func minAbsLateral(_ line: ContourPolyline) -> Double {
+        guard let first = line.points.first else { return .infinity }
+        return line.points.reduce(abs(first.x)) { partial, point in
+            min(partial, abs(point.x))
+        }
+    }
+
+    public static func meanLateral(_ line: ContourPolyline) -> Double {
+        guard !line.points.isEmpty else { return 0 }
+        return line.points.reduce(0.0) { $0 + $1.x } / Double(line.points.count)
     }
 
     /// Chaikin corner-cutting으로 격자 각진 등고를 부드럽게 만든다.
@@ -458,8 +479,11 @@ public enum ContourLineBuilder {
         configuration: ContourBuildConfiguration
     ) -> Bool {
         guard map.contains(x: x, y: y) else { return false }
+        let index = map.index(x: x, y: y)
+        if configuration.requireMeasuredCell {
+            return map.measuredMask[index]
+        }
         if configuration.requireKnownCell {
-            let index = map.index(x: x, y: y)
             return map.measuredMask[index] || map.interpolatedMask[index]
         }
         return true
