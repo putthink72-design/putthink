@@ -5,9 +5,9 @@ import RealityKit
 import simd
 import UIKit
 
-/// ARKit 메시 + sceneDepth 근접 그리드 표시.
-/// 메시 융합이 먼 곳부터 채워지는 ARKit 특성을 보완해, 바닥을 수직·근접으로 비춰도
-/// depth 그리드가 즉시 보이게 한다. 물리/앵커에는 주입하지 않는다.
+/// sceneDepth 누적 커버리지 바둑판 표시.
+/// ARKit 메시 리본·면 채움은 삼각 폴리곤·추적 흔들림을 만들므로 쓰지 않는다.
+/// 물리/앵커에는 주입하지 않는다.
 final class BrightMeshVisualizer {
     private final class AnchorEntities {
         let fill: ModelEntity
@@ -29,11 +29,19 @@ final class BrightMeshVisualizer {
     private var missingMeshFrames: [UUID: Int] = [:]
     private static let meshMissingGraceFrames = 12
     private var depthGridEntity: ModelEntity?
+    private var coverageFillEntity: ModelEntity?
+    private var coverageBlueEntity: ModelEntity?
+    private var coverageWhiteEntity: ModelEntity?
     private var lastGlobalRebuildTime: TimeInterval = 0
     private var lastDepthRebuildTime: TimeInterval = 0
+    private var lastCoverageRebuildTime: TimeInterval = 0
     private var depthBuilding = false
+    private var coverageBuilding = false
     private var enabled = false
     private var pipelinePrewarmAnchor: AnchorEntity?
+    /// 표시 격자 높이. 매 프레임 중앙값을 쓰면 폰을 움직일 때 면이 떠다닌다.
+    private var lockedCoveragePlaneY: Float?
+    private var lastCoverageDisplaySignature: Int = 0
 
     /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
     /// 스캔 시작 시 false로 바꾸면 이미 빌드된 메시가 즉시 나타난다.
@@ -67,6 +75,11 @@ final class BrightMeshVisualizer {
     var coverageSnapshot: ScanCoverageSnapshot = .empty
     /// 볼 지정 전 — 메시·depth 그리드를 더 촘촘히 갱신.
     var burstMode = false
+    /// 홀이 지정되면 복도 밖 커버리지 격자를 숨긴다.
+    var corridorBallXZ: SIMD2<Double>?
+    var corridorHoleXZ: SIMD2<Double>?
+    var corridorPastHoleMeters: Double = PuttScanCorridor.pastHoleMargin
+    var corridorHalfWidthMeters: Double = PuttScanCorridor.orthogonalHalfWidth
 
     private var globalRebuildInterval: TimeInterval {
         burstMode ? 0.04 : 0.12
@@ -80,7 +93,10 @@ final class BrightMeshVisualizer {
         guard on != enabled else { return }
         enabled = on
         if on {
-            let root = AnchorEntity(world: .zero)
+            // 세션 identity ARAnchor는 트래킹 보정 때 흔들린다.
+            // RealityKit 월드 고정 — 격자 정점은 ARKit 월드 좌표 그대로 둔다.
+            let root = AnchorEntity(.world(transform: matrix_identity_float4x4))
+            root.name = "trueputt.viz-origin"
             root.isEnabled = !contentHidden
             view.scene.addAnchor(root)
             rootAnchor = root
@@ -121,120 +137,237 @@ final class BrightMeshVisualizer {
         enabled = false
         coverageSnapshot = .empty
         depthBuilding = false
+        coverageBuilding = false
+        coverageFillEntity = nil
+        coverageBlueEntity = nil
+        coverageWhiteEntity = nil
+        corridorBallXZ = nil
+        corridorHoleXZ = nil
+        lockedCoveragePlaneY = nil
+        lastCoverageDisplaySignature = 0
     }
 
     func update(in view: ARView) {
         guard enabled, let rootAnchor else { return }
         guard let frame = view.session.currentFrame else { return }
-        let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         let now = frame.timestamp
 
-        // 1) 매 프레임: transform만 갱신. 앵커가 잠깐 비어도 즉시 삭제하지 않음.
-        var liveIDs = Set<UUID>()
-        for anchor in meshAnchors {
-            liveIDs.insert(anchor.identifier)
-            missingMeshFrames[anchor.identifier] = 0
-            let transform = Transform(matrix: anchor.transform)
-            if let existing = entities[anchor.identifier] {
-                existing.fill.transform = transform
-                existing.tentativeLines.transform = transform
-                existing.stableLines.transform = transform
-            } else {
-                let entity = makeAnchorEntities(transform: transform, in: rootAnchor)
-                entities[anchor.identifier] = entity
-            }
-        }
-        if meshAnchors.isEmpty, !entities.isEmpty {
-            // 일시적 공백 — 기존 메시 유지(스캔 시작 직후 깜빡임·소실 방지).
-            for id in entities.keys {
-                missingMeshFrames[id, default: 0] += 1
-            }
-        } else {
-            for (id, entity) in entities where !liveIDs.contains(id) {
-                let misses = (missingMeshFrames[id] ?? 0) + 1
-                missingMeshFrames[id] = misses
-                guard misses >= Self.meshMissingGraceFrames else { continue }
-                entity.fill.removeFromParent()
-                entity.tentativeLines.removeFromParent()
-                entity.stableLines.removeFromParent()
-                entities.removeValue(forKey: id)
-                missingMeshFrames.removeValue(forKey: id)
-            }
-        }
+        // 표시는 5cm 커버리지 바둑판만 사용. ARKit 메시 리본은 삼각형·추적 흔들림이 보여
+        // “가끔 파란 폴리곤 / 흰 격자 흐름”으로 보인다 — 만들지 않고 잔여분도 즉시 제거.
+        clearARKitRibbonEntities()
 
-        // 2) sceneDepth 그리드 — 메시 유무·거리와 무관하게 근접 바닥도 표시
-        updateDepthGrid(frame: frame, now: now, in: rootAnchor)
+        // sceneDepth 누적 커버리지 격자
+        updateCoverageGrid(now: now, in: rootAnchor)
 
-        // 3) 메시 앵커 재생성 — 가까운 것 우선, burst에서는 틱당 여러 개 (첫 공개 시 빠른 채움)
-        guard !meshAnchors.isEmpty else { return }
-        guard now - lastGlobalRebuildTime >= globalRebuildInterval else { return }
-        let cameraWorld = frame.camera.transform
+        // 매 프레임 depth 격자는 현재 화면만 보여 폰을 따라 흐른다. 쓰지 않는다.
+        depthGridEntity?.isEnabled = false
+        _ = frame
+    }
+
+    private func clearARKitRibbonEntities() {
+        guard !entities.isEmpty else {
+            missingMeshFrames.removeAll(keepingCapacity: true)
+            return
+        }
+        for (_, entity) in entities {
+            entity.fill.removeFromParent()
+            entity.tentativeLines.removeFromParent()
+            entity.stableLines.removeFromParent()
+        }
+        entities.removeAll(keepingCapacity: true)
+        missingMeshFrames.removeAll(keepingCapacity: true)
+    }
+
+    // MARK: - Coverage grid (5cm, ARKit 메시와 독립)
+
+    private func updateCoverageGrid(now: TimeInterval, in root: AnchorEntity) {
+        coverageFillEntity?.transform = Transform()
+        coverageBlueEntity?.transform = Transform()
+        coverageWhiteEntity?.transform = Transform()
+        guard !coverageBuilding else { return }
         let snapshot = coverageSnapshot
-        let camPos = SIMD3<Float>(
-            cameraWorld.columns.3.x,
-            cameraWorld.columns.3.y,
-            cameraWorld.columns.3.z
+        guard snapshot.observedCellCount > 0 else {
+            coverageFillEntity?.isEnabled = false
+            coverageBlueEntity?.isEnabled = false
+            coverageWhiteEntity?.isEnabled = false
+            lastCoverageDisplaySignature = 0
+            return
+        }
+        let ball = corridorBallXZ
+        let hole = corridorHoleXZ
+        let past = corridorPastHoleMeters
+        let half = corridorHalfWidthMeters
+        let planeY = lockedDisplayPlaneY(from: snapshot)
+        let signature = Self.coverageDisplaySignature(
+            snapshot: snapshot,
+            planeY: planeY,
+            hasCorridor: ball != nil && hole != nil
         )
-        let ranked = meshAnchors.enumerated().map { index, anchor -> (Int, Float) in
-            let t = anchor.transform.columns.3
-            let d = simd_length(SIMD3<Float>(t.x, t.y, t.z) - camPos)
-            return (index, d)
+        guard signature != lastCoverageDisplaySignature else { return }
+        lastCoverageRebuildTime = now
+        lastCoverageDisplaySignature = signature
+        coverageBuilding = true
+
+        if coverageFillEntity == nil {
+            let fill = ModelEntity(
+                mesh: .generateBox(size: 0.001),
+                materials: [Self.makeFillMaterial()]
+            )
+            let blue = ModelEntity(
+                mesh: .generateBox(size: 0.001),
+                materials: [Self.makeLineMaterial(color: Self.tentativeColor)]
+            )
+            let white = ModelEntity(
+                mesh: .generateBox(size: 0.001),
+                materials: [Self.makeLineMaterial(color: Self.stableColor)]
+            )
+            fill.isEnabled = false
+            blue.isEnabled = false
+            white.isEnabled = false
+            fill.transform = Transform()
+            blue.transform = Transform()
+            white.transform = Transform()
+            root.addChild(fill)
+            root.addChild(blue)
+            root.addChild(white)
+            coverageFillEntity = fill
+            coverageBlueEntity = blue
+            coverageWhiteEntity = white
         }
-        .sorted { $0.1 < $1.1 }
 
-        let rebuildBudget = burstMode ? 4 : 2
-        var scheduled = 0
-        for rankedEntry in ranked {
-            let index = rankedEntry.0
-            let anchor = meshAnchors[index]
-            guard let entity = entities[anchor.identifier] else { continue }
-            let neverBuilt = entity.lastRebuild <= 0
-            let intervalOK = neverBuilt || now - entity.lastRebuild >= Self.perAnchorRebuildInterval
-            guard !entity.building, intervalOK else { continue }
-
-            entity.building = true
-            entity.lastRebuild = now
-
-            guard let snapshotGeo = Self.snapshotGeometry(from: anchor) else {
-                entity.building = false
-                continue
-            }
-            let worldTransform = anchor.transform
-
-            buildQueue.async { [weak entity] in
-                let split: SplitBuffers
-                if snapshot.stableCellCount == 0 {
-                    // 첫 공개: 커버리지 분류 생략 — 리본만 빠르게 그림.
-                    split = Self.computeFastTentative(
-                        positions: snapshotGeo.positions,
-                        triangles: snapshotGeo.triangles,
-                        worldTransform: worldTransform
-                    )
-                } else {
-                    split = Self.computeSplit(
-                        positions: snapshotGeo.positions,
-                        triangles: snapshotGeo.triangles,
-                        worldTransform: worldTransform,
-                        snapshot: snapshot
-                    )
+        buildQueue.async { [weak self] in
+            let cells = Self.coverageDisplayCells(
+                snapshot: snapshot,
+                ball: ball,
+                hole: hole,
+                pastHole: past,
+                halfWidth: half,
+                planeY: planeY
+            )
+            let split = DisplaySurfaceGrid.buildSplitMeshes(
+                cells: cells,
+                coverage: snapshot,
+                cellSize: DisplaySurfaceGrid.cellSizeMeters,
+                lineHalfWidth: 0.001
+            )
+            let blueMesh = Self.generateMesh(
+                GeometryBuffers(positions: split.tentativeLines.positions, indices: split.tentativeLines.indices),
+                name: "cov-blue"
+            )
+            let whiteMesh = Self.generateMesh(
+                GeometryBuffers(positions: split.stableLines.positions, indices: split.stableLines.indices),
+                name: "cov-white"
+            )
+            let buildSignature = signature
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // 오래된 비동기 빌드가 나중에 덮어쓰면 높이가 한 번 더 점프한다.
+                guard buildSignature == self.lastCoverageDisplaySignature else {
+                    self.coverageBuilding = false
+                    return
                 }
-                let fillMesh = Self.generateMesh(split.fill, name: "fill")
-                let tentativeMesh = Self.generateMesh(split.tentativeLines, name: "blue")
-                let stableMesh = Self.generateMesh(split.stableLines, name: "white")
-                DispatchQueue.main.async {
-                    guard let entity else { return }
-                    Self.assign(fillMesh, to: entity.fill)
-                    Self.assign(tentativeMesh, to: entity.tentativeLines)
-                    Self.assign(stableMesh, to: entity.stableLines)
-                    entity.building = false
+                // 면 채움(쿼드→삼각)은 파란 폴리곤처럼 보여 쓰지 않는다. 격자선만.
+                if let fill = self.coverageFillEntity {
+                    fill.isEnabled = false
                 }
+                if let blue = self.coverageBlueEntity { Self.assign(blueMesh, to: blue) }
+                if let white = self.coverageWhiteEntity { Self.assign(whiteMesh, to: white) }
+                self.coverageBuilding = false
             }
-            scheduled += 1
-            if scheduled >= rebuildBudget { break }
         }
-        if scheduled > 0 {
-            lastGlobalRebuildTime = now
+    }
+
+    private func lockedDisplayPlaneY(from snapshot: ScanCoverageSnapshot) -> Float {
+        let heights = Array(snapshot.cellHeights.values)
+        let median = Self.medianFloat(heights) ?? 0
+        // 첫 몇 칸에서 바로 잠근다. 잠금 전 median이 매 프레임 바뀌면 바둑판 전체가 떠다닌다.
+        if lockedCoveragePlaneY == nil, snapshot.observedCellCount >= 3 {
+            lockedCoveragePlaneY = median
+        } else if let locked = lockedCoveragePlaneY, abs(median - locked) > 0.50 {
+            // 다른 층/테이블로 튀는 경우만 재잠금. 30cm는 실내 노이즈에도 자주 걸려 다시 흐름.
+            lockedCoveragePlaneY = median
         }
+        return lockedCoveragePlaneY ?? median
+    }
+
+    private static func coverageDisplaySignature(
+        snapshot: ScanCoverageSnapshot,
+        planeY: Float,
+        hasCorridor: Bool
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(snapshot.stableKeys)
+        hasher.combine(snapshot.tentativeKeys)
+        hasher.combine(planeY.bitPattern)
+        hasher.combine(hasCorridor)
+        return hasher.finalize()
+    }
+
+    private static func medianFloat(_ values: [Float]) -> Float? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) * 0.5
+        }
+        return sorted[middle]
+    }
+
+    private static func coverageDisplayCells(
+        snapshot: ScanCoverageSnapshot,
+        ball: SIMD2<Double>?,
+        hole: SIMD2<Double>?,
+        pastHole: Double,
+        halfWidth: Double,
+        planeY: Float
+    ) -> [DisplaySurfaceGrid.Cell] {
+        let cellSize = DisplaySurfaceGrid.cellSizeMeters
+        var cells: [DisplaySurfaceGrid.Cell] = []
+        cells.reserveCapacity(min(snapshot.cellHeights.count, DisplaySurfaceGrid.maxCells))
+        for (key, height) in snapshot.cellHeights {
+            if cells.count >= DisplaySurfaceGrid.maxCells { break }
+            let ix = Int32(truncatingIfNeeded: key >> 32)
+            let iz = Int32(bitPattern: UInt32(truncatingIfNeeded: key))
+            let x = (Double(ix) + 0.5) * Double(cellSize)
+            let z = (Double(iz) + 0.5) * Double(cellSize)
+            if let ball, let hole {
+                guard isInsideDisplayCorridor(
+                    x: x,
+                    z: z,
+                    ball: ball,
+                    hole: hole,
+                    halfWidth: halfWidth,
+                    pastHole: pastHole
+                ) else { continue }
+            }
+            cells.append(
+                DisplaySurfaceGrid.Cell(ix: ix, iz: iz, height: height)
+            )
+        }
+        return DisplaySurfaceGrid.flattenToMedianHeight(cells, lift: 0.004, height: planeY)
+    }
+
+    private static func isInsideDisplayCorridor(
+        x: Double,
+        z: Double,
+        ball: SIMD2<Double>,
+        hole: SIMD2<Double>,
+        halfWidth: Double,
+        pastHole: Double
+    ) -> Bool {
+        let dx = hole.x - ball.x
+        let dz = hole.y - ball.y
+        let length = hypot(dx, dz)
+        guard length > 1e-6 else {
+            return hypot(x - ball.x, z - ball.y) <= halfWidth + pastHole
+        }
+        let ux = dx / length
+        let uz = dz / length
+        let px = x - ball.x
+        let pz = z - ball.y
+        let along = px * ux + pz * uz
+        let lateral = abs(px * (-uz) + pz * ux)
+        return along >= -0.5 && along <= length + pastHole && lateral <= halfWidth
     }
 
     // MARK: - Depth grid (거리 무관 즉시 피드백)

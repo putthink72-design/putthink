@@ -65,8 +65,8 @@ struct BehindBallSweepCards: View {
             Image(systemName: guidance.pitchOK ? "checkmark.circle.fill" : "arrow.down.to.line")
                 .foregroundStyle(guidance.pitchOK ? OSDPalette.status : Color.orange)
             Text(guidance.pitchOK
-                  ? "바닥을 비스듬히 비추는 중 · OK"
-                  : "폰을 세워두지 말고 바닥을 향해 살짝 숙이세요")
+                  ? "약 40° 사선(30–45°) · OK"
+                  : "폰을 약 40°로 들어 바닥을 비추세요")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(OSDPalette.textPrimary)
             Spacer(minLength: 0)

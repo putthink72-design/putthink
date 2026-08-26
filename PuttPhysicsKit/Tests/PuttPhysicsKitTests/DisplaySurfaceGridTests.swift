@@ -51,7 +51,8 @@ final class DisplaySurfaceGridTests: XCTestCase {
             meanDepthMeters: 1,
             cameraSpeedMetersPerSecond: 0,
             stableKeys: keys,
-            tentativeKeys: []
+            tentativeKeys: [],
+            cellHeights: [:]
         )
         let split = DisplaySurfaceGrid.buildSplitMeshes(
             cells: cells,
@@ -62,6 +63,19 @@ final class DisplaySurfaceGridTests: XCTestCase {
         XCTAssertTrue(split.tentativeFill.isEmpty)
         XCTAssertTrue(split.tentativeLines.isEmpty)
         XCTAssertFalse(split.stableLines.isEmpty)
+    }
+
+    func testFlattenToMedianHeightMakesHorizontalBoard() {
+        let cells = [
+            DisplaySurfaceGrid.Cell(ix: 0, iz: 0, height: 0.30),
+            DisplaySurfaceGrid.Cell(ix: 1, iz: 0, height: 0.34),
+            DisplaySurfaceGrid.Cell(ix: 0, iz: 1, height: 0.32)
+        ]
+        let flat = DisplaySurfaceGrid.flattenToMedianHeight(cells, lift: 0.004)
+        XCTAssertEqual(flat.count, 3)
+        for cell in flat {
+            XCTAssertEqual(cell.height, 0.324, accuracy: 1e-5)
+        }
     }
 
     func testDisplaySmoothingDoesNotFlattenLongSlope() {

@@ -68,7 +68,7 @@ public enum DriftCorrector {
 }
 
 public enum HeightMapRasterizer {
-    /// 메시 구멍만 이웃 평균. 한쪽 스캔의 반대 플랭크는 경사 외삽.
+    /// 메시 구멍만 이웃 평균(최대 10cm). 한쪽 스캔의 반대 플랭크는 최근접 높이로 채우고 횡경사는 외삽하지 않는다.
     public static let maxInterpolationGapMeters = 0.10
 
     public static func rasterize(
@@ -207,20 +207,7 @@ public enum HeightMapRasterizer {
                 guard !known[index] else { continue }
                 let source = nearest[index]
                 guard source >= 0 else { continue }
-                let sx = source % width
-                let sy = source / width
-                let (gx, gy) = measuredGradient(
-                    x: sx,
-                    y: sy,
-                    values: values,
-                    measuredMask: knownMask,
-                    width: width,
-                    height: height,
-                    cellSize: cellSize
-                )
-                let dx = Double(x - sx) * cellSize
-                let dy = Double(y - sy) * cellSize
-                result[index] = values[source] + gx * dx + gy * dy
+                result[index] = values[source]
                 interpolated[index] = true
             }
         }
@@ -263,44 +250,6 @@ public enum HeightMapRasterizer {
             }
         }
         return (distance, nearest)
-    }
-
-    private static func measuredGradient(
-        x: Int,
-        y: Int,
-        values: [Double],
-        measuredMask: [Bool],
-        width: Int,
-        height: Int,
-        cellSize: Double
-    ) -> (Double, Double) {
-        func measured(_ cx: Int, _ cy: Int) -> Double? {
-            guard cx >= 0, cx < width, cy >= 0, cy < height else { return nil }
-            let index = cy * width + cx
-            guard measuredMask[index] else { return nil }
-            return values[index]
-        }
-        let gx: Double
-        if let right = measured(x + 1, y), let left = measured(x - 1, y) {
-            gx = (right - left) / (2 * cellSize)
-        } else if let right = measured(x + 1, y), let center = measured(x, y) {
-            gx = (right - center) / cellSize
-        } else if let left = measured(x - 1, y), let center = measured(x, y) {
-            gx = (center - left) / cellSize
-        } else {
-            gx = 0
-        }
-        let gy: Double
-        if let up = measured(x, y + 1), let down = measured(x, y - 1) {
-            gy = (up - down) / (2 * cellSize)
-        } else if let up = measured(x, y + 1), let center = measured(x, y) {
-            gy = (up - center) / cellSize
-        } else if let down = measured(x, y - 1), let center = measured(x, y) {
-            gy = (center - down) / cellSize
-        } else {
-            gy = 0
-        }
-        return (gx, gy)
     }
 }
 

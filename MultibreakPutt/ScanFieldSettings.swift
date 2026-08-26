@@ -1,7 +1,7 @@
 import Foundation
 import PuttPhysicsKit
 
-/// 경기 / 튜닝 스캔 복도 프리셋 — UserDefaults.
+/// 지정 계산 모드 · 복도 프리셋 — UserDefaults.
 enum ScanFieldSettings {
     static let fieldModeKey = "scan.fieldMode"
     static let didChangeNotification = Notification.Name("ScanFieldSettings.didChange")
@@ -11,7 +11,7 @@ enum ScanFieldSettings {
            let mode = ScanFieldMode(rawValue: raw) {
             return mode
         }
-        return .tuning
+        return .competition
     }
 
     static var corridorMargins: ScanCorridorMargins {
@@ -27,9 +27,25 @@ extension ScanFieldMode {
     var settingsDetail: String {
         switch self {
         case .competition:
-            return "편도 · 볼 지정 후 사선(~30°)으로 홀까지 걷기 → 홀 지정 직후 계산. 복도 6m."
+            return "홀 지정 직후 경로를 계산·표시합니다. 돌아와 실볼이 그대로일 때 사용하세요."
         case .tuning:
-            return "왕복 검증용(기본). 사선(~30°)으로 홀까지 걷기 · 복도 6m."
+            return "홀 지정 직후 경로를 계산한 뒤, 볼로 돌아가 실제 볼 위치를 다시 지정합니다."
+        }
+    }
+
+    var pathMode: ScanPathMode {
+        switch self {
+        case .competition: return .oneWay
+        case .tuning: return .roundTrip
+        }
+    }
+}
+
+extension ScanPathMode {
+    var fieldMode: ScanFieldMode {
+        switch self {
+        case .oneWay: return .competition
+        case .roundTrip: return .tuning
         }
     }
 }

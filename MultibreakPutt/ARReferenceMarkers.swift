@@ -85,6 +85,15 @@ enum ARReferenceMarkers {
         return ModelEntity(mesh: mesh, materials: [material])
     }
 
+    /// 바닥 선용. `simd_quatf(from:to:)`는 방향이 ±Z에 가까우면 축이 불안정해 상자가 세워진다.
+    static func yawRotation(aligningLocalZToHorizontal dir: SIMD3<Float>) -> simd_quatf {
+        var flat = SIMD3<Float>(dir.x, 0, dir.z)
+        let len = simd_length(flat)
+        guard len > 1e-6 else { return simd_quatf(ix: 0, iy: 0, iz: 0, r: 1) }
+        flat /= len
+        return simd_quatf(angle: atan2(flat.x, flat.z), axis: SIMD3(0, 1, 0))
+    }
+
     /// 화면 픽셀 두께를 월드 미터로.
     static func worldWidth(
         forScreenPixels pixels: Float,

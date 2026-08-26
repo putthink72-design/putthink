@@ -1,7 +1,33 @@
 import SwiftUI
 import PuttPhysicsKit
 
-/// 걷기 스캔 안내 — 틀기 게이지·전체 초록 워시 없음. 안정 파지·바닥 각도·참고 진행만.
+/// 폰 피치(사용자 정의): 0°=바닥 수평·카메라 직하, 90°=스크린 정면·카메라 수평.
+enum ScanPhonePitchGuidance {
+    static let targetDegrees = 40.0
+    static let bandMinDegrees = 30.0
+    static let bandMaxDegrees = 45.0
+
+    static var bandLabel: String {
+        "\(Int(bandMinDegrees))–\(Int(bandMaxDegrees))°"
+    }
+
+    static var targetLabel: String {
+        "약 \(Int(targetDegrees))°"
+    }
+
+    static func actionHint(degrees: Double?) -> String {
+        guard let degrees else { return "폰을 \(targetLabel)로 들어 바닥을 비추세요" }
+        if degrees < bandMinDegrees {
+            return "폰 끝을 조금 더 들어 \(targetLabel)로 (허용 \(bandLabel))"
+        }
+        if degrees > bandMaxDegrees {
+            return "폰을 조금 더 숙여 \(targetLabel)로"
+        }
+        return "\(Int(degrees.rounded()))° · OK (\(bandLabel))"
+    }
+}
+
+/// 걷기 스캔 안내 — 안정 파지·피치 밴드·참고 진행. 밴드 안이면 전체 초록 워시.
 struct LiDARTwistGuidanceCards: View {
     let guidance: LiDARTwistGuidanceState
 
@@ -31,7 +57,7 @@ struct LiDARTwistGuidanceCards: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(guidance.inBand ? OSDPalette.status : OSDPalette.accent)
             }
-            Text("좌우로 살짝 틀지 마세요. 흔들리지 않게 잡고, 바닥을 약 30° 사선으로 비추며 걸으세요.")
+            Text("좌우로 살짝 틀지 마세요. 흔들리지 않게 잡고, 바닥을 \(ScanPhonePitchGuidance.targetLabel) 사선으로 비추며 걸으세요 (\(ScanPhonePitchGuidance.bandLabel)).")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(OSDPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -85,11 +111,9 @@ struct LiDARTwistGuidanceCards: View {
 
     private var pitchCapsule: some View {
         HStack(spacing: 8) {
-            Image(systemName: guidance.pitchLookingAtGround ? "checkmark.circle.fill" : "arrow.down.to.line")
-                .foregroundStyle(guidance.pitchLookingAtGround ? OSDPalette.status : Color.orange)
-            Text(guidance.pitchLookingAtGround
-                  ? "약 30° 사선으로 바닥 비추는 중 · OK"
-                  : "폰을 세워두지 말고 바닥을 약 30°로 숙이세요")
+            Image(systemName: guidance.pitchInBand ? "checkmark.circle.fill" : "arrow.up.and.down")
+                .foregroundStyle(guidance.pitchInBand ? OSDPalette.status : Color.orange)
+            Text(ScanPhonePitchGuidance.actionHint(degrees: guidance.pitchDegrees))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(OSDPalette.textPrimary)
             Spacer(minLength: 0)
@@ -101,6 +125,16 @@ struct LiDARTwistGuidanceCards: View {
     }
 }
 
+/// 피치 허용 밴드(30–45°)일 때만. 단색 fill — blur/머티리얼 없음(부하 무시 가능).
+struct ScanPitchInBandWash: View {
+    var body: some View {
+        Color.green.opacity(0.14)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 struct LiDARTwistGuidanceState: Equatable {
     var bandMinX: Double
     var bandMaxX: Double
@@ -108,7 +142,10 @@ struct LiDARTwistGuidanceState: Equatable {
     var inBand: Bool
     var actionText: String
     var statusText: String
+    /// 피치가 스캔 밴드 안이면 true (`pitchInBand`와 동일).
     var pitchLookingAtGround: Bool
+    var pitchDegrees: Double?
+    var pitchInBand: Bool
     var walkProgress: Double?
     var walkDistanceMeters: Double?
     var walkRibbonCells: Int?

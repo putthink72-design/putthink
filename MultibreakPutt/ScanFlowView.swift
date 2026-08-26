@@ -19,7 +19,9 @@ struct ScanFlowView: View {
 
     var body: some View {
         Group {
-            if controller.flowState == .complete, controller.completedScan != nil {
+            if controller.flowState == .complete,
+               controller.completedScan != nil,
+               !controller.needsBallReanchor {
                 Gate55GuidanceView(controller: controller)
                     .ignoresSafeArea(edges: .bottom)
             } else {
@@ -41,10 +43,11 @@ struct ScanFlowView: View {
             case .active:
                 applyBrightnessPolicy()
                 UIApplication.shared.isIdleTimerDisabled = true
-                controller.prewarmSession()
+                controller.resumeARSession()
             case .inactive, .background:
                 restoreBrightness()
                 UIApplication.shared.isIdleTimerDisabled = false
+                controller.pauseARSession()
             @unknown default:
                 break
             }
@@ -75,6 +78,10 @@ struct ScanFlowView: View {
                 OSDAmberReticle(dashedRing: controller.flowState == .placingHole)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
+            }
+
+            if controller.lidarTwistGuidance?.pitchInBand == true, showsTwistCards {
+                ScanPitchInBandWash()
             }
 
             VStack(spacing: 0) {
@@ -110,6 +117,8 @@ struct ScanFlowView: View {
                 Group {
                     if controller.flowState == .idle {
                         idleOnboardCard
+                    } else if controller.flowState == .complete, controller.needsBallReanchor {
+                        oneWayBallReanchorCard
                     } else if controller.flowState != .complete {
                         scanBottomPanel
                     }
@@ -132,8 +141,10 @@ struct ScanFlowView: View {
 
     private var showsTwistCards: Bool {
         switch controller.flowState {
-        case .walkingToHole, .placingHole, .returningToBall:
+        case .walkingToHole, .placingHole, .returningToBall, .processing:
             return true
+        case .complete:
+            return controller.needsBallReanchor
         default:
             return false
         }
@@ -181,15 +192,19 @@ struct ScanFlowView: View {
                     title: "볼을 지정하세요",
                     body: controller.meshReady
                         ? "십자선을 실제 볼 중심에 맞춘 뒤 버튼을 누르세요."
-                        : "바닥(볼 주변)을 향해 천천히 좌우로 비추세요. 가까운 지면 메시가 쌓이면 지정할 수 있습니다.",
-                    button: controller.meshReady ? "볼 지정" : "메시 준비 중…",
+                        : "바닥(볼 주변)을 향해 천천히 비추세요. 파란 격자가 보이면 지정할 수 있습니다.",
+                    button: controller.meshReady ? "볼 지정" : "지면 준비 중…",
                     action: controller.requestBallPlacement,
                     enabled: controller.meshReady
                 ) {
                     if !controller.meshReady {
                         HStack(spacing: 8) {
                             ProgressView().tint(OSDPalette.accent)
-                            Text("메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점")
+                            Text(
+                                controller.sceneDepthReady
+                                    ? "깊이 준비됨 · 메시 \(controller.meshVertexCount.formatted())점"
+                                    : "메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점"
+                            )
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(OSDPalette.textSecondary)
                         }
@@ -229,10 +244,10 @@ struct ScanFlowView: View {
                 stepPanel(
                     step: "STEP 2 / 2",
                     title: "홀을 지정하세요",
-                    body: controller.pathMode == .oneWay
-                        ? "십자선을 홀컵 중심에 맞춘 뒤 지정하세요. 편도 모드라 지정 직후 바로 계산합니다."
-                        : "십자선을 실제 홀컵 중심에 맞춘 뒤 버튼을 누르세요.",
-                    button: controller.pathMode == .oneWay ? "홀 지정 · 바로 계산" : "홀 기준점 지정",
+                    body: controller.pathMode.requiresBallReanchor
+                        ? "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산하고, 볼로 돌아가 실볼을 재지정합니다."
+                        : "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산·표시합니다.",
+                    button: "홀 지정 · 바로 계산",
                     action: controller.requestHolePlacement
                 ) {
                     referenceStatusCompact
@@ -243,7 +258,7 @@ struct ScanFlowView: View {
                 stepPanel(
                     step: nil,
                     title: "볼로 복귀",
-                    body: "같은 경로를 따라 돌아온 뒤 스캔을 종료하세요. 왕복으로 드리프트를 보정합니다.",
+                    body: "볼로 돌아온 뒤 스캔을 종료하세요.",
                     button: "스캔 종료 · 추천 계산",
                     action: controller.finishScan
                 ) {
@@ -274,9 +289,23 @@ struct ScanFlowView: View {
         }
     }
 
+    private var oneWayBallReanchorCard: some View {
+        OSDOnboardCard {
+            stepPanel(
+                step: nil,
+                title: "볼로 돌아가 재지정",
+                body: "같은 AR 화면을 유지합니다. 실볼 중심에 십자선을 맞춘 뒤 재지정하세요. 홀·높이맵은 그대로입니다.",
+                button: "볼 재지정",
+                action: controller.requestBallReanchor
+            ) {
+                referenceStatusCompact
+            }
+        }
+    }
+
     private var idleOnboardCard: some View {
         OSDOnboardCard {
-            Text("볼·홀 사이 그린을 스캔합니다.\n바닥을 약 30° 사선으로 비추며 홀까지 걸으세요.")
+            Text("볼·홀 사이 그린을 스캔합니다.\n바닥을 약 40° 사선(허용 30–45°)으로 비추며 홀까지 걸으세요.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
@@ -348,6 +377,8 @@ struct ScanFlowView: View {
         switch controller.flowState {
         case .placingBall, .placingHole:
             return true
+        case .complete:
+            return controller.needsBallReanchor
         default:
             return false
         }
@@ -357,6 +388,8 @@ struct ScanFlowView: View {
         switch controller.flowState {
         case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .processing:
             return true
+        case .complete:
+            return controller.needsBallReanchor
         default:
             return false
         }
@@ -366,9 +399,9 @@ struct ScanFlowView: View {
         VStack(alignment: .leading, spacing: 6) {
             if !isCompactCoverage {
                 HStack(spacing: 10) {
-                    Label("파랑(선+면)=추가 스캔", systemImage: "square.grid.3x3.fill")
+                    Label("파랑 격자=스캔 중", systemImage: "square.grid.3x3.fill")
                         .foregroundStyle(Color.blue)
-                    Label("흰 선=완료", systemImage: "checkmark.circle")
+                    Label("흰 격자=안정", systemImage: "checkmark.circle")
                         .foregroundStyle(Color.white)
                     Spacer()
                 }
@@ -378,6 +411,19 @@ struct ScanFlowView: View {
             Text(controller.coverageSnapshot.statusLine)
                 .font(.caption.monospacedDigit().weight(.semibold))
 
+            if controller.holeAnchor != nil {
+                Text(
+                    String(
+                        format: "홀 뒤 측정 %.0fcm / %.0fcm (경로 계산 %.0fcm까지)",
+                        controller.pastHoleMeasuredMeters * 100,
+                        PuttScanCorridor.pastHoleMargin * 100,
+                        PuttScanCorridor.pastHoleMargin * 100
+                    )
+                )
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(OSDPalette.textSecondary)
+            }
+
             ProgressView(value: controller.coverageSnapshot.stableRatio)
                 .tint(OSDPalette.accent)
 
@@ -386,7 +432,7 @@ struct ScanFlowView: View {
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.9))
 
-                Text("스캔 모드: \(ScanFieldSettings.fieldMode.label) · \(ScanFieldSettings.fieldMode.settingsDetail)")
+                Text("지정 계산: \(controller.pathMode.label)")
                     .font(.caption2)
                     .foregroundStyle(OSDPalette.textTertiary)
                     .lineLimit(2)
@@ -442,13 +488,20 @@ struct ScanFlowView: View {
 
     private func exportCurrentScan() {
         guard let scan = controller.completedScan else { return }
-        do {
-            let outcome = try ScanExporter.export(scan: scan, region: selectedRegion)
-            diagnostics = outcome.diagnostics
-            exportURL = outcome.directory
-            exportError = nil
-        } catch {
-            exportError = "내보내기 실패: \(error.localizedDescription)"
+        let region = selectedRegion
+        Task.detached(priority: .utility) {
+            do {
+                let outcome = try ScanExporter.export(scan: scan, region: region)
+                await MainActor.run {
+                    diagnostics = outcome.diagnostics
+                    exportURL = outcome.directory
+                    exportError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    exportError = "내보내기 실패: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -492,12 +545,7 @@ private struct PlacementARView: UIViewRepresentable {
         context.coordinator.arView = uiView
         context.coordinator.controller = controller
         context.coordinator.lineWidthPixels = 2
-        // Apple 샘플·상용 스캐너: ARKit GPU 메시를 즉시 그림. CPU 리본 재생성과 별개.
-        if controller.meshVisualizationAllowed {
-            uiView.debugOptions.insert(.showSceneUnderstanding)
-        } else {
-            uiView.debugOptions.remove(.showSceneUnderstanding)
-        }
+        uiView.debugOptions.remove(.showSceneUnderstanding)
         if controller.meshVisualizationAllowed {
             let wasVisible = context.coordinator.meshEnabled && !context.coordinator.meshHidden
             context.coordinator.meshEnabled = true
@@ -523,17 +571,6 @@ private struct PlacementARView: UIViewRepresentable {
             ball: controller.ballAnchor,
             hole: controller.holeAnchor
         )
-        if let request = controller.placementRequest {
-            let coordinator = context.coordinator
-            let sessionController = controller
-            DispatchQueue.main.async {
-                coordinator.performCenterRaycast(
-                    in: uiView,
-                    kind: request,
-                    controller: sessionController
-                )
-            }
-        }
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
@@ -568,7 +605,6 @@ private struct PlacementARView: UIViewRepresentable {
         private var holeAnchorEntity: AnchorEntity?
         private var ballARAnchor: ARAnchor?
         private var holeARAnchor: ARAnchor?
-        private var lastHandledRequest: PlacementKind?
 
         func attachDisplayLink(controller: ARScanSessionController) {
             self.controller = controller
@@ -615,6 +651,16 @@ private struct PlacementARView: UIViewRepresentable {
             brightMesh.lineWidthPixels = lineWidthPixels
             brightMesh.burstMode = burst
             brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
+            if let ball = controller.ballAnchor {
+                brightMesh.corridorBallXZ = SIMD2(ball.worldX, ball.worldZ)
+            } else {
+                brightMesh.corridorBallXZ = nil
+            }
+            if let hole = controller.holeAnchor {
+                brightMesh.corridorHoleXZ = SIMD2(hole.worldX, hole.worldZ)
+            } else {
+                brightMesh.corridorHoleXZ = nil
+            }
             brightMesh.update(in: view)
         }
 
@@ -666,61 +712,6 @@ private struct PlacementARView: UIViewRepresentable {
                     existingEntity: &holeAnchorEntity,
                     existingARAnchor: &holeARAnchor
                 )
-            }
-        }
-
-        func performCenterRaycast(
-            in view: ARView,
-            kind: PlacementKind,
-            controller: ARScanSessionController
-        ) {
-            guard lastHandledRequest != kind else { return }
-            lastHandledRequest = kind
-
-            let center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-            guard view.bounds.width > 1, view.bounds.height > 1 else {
-                lastHandledRequest = nil
-                return
-            }
-
-            let results = view.raycast(
-                from: center,
-                allowing: .estimatedPlane,
-                alignment: .any
-            )
-            if let hit = results.first {
-                let t = hit.worldTransform.columns.3
-                let timestamp = view.session.currentFrame?.timestamp ?? Date().timeIntervalSince1970
-                controller.applyRaycastHit(
-                    worldX: Double(t.x),
-                    worldY: Double(t.y),
-                    worldZ: Double(t.z),
-                    timestamp: timestamp
-                )
-                lastHandledRequest = nil
-            } else {
-                let meshResults = view.raycast(
-                    from: center,
-                    allowing: .existingPlaneGeometry,
-                    alignment: .any
-                )
-                if let hit = meshResults.first {
-                    let t = hit.worldTransform.columns.3
-                    let timestamp = view.session.currentFrame?.timestamp
-                        ?? Date().timeIntervalSince1970
-                    controller.applyRaycastHit(
-                        worldX: Double(t.x),
-                        worldY: Double(t.y),
-                        worldZ: Double(t.z),
-                        timestamp: timestamp
-                    )
-                    lastHandledRequest = nil
-                } else {
-                    controller.reportRaycastFailure(
-                        "지면을 찾지 못했습니다. 십자선을 잔디/바닥에 맞추고 다시 시도하세요."
-                    )
-                    lastHandledRequest = nil
-                }
             }
         }
     }

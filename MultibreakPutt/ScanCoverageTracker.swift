@@ -129,11 +129,16 @@ final class ScanCoverageTracker {
         lastProcessTime = now
         processing = true
 
-        // depth 픽셀 복사는 백그라운드에서 — 메인에서 하면 스캔 시작 직후 수 초~수십 초 멈춘 것처럼.
-        let depthMap = depthData.depthMap
-        let confidenceMap = depthData.confidenceMap
+        // ARKit이 depth 버퍼를 재사용하므로, 이 프레임의 픽셀을 여기서 복사한 뒤
+        // 백그라운드에서 역투영한다. 버퍼를 넘기면 다음 프레임 깊이와 이 프레임 자세가 섞여 격자가 흐른다.
+        let packed = Self.extractPackedDepthSamples(
+            depthMap: depthData.depthMap,
+            confidenceMap: depthData.confidenceMap,
+            sampleStep: Self.sampleStride
+        )
+        let depthWidth = CVPixelBufferGetWidth(depthData.depthMap)
+        let depthHeight = CVPixelBufferGetHeight(depthData.depthMap)
         let rawCameraTransform = frame.camera.transform
-        let cameraTransform = tiltStabilizer.stabilizedTransform(from: rawCameraTransform)
         let intrinsics = frame.camera.intrinsics
         let imageResolution = frame.camera.imageResolution
         let cameraPosition = SIMD3<Float>(
@@ -147,13 +152,13 @@ final class ScanCoverageTracker {
                 self?.processing = false
             }
             guard let self else { return }
-            let samples = Self.copyDepthSamples(
-                depthMap: depthMap,
-                confidenceMap: confidenceMap,
+            let samples = Self.unprojectPackedSamples(
+                packed,
+                depthWidth: depthWidth,
+                depthHeight: depthHeight,
                 cameraIntrinsics: intrinsics,
                 imageResolution: imageResolution,
-                cameraToWorld: cameraTransform,
-                sampleStep: Self.sampleStride
+                cameraToWorld: rawCameraTransform
             )
             let snapshot = self.coverage.ingest(
                 points: samples,
@@ -250,7 +255,7 @@ final class ScanCoverageTracker {
             }
             // prune 끝점은 카메라(볼→현재 위치). 옆으로 밀면 등고가 라인 한쪽으로 치우침.
             let pathEndXZ = cameraXZ
-            if !fusionSamples.isEmpty {
+            if !fusionSamples.isEmpty, !trackingLimited {
                 self.surfaceFusion.ingestFrame(
                     fusionSamples,
                     timestamp: now,
@@ -304,23 +309,27 @@ final class ScanCoverageTracker {
         }
     }
 
-    private static func copyDepthSamples(
+    private struct PackedDepthSample {
+        var x: Float
+        var y: Float
+        var depth: Float
+        var confidence: UInt8
+    }
+
+    /// 현재 프레임 버퍼에서 샘플만 복사. 호출 스레드에서 ARKit 재사용 전에 끝내야 한다.
+    private static func extractPackedDepthSamples(
         depthMap: CVPixelBuffer,
         confidenceMap: CVPixelBuffer?,
-        cameraIntrinsics: simd_float3x3,
-        imageResolution: CGSize,
-        cameraToWorld: simd_float4x4,
         sampleStep: Int
-    ) -> [ScanCoveragePoint] {
+    ) -> [PackedDepthSample] {
         CVPixelBufferLockBaseAddress(depthMap, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-
         let width = CVPixelBufferGetWidth(depthMap)
         let height = CVPixelBufferGetHeight(depthMap)
-        guard width > 0, height > 0 else { return [] }
-        guard let depthBase = CVPixelBufferGetBaseAddress(depthMap) else { return [] }
+        guard width > 0, height > 0, let depthBase = CVPixelBufferGetBaseAddress(depthMap) else {
+            return []
+        }
         let depthBytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-
         var confidenceLocked = false
         var confidenceBase: UnsafeMutableRawPointer?
         var confidenceBytesPerRow = 0
@@ -336,19 +345,9 @@ final class ScanCoverageTracker {
             }
         }
 
-        // depth 해상도에 맞게 intrinsics 스케일
-        let scaleX = Float(width) / Float(max(imageResolution.width, 1))
-        let scaleY = Float(height) / Float(max(imageResolution.height, 1))
-        var depthIntrinsics = cameraIntrinsics
-        depthIntrinsics[0, 0] *= scaleX
-        depthIntrinsics[1, 1] *= scaleY
-        depthIntrinsics[2, 0] *= scaleX
-        depthIntrinsics[2, 1] *= scaleY
-
         let step = max(sampleStep, 1)
-        var points: [ScanCoveragePoint] = []
-        points.reserveCapacity((width / step + 1) * (height / step + 1))
-
+        var packed: [PackedDepthSample] = []
+        packed.reserveCapacity((width / step + 1) * (height / step + 1))
         for y in Swift.stride(from: 0, to: height, by: step) {
             let depthRow = UnsafeRawPointer(depthBase)
                 .advanced(by: depthBytesPerRow * y)
@@ -359,34 +358,103 @@ final class ScanCoverageTracker {
                     .advanced(by: confidenceBytesPerRow * y)
                     .assumingMemoryBound(to: UInt8.self)
             }()
-
             for x in Swift.stride(from: 0, to: width, by: step) {
                 let depth = depthRow[x]
                 guard depth.isFinite else { continue }
-
                 let confidence = confRow?[x] ?? 2
                 guard confidence >= ScanCoverage.minConfidence else { continue }
-
-                guard let world = ScanCoverage.unproject(
-                    depthX: Float(x),
-                    depthY: Float(y),
-                    depthMeters: depth,
-                    intrinsics: depthIntrinsics,
-                    cameraToWorld: cameraToWorld
-                ) else { continue }
-
-                points.append(
-                    ScanCoveragePoint(
-                        worldX: world.x,
-                        worldY: world.y,
-                        worldZ: world.z,
+                packed.append(
+                    PackedDepthSample(
+                        x: Float(x),
+                        y: Float(y),
+                        depth: depth,
                         confidence: confidence
                     )
                 )
             }
         }
+        return packed
+    }
 
+    private static func unprojectPackedSamples(
+        _ packed: [PackedDepthSample],
+        depthWidth: Int,
+        depthHeight: Int,
+        cameraIntrinsics: simd_float3x3,
+        imageResolution: CGSize,
+        cameraToWorld: simd_float4x4
+    ) -> [ScanCoveragePoint] {
+        guard depthWidth > 0, depthHeight > 0 else { return [] }
+        let scaleX = Float(depthWidth) / Float(max(imageResolution.width, 1))
+        let scaleY = Float(depthHeight) / Float(max(imageResolution.height, 1))
+        var depthIntrinsics = cameraIntrinsics
+        depthIntrinsics[0, 0] *= scaleX
+        depthIntrinsics[1, 1] *= scaleY
+        depthIntrinsics[2, 0] *= scaleX
+        depthIntrinsics[2, 1] *= scaleY
+
+        var points: [ScanCoveragePoint] = []
+        points.reserveCapacity(packed.count)
+        for sample in packed {
+            guard let world = ScanCoverage.unproject(
+                depthX: sample.x,
+                depthY: sample.y,
+                depthMeters: sample.depth,
+                intrinsics: depthIntrinsics,
+                cameraToWorld: cameraToWorld
+            ) else { continue }
+            points.append(
+                ScanCoveragePoint(
+                    worldX: world.x,
+                    worldY: world.y,
+                    worldZ: world.z,
+                    confidence: sample.confidence
+                )
+            )
+        }
         return points
+    }
+
+    /// 화면 중앙(깊이맵 중심) 한 점. 배치 raycast 폴백용.
+    static func unprojectCenterGround(frame: ARFrame) -> SIMD3<Float>? {
+        guard let depthData = frame.sceneDepth else { return nil }
+        let depthMap = depthData.depthMap
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        guard width > 2, height > 2, let base = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+        let cx = width / 2
+        let cy = height / 2
+        let depth = base.advanced(by: bytesPerRow * cy)
+            .assumingMemoryBound(to: Float32.self)[cx]
+        guard depth.isFinite, depth >= ScanCoverage.minDepthMeters, depth <= ScanCoverage.maxDepthMeters else {
+            return nil
+        }
+        if let confidenceMap = depthData.confidenceMap {
+            CVPixelBufferLockBaseAddress(confidenceMap, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly) }
+            let confRow = CVPixelBufferGetBytesPerRow(confidenceMap)
+            if let confBase = CVPixelBufferGetBaseAddress(confidenceMap) {
+                let conf = confBase.advanced(by: confRow * cy).assumingMemoryBound(to: UInt8.self)[cx]
+                guard conf >= ScanCoverage.minConfidence else { return nil }
+            }
+        }
+        let scaleX = Float(width) / Float(max(frame.camera.imageResolution.width, 1))
+        let scaleY = Float(height) / Float(max(frame.camera.imageResolution.height, 1))
+        var intrinsics = frame.camera.intrinsics
+        intrinsics[0, 0] *= scaleX
+        intrinsics[1, 1] *= scaleY
+        intrinsics[2, 0] *= scaleX
+        intrinsics[2, 1] *= scaleY
+        return ScanCoverage.unproject(
+            depthX: Float(cx),
+            depthY: Float(cy),
+            depthMeters: depth,
+            intrinsics: intrinsics,
+            cameraToWorld: frame.camera.transform
+        )
     }
 
     private func behindBallStatsSnapshot(now: TimeInterval) -> BehindBallSweepGate.Stats {

@@ -17,7 +17,7 @@ struct AppSettingsSheet: View {
     var onAimSettingsChanged: (() -> Void)?
 
     @AppStorage(ScanFieldSettings.fieldModeKey)
-    private var scanFieldModeRaw: String = ScanFieldMode.tuning.rawValue
+    private var scanFieldModeRaw: String = ScanFieldMode.competition.rawValue
 
     @AppStorage(PerformanceSettings.recommendGridKey)
     private var recommendGridRaw: Int = RecommendScanGrid.balanced.rawValue
@@ -59,8 +59,8 @@ struct AppSettingsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    OSDSettingsSectionGroup(title: "필드 스캔") {
-                        fieldScanModeContent
+                    OSDSettingsSectionGroup(title: "지정 계산") {
+                        specifyCalculationContent
                     }
 
                     OSDSettingsSectionGroup(title: "스캔 옵션") {
@@ -133,22 +133,40 @@ struct AppSettingsSheet: View {
                 controller.applyPathModeForFieldMode()
             }
         }
+        .onChange(of: controller.gate1RetestLockRoundTrip) { _, locked in
+            if locked {
+                scanFieldModeRaw = ScanFieldMode.tuning.rawValue
+            }
+        }
     }
 
     // MARK: - Scan
 
-    private var fieldScanModeContent: some View {
+    private var specifyCalculationBinding: Binding<ScanPathMode> {
+        Binding(
+            get: { (ScanFieldMode(rawValue: scanFieldModeRaw) ?? .competition).pathMode },
+            set: { newValue in
+                if controller.gate1RetestLockRoundTrip {
+                    scanFieldModeRaw = ScanFieldMode.tuning.rawValue
+                } else {
+                    scanFieldModeRaw = newValue.fieldMode.rawValue
+                }
+            }
+        )
+    }
+
+    private var specifyCalculationContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             OSDSegmentedRow(
-                options: ScanFieldMode.allCases,
+                options: ScanPathMode.allCases,
                 label: \.label,
-                selection: Binding(
-                    get: { ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning },
-                    set: { scanFieldModeRaw = $0.rawValue }
-                )
+                selection: specifyCalculationBinding
             )
-            fieldHelp((ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning).settingsDetail)
-            if mode == .guidance {
+            .disabled(controller.gate1RetestLockRoundTrip)
+            fieldHelp(specifyCalculationBinding.wrappedValue.detail)
+            if controller.gate1RetestLockRoundTrip {
+                fieldHelp("재측정(실볼 재지정 고정)이 켜져 있어 볼홀볼지정계산만 사용할 수 있습니다.")
+            } else if mode == .guidance {
                 fieldHelp("다음 스캔부터 적용됩니다. 이미 완료된 스캔의 높이맵은 바뀌지 않습니다.")
             }
         }
@@ -158,23 +176,12 @@ struct AppSettingsSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             if mode == .scan {
                 OSDSettingsToggleRow(
-                    title: "재측정(왕복 고정)",
+                    title: "재측정(실볼 재지정 고정)",
                     isOn: $controller.gate1RetestLockRoundTrip
                 )
                 if controller.gate1RetestLockRoundTrip {
-                    fieldHelp("게이트1 전체 스택 재측정 모드 — 편도 회차는 시작할 수 없습니다. path_mode=roundTrip만 기록됩니다.")
+                    fieldHelp("게이트1 재측정 모드 — 볼홀지정계산은 시작할 수 없습니다. 실볼 재지정이 필요합니다.")
                 }
-            }
-
-            Text("스캔 경로")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(OSDPalette.textSecondary)
-            if (ScanFieldMode(rawValue: scanFieldModeRaw) ?? .tuning) == .competition {
-                OSDSettingsKVRow(title: "경로", value: "편도 · 홀 지정 직후 계산")
-                fieldHelp("경기 모드는 편도로 고정됩니다.")
-            } else {
-                OSDSettingsKVRow(title: "경로", value: "왕복 · 드리프트 보정")
-                fieldHelp("튜닝 모드는 왕복으로 고정됩니다. 홀 지정 후 볼로 돌아와 스캔을 종료하세요.")
             }
 
             Text(String(format: "스무딩 σ: %.2f셀", controller.sigma))

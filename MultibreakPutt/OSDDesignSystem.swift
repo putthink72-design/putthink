@@ -956,6 +956,8 @@ struct OSDSegmentedRow<Option: Hashable>: View {
                 } label: {
                     Text(label(option))
                         .font(.system(size: 11, weight: selected ? .heavy : .regular))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
                         .foregroundStyle(selected ? OSDPalette.accentInk : OSDPalette.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)

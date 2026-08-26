@@ -68,6 +68,9 @@ final class Gate55GuidanceModel: ObservableObject {
 
     private var thermalObserver: NSObjectProtocol?
     private var recomputeGeneration = 0
+    private var boundPhysicsScanID: String?
+    private var boundPhysicsBall: ScanPose?
+    private var boundPhysicsHole: ScanPose?
 
     init() {
         let stored = UserDefaults.standard.object(forKey: Self.greenSpeedKey) as? Double
@@ -91,19 +94,36 @@ final class Gate55GuidanceModel: ObservableObject {
     }
 
     func bind(scan: CompletedScan) {
+        let physicsBall = scan.physicsStartPose
+        let physicsHole = scan.physicsHolePose
+        if boundPhysicsScanID == scan.id,
+           boundPhysicsBall == physicsBall,
+           boundPhysicsHole == physicsHole,
+           context != nil {
+            return
+        }
         do {
             context = try Gate55Validation.contextFromScan(
                 result: scan.result,
-                startPose: scan.startPose,
-                holePose: scan.holePose
+                startPose: physicsBall,
+                holePose: physicsHole
             )
+            boundPhysicsScanID = scan.id
+            boundPhysicsBall = physicsBall
+            boundPhysicsHole = physicsHole
             thermalLevel = ThermalPerformance.level
             statusMessage = String(
                 format: "홀까지 %.2fm · 추천 계산 중…",
-                scan.holeDistance
+                hypot(
+                    physicsHole.worldX - physicsBall.worldX,
+                    physicsHole.worldZ - physicsBall.worldZ
+                )
             )
             recompute()
         } catch {
+            boundPhysicsScanID = nil
+            boundPhysicsBall = nil
+            boundPhysicsHole = nil
             statusMessage = "지형 컨텍스트 실패: \(error.localizedDescription)"
         }
     }
@@ -169,6 +189,9 @@ final class Gate55GuidanceModel: ObservableObject {
                     case .flatHeuristic:
                         self.statusMessage =
                             "거리 추정 · 브레이크 미반영 (\(gridNote))"
+                    case .noPath:
+                        self.statusMessage =
+                            "홀인 경로 없음 · 스캔을 다시 하세요"
                     }
                 }
             case .forward:

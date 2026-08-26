@@ -131,6 +131,18 @@ final class ScanCoverageTests: XCTestCase {
         XCTAssertEqual(world!.y, 0, accuracy: 1e-4)
         XCTAssertEqual(world!.z, -1, accuracy: 1e-4)
 
+        let belowCenter = ScanCoverage.unproject(
+            depthX: 100,
+            depthY: 120,
+            depthMeters: 1.0,
+            intrinsics: intrinsics,
+            cameraToWorld: cameraToWorld
+        )
+        XCTAssertNotNil(belowCenter)
+        XCTAssertEqual(belowCenter!.x, 0, accuracy: 1e-4)
+        XCTAssertEqual(belowCenter!.y, -0.1, accuracy: 1e-4)
+        XCTAssertEqual(belowCenter!.z, -1, accuracy: 1e-4)
+
         let rejected = ScanCoverage.unproject(
             depthX: 100,
             depthY: 100,
@@ -227,5 +239,28 @@ final class ScanCoverageTests: XCTestCase {
             trackingLimited: false
         )
         XCTAssertEqual(snap.stableCellCount, 1)
+    }
+
+    func testTrackingLimitedDoesNotAddOrMoveCells() {
+        let coverage = ScanCoverage()
+        let first = ScanCoveragePoint(worldX: 0.1, worldY: 0.3, worldZ: 1.0, confidence: 2)
+        let drifted = ScanCoveragePoint(worldX: 1.5, worldY: 0.3, worldZ: 2.0, confidence: 2)
+        var snap = coverage.ingest(
+            points: [first],
+            cameraPosition: SIMD3<Float>(0, 1.4, 0),
+            timestamp: 1,
+            trackingLimited: false
+        )
+        XCTAssertEqual(snap.observedCellCount, 1)
+        snap = coverage.ingest(
+            points: [drifted],
+            cameraPosition: SIMD3<Float>(0.4, 1.4, 0.3),
+            timestamp: 2,
+            trackingLimited: true
+        )
+        XCTAssertEqual(snap.observedCellCount, 1)
+        XCTAssertEqual(snap.quality, .trackingBad)
+        XCTAssertEqual(snap.state(worldX: 0.1, worldZ: 1.0), .tentative)
+        XCTAssertEqual(snap.state(worldX: 1.5, worldZ: 2.0), .unseen)
     }
 }

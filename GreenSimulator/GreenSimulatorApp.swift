@@ -450,6 +450,8 @@ enum GreenSimText {
             return "추정 경로 · 홀인 미검증"
         case .flatHeuristic:
             return "거리 추정 · 브레이크 미반영"
+        case .noPath:
+            return "홀인 경로 없음 · 재스캔"
         }
     }
 

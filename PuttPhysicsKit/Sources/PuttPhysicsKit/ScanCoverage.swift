@@ -58,6 +58,8 @@ public struct ScanCoverageSnapshot: Sendable, Equatable {
     /// 안정 셀 좌표 키 집합 (cellKey = pack(ix, iz))
     public var stableKeys: Set<Int64>
     public var tentativeKeys: Set<Int64>
+    /// 표시용 셀 높이(월드 Y). 물리에는 쓰지 않는다.
+    public var cellHeights: [Int64: Float]
 
     public var stableRatio: Double {
         guard observedCellCount > 0 else { return 0 }
@@ -85,7 +87,8 @@ public struct ScanCoverageSnapshot: Sendable, Equatable {
         meanDepthMeters: 0,
         cameraSpeedMetersPerSecond: 0,
         stableKeys: [],
-        tentativeKeys: []
+        tentativeKeys: [],
+        cellHeights: [:]
     )
 }
 
@@ -106,6 +109,7 @@ public final class ScanCoverage {
         var hitCount: UInt16 = 0
         var lastTimestamp: TimeInterval = 0
         var maxConfidence: UInt8 = 0
+        var lastY: Float = 0
     }
 
     private var cells: [Int64: Cell] = [:]
@@ -145,9 +149,9 @@ public final class ScanCoverage {
         let cx = intrinsics[2, 0]
         let cy = intrinsics[2, 1]
         guard fx > 0, fy > 0 else { return nil }
-        // ARKit 카메라: +X right, +Y up, -Z forward. depth는 카메라 평면까지 거리.
+        // ARKit 이미지 원점은 왼쪽 위(+Y 아래). 카메라 공간은 +Y 위, -Z 전방.
         let x = (depthX - cx) * depthMeters / fx
-        let y = (depthY - cy) * depthMeters / fy
+        let y = -((depthY - cy) * depthMeters / fy)
         let local = SIMD4<Float>(x, y, -depthMeters, 1)
         let world = cameraToWorld * local
         return SIMD3<Float>(world.x, world.y, world.z)
@@ -164,55 +168,6 @@ public final class ScanCoverage {
         var depthSum: Float = 0
         var depthCount = 0
 
-        // 같은 프레임·같은 셀의 여러 픽셀은 1회 관측으로만 센다.
-        // (한 프레임 3픽셀로 바로 "안정"이 되는 오판정 방지)
-        var frameBuckets: [Int64: (maxConfidence: UInt8, sumX: Float, sumY: Float, sumZ: Float, count: Int)] = [:]
-        for point in points {
-            guard point.confidence >= Self.minConfidence else { continue }
-            let key = Self.cellKey(worldX: point.worldX, worldZ: point.worldZ)
-            var bucket = frameBuckets[key] ?? (0, 0, 0, 0, 0)
-            bucket.maxConfidence = max(bucket.maxConfidence, point.confidence)
-            bucket.sumX += point.worldX
-            bucket.sumY += point.worldY
-            bucket.sumZ += point.worldZ
-            bucket.count += 1
-            frameBuckets[key] = bucket
-        }
-
-        for (key, bucket) in frameBuckets {
-            var cell = cells[key] ?? Cell()
-            // 동일 timestamp 재유입은 무시 (독립 프레임만 누적).
-            if cell.lastTimestamp == timestamp, cell.hitCount > 0 {
-                continue
-            }
-            let wasStable = Int(cell.hitCount) >= Self.observationsForStable
-            cell.hitCount = cell.hitCount &+ 1
-            if cell.hitCount == 0 { cell.hitCount = UInt16.max }
-            cell.lastTimestamp = timestamp
-            cell.maxConfidence = max(cell.maxConfidence, bucket.maxConfidence)
-            cells[key] = cell
-            if !wasStable, Int(cell.hitCount) >= Self.observationsForStable {
-                newlyStable += 1
-            }
-
-            let inv = 1 / Float(max(bucket.count, 1))
-            let meanX = bucket.sumX * inv
-            let meanY = bucket.sumY * inv
-            let meanZ = bucket.sumZ * inv
-            let dx = meanX - cameraPosition.x
-            let dy = meanY - cameraPosition.y
-            let dz = meanZ - cameraPosition.z
-            let d = sqrt(dx * dx + dy * dy + dz * dz)
-            if d.isFinite {
-                depthSum += d
-                depthCount += 1
-            }
-        }
-
-        if cells.count > Self.maxCells {
-            pruneOldest(keeping: Self.maxCells * 3 / 4)
-        }
-
         var speed: Float = 0
         if let previousCameraPosition, let previousTimestamp, timestamp > previousTimestamp {
             let dt = Float(timestamp - previousTimestamp)
@@ -222,6 +177,59 @@ public final class ScanCoverage {
         }
         previousCameraPosition = cameraPosition
         previousTimestamp = timestamp
+
+        // 트래킹이 깨진 프레임의 역투영은 카메라에 붙어 격자가 흐른다. 기존 셀은 유지.
+        if !trackingLimited {
+            // 같은 프레임·같은 셀의 여러 픽셀은 1회 관측으로만 센다.
+            // (한 프레임 3픽셀로 바로 "안정"이 되는 오판정 방지)
+            var frameBuckets: [Int64: (maxConfidence: UInt8, sumX: Float, sumY: Float, sumZ: Float, count: Int)] = [:]
+            for point in points {
+                guard point.confidence >= Self.minConfidence else { continue }
+                let key = Self.cellKey(worldX: point.worldX, worldZ: point.worldZ)
+                var bucket = frameBuckets[key] ?? (0, 0, 0, 0, 0)
+                bucket.maxConfidence = max(bucket.maxConfidence, point.confidence)
+                bucket.sumX += point.worldX
+                bucket.sumY += point.worldY
+                bucket.sumZ += point.worldZ
+                bucket.count += 1
+                frameBuckets[key] = bucket
+            }
+
+            for (key, bucket) in frameBuckets {
+                var cell = cells[key] ?? Cell()
+                // 동일 timestamp 재유입은 무시 (독립 프레임만 누적).
+                if cell.lastTimestamp == timestamp, cell.hitCount > 0 {
+                    continue
+                }
+                let wasStable = Int(cell.hitCount) >= Self.observationsForStable
+                cell.hitCount = cell.hitCount &+ 1
+                if cell.hitCount == 0 { cell.hitCount = UInt16.max }
+                cell.lastTimestamp = timestamp
+                cell.maxConfidence = max(cell.maxConfidence, bucket.maxConfidence)
+                cell.lastY = bucket.sumY / Float(max(bucket.count, 1))
+                cells[key] = cell
+                if !wasStable, Int(cell.hitCount) >= Self.observationsForStable {
+                    newlyStable += 1
+                }
+
+                let inv = 1 / Float(max(bucket.count, 1))
+                let meanX = bucket.sumX * inv
+                let meanY = bucket.sumY * inv
+                let meanZ = bucket.sumZ * inv
+                let dx = meanX - cameraPosition.x
+                let dy = meanY - cameraPosition.y
+                let dz = meanZ - cameraPosition.z
+                let d = sqrt(dx * dx + dy * dy + dz * dz)
+                if d.isFinite {
+                    depthSum += d
+                    depthCount += 1
+                }
+            }
+
+            if cells.count > Self.maxCells {
+                pruneOldest(keeping: Self.maxCells * 3 / 4)
+            }
+        }
 
         let meanDepth = depthCount > 0 ? depthSum / Float(depthCount) : 0
         let quality = Self.evaluateQuality(
@@ -233,9 +241,12 @@ public final class ScanCoverage {
 
         var stableKeys = Set<Int64>()
         var tentativeKeys = Set<Int64>()
+        var cellHeights: [Int64: Float] = [:]
         stableKeys.reserveCapacity(cells.count)
         tentativeKeys.reserveCapacity(cells.count / 2)
+        cellHeights.reserveCapacity(cells.count)
         for (key, cell) in cells {
+            cellHeights[key] = cell.lastY
             if Int(cell.hitCount) >= Self.observationsForStable {
                 stableKeys.insert(key)
             } else if cell.hitCount > 0 {
@@ -252,7 +263,8 @@ public final class ScanCoverage {
             meanDepthMeters: meanDepth,
             cameraSpeedMetersPerSecond: speed,
             stableKeys: stableKeys,
-            tentativeKeys: tentativeKeys
+            tentativeKeys: tentativeKeys,
+            cellHeights: cellHeights
         )
     }
 

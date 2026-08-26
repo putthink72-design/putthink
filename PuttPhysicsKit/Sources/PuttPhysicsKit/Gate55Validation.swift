@@ -124,6 +124,8 @@ public struct Gate55Recommendation: Sendable, Equatable {
             return String(format: "%.1fm 추정 — 홀인 미검증", flatEquivalentDistance)
         case .flatHeuristic:
             return String(format: "%.1fm 거리 추정 — 브레이크 미반영", flatEquivalentDistance)
+        case .noPath:
+            return "홀인 경로 없음 — 스캔을 다시 하세요"
         default:
             return String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
         }
@@ -279,7 +281,23 @@ public enum Gate55Validation {
         }
 
         guard let primary = selection.primary else {
-            preconditionFailure("CandidateSelector must always return a primary candidate")
+            return Gate55Recommendation(
+                horizontalDistance: horizontal,
+                flatEquivalentDistance: 0,
+                distanceAdjustment: -horizontal,
+                elevationDelta: elevationDelta,
+                initialVelocity: 0,
+                directionDegrees: 0,
+                stopPosition: .zero,
+                overrunDistance: 0,
+                usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
+                searchTier: .noPath,
+                candidateCount: 0,
+                trajectory: [],
+                primary: nil,
+                corridorCandidates: [],
+                defaultCorridorIndex: 0
+            )
         }
 
         let defaultIndex = corridor.firstIndex(where: {

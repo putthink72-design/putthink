@@ -2,17 +2,17 @@ import Foundation
 
 /// 스캔·높이맵 복도 프리셋. 앱 `ScanFieldSettings`와 연동.
 public enum ScanFieldMode: String, CaseIterable, Sendable, Codable, Identifiable {
-    /// 편도 스캔 — 실제 경기. LiDAR FOV로 홀 뒤 ~1m까지 높이맵 포함.
+    /// 볼홀지정계산 — 홀 지정 직후 경로 표시. 실볼이 그대로일 때.
     case competition
-    /// 왕복 스캔·알고리즘 검증용(기본).
+    /// 볼홀볼지정계산 — 홀 지정 직후 계산, 돌아와 실볼 재지정.
     case tuning
 
     public var id: String { rawValue }
 
     public var label: String {
         switch self {
-        case .competition: return "경기"
-        case .tuning: return "튜닝"
+        case .competition: return "볼홀지정계산"
+        case .tuning: return "볼홀볼지정계산"
         }
     }
 }

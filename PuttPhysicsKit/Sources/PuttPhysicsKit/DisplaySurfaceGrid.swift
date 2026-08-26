@@ -80,6 +80,18 @@ public enum DisplaySurfaceGrid {
         return cells
     }
 
+    /// 커버리지 표시용. 셀마다 다른 lastY 때문에 평평한 바닥이 기울어 보이지 않게
+    /// 중력 수평(높이 중앙값, 또는 고정 높이)으로 맞춘다. 물리 입력에는 쓰지 않는다.
+    public static func flattenToMedianHeight(
+        _ cells: [Cell],
+        lift: Float = 0,
+        height: Float? = nil
+    ) -> [Cell] {
+        guard !cells.isEmpty else { return [] }
+        let base = (height ?? median(cells.map(\.height))) + lift
+        return cells.map { Cell(ix: $0.ix, iz: $0.iz, height: base) }
+    }
+
     /// 표시용 국소 중앙값(3×3). 물리 입력에는 쓰지 않는다.
     public static func smoothDisplayOnly(_ cells: [Cell]) -> [Cell] {
         guard !cells.isEmpty else { return [] }

@@ -174,54 +174,13 @@ public enum CandidateSelector {
             return result
         }
 
-        // ④ 홀 lateral miss 최소 추정
-        if let proximity = MultibreakPuttPhysics.scanBestHoleApproachParallel(
-            terrain: terrain,
-            greenSpeed: greenSpeed,
-            holeDistance: holeDistance,
-            holeDirectionDegrees: holeDirectionDegrees,
-            minimumVelocity: expanded.minimumVelocity,
-            maximumVelocity: expanded.maximumVelocity,
-            velocityPointCount: fallbackPoints,
-            minimumDirectionDegrees: expanded.minimumDirectionDegrees,
-            maximumDirectionDegrees: expanded.maximumDirectionDegrees,
-            directionPointCount: fallbackPoints
-        ) {
-            return rankCandidates(
-                raw: [proximity],
-                terrain: terrain,
-                greenSpeed: greenSpeed,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees,
-                holePosition: holePosition,
-                direction: direction,
-                overrunTarget: overrunTarget,
-                captureRadius: relaxedCaptureRadius,
-                usedRelaxed: true,
-                searchTier: .proximityEstimate
-            )
-        }
-
-        // ⑤ 평지 거리·고도 휴리스틱 (항상 1개)
-        let flatCandidate = flatHeuristicCandidate(
-            terrain: terrain,
-            greenSpeed: greenSpeed,
-            holeDistance: holeDistance,
-            holeDirectionDegrees: holeDirectionDegrees,
-            holePosition: holePosition
-        )
-        return rankCandidates(
-            raw: [flatCandidate],
-            terrain: terrain,
-            greenSpeed: greenSpeed,
-            holeDistance: holeDistance,
-            holeDirectionDegrees: holeDirectionDegrees,
-            holePosition: holePosition,
-            direction: direction,
+        return CandidateSelectionResult(
+            allCandidates: [],
+            primary: nil,
+            secondary: nil,
             overrunTarget: overrunTarget,
-            captureRadius: relaxedCaptureRadius,
-            usedRelaxed: true,
-            searchTier: .flatHeuristic
+            usedRelaxedCaptureRadius: false,
+            searchTier: .noPath
         )
     }
 
@@ -357,58 +316,4 @@ public enum CandidateSelector {
         )
     }
 
-    private static func flatHeuristicCandidate<Terrain: TerrainField>(
-        terrain: Terrain,
-        greenSpeed: Double,
-        holeDistance: Double,
-        holeDirectionDegrees: Double,
-        holePosition: PuttVector2
-    ) -> InitialConditionCandidate {
-        let elevationDelta = terrain.height(at: holePosition) - terrain.height(at: .zero)
-        let targetFlat = max(0.5, holeDistance + elevationDelta * 0.65)
-        let velocity = velocityForFlatArcLength(targetFlat, greenSpeed: greenSpeed)
-        let result = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: velocity,
-                initialDirectionDegrees: 0,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees
-            ),
-            terrain: terrain,
-            recordTrajectory: false,
-            ignoreCapture: true,
-            captureRadius: relaxedCaptureRadius
-        )
-        return InitialConditionCandidate(
-            initialVelocity: velocity,
-            directionDegrees: 0,
-            result: result
-        )
-    }
-
-    private static func velocityForFlatArcLength(_ target: Double, greenSpeed: Double) -> Double {
-        var lower = 0.4
-        var upper = 7.0
-        for _ in 0..<40 {
-            let mid = (lower + upper) * 0.5
-            let distance = FlatPuttPhysics.simulate(
-                configuration: FlatPuttConfiguration(
-                    greenSpeed: greenSpeed,
-                    slopeDegrees: 0,
-                    initialVelocity: mid,
-                    initialDirectionDegrees: 0,
-                    holeDistance: 10_000,
-                    holeDirectionDegrees: 0
-                ),
-                recordTrajectory: false
-            ).arcLength
-            if distance < target {
-                lower = mid
-            } else {
-                upper = mid
-            }
-        }
-        return (lower + upper) * 0.5
-    }
 }

@@ -4,8 +4,8 @@ import XCTest
 final class CandidateSelectorFallbackTests: XCTestCase {
     private let greenSpeed = 2.5
 
-    /// 극단 경사 — 홀인 격자는 비어도 primary는 항상 존재해야 한다.
-    func testAlwaysReturnsPrimaryOnSteepSinglePlane() {
+    /// 극단 경사 — 홀인 격자가 비면 primary 없이 재스캔 티어를 반환한다.
+    func testReturnsNoPathOnSteepSinglePlane() {
         let terrain = DualPlaneTerrainField(
             alphaADegrees: 12,
             orientationADegrees: 90,
@@ -20,9 +20,10 @@ final class CandidateSelectorFallbackTests: XCTestCase {
             velocityPointCount: 24,
             directionPointCount: 24
         )
-        XCTAssertNotNil(selection.primary)
-        XCTAssertFalse(selection.allCandidates.isEmpty)
-        XCTAssertFalse(selection.searchTier.isHoleInVerified)
+        XCTAssertNil(selection.primary)
+        XCTAssertTrue(selection.allCandidates.isEmpty)
+        XCTAssertEqual(selection.searchTier, .noPath)
+        XCTAssertFalse(selection.usedRelaxedCaptureRadius)
     }
 
     func testLongPuttUsesExpandedSearchBeforeEstimate() {
@@ -38,7 +39,7 @@ final class CandidateSelectorFallbackTests: XCTestCase {
         XCTAssertTrue(selection.searchTier.isHoleInVerified)
     }
 
-    func testFlatHeuristicProducesZeroBetaCandidate() {
+    func testSteepPutDoesNotInventZeroBetaPath() {
         let terrain = DualPlaneTerrainField(
             alphaADegrees: 14,
             orientationADegrees: 0,
@@ -53,9 +54,10 @@ final class CandidateSelectorFallbackTests: XCTestCase {
             velocityPointCount: 16,
             directionPointCount: 16
         )
-        XCTAssertNotNil(selection.primary)
-        if selection.searchTier == CandidateSearchTier.flatHeuristic {
-            XCTAssertEqual(selection.primary?.candidate.directionDegrees ?? 999, 0, accuracy: 1e-9)
+        if selection.primary == nil {
+            XCTAssertEqual(selection.searchTier, .noPath)
+        } else {
+            XCTAssertTrue(selection.searchTier.isHoleInVerified)
         }
     }
 }

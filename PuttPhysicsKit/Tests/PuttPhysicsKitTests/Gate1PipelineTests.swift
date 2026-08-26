@@ -49,7 +49,7 @@ final class Gate1PipelineTests: XCTestCase {
         XCTAssertEqual(map.value(x: 1, y: 0), 3, accuracy: 1e-12)
     }
 
-    func testOneSidedScanExtrapolatesCrossSlopeInsteadOfFlattening() throws {
+    func testOneSidedScanKeepsNearestHeightInsteadOfExtrapolatingCrossSlope() throws {
         let cell = 0.05
         let vertices = [
             LocalVertex(x: 0.20, y: 1.00, height: 0.008, progress: 0),
@@ -70,8 +70,8 @@ final class Gate1PipelineTests: XCTestCase {
         let column = Int(round((-0.10 - map.originX) / cell))
         let row = Int(round((1.00 - map.originY) / cell))
         let height = map.value(x: column, y: row)
-        XCTAssertEqual(height, -0.004, accuracy: 0.003)
-        XCTAssertLessThan(height, 0.002)
+        XCTAssertEqual(height, 0.008, accuracy: 0.003)
+        XCTAssertGreaterThan(height, 0.004)
     }
 
     func testGaussianSmoothingReducesImpulseAndPreservesConstantMap() {

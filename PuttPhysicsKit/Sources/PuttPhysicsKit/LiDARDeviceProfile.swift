@@ -112,9 +112,9 @@ public struct LiDARDeviceProfile: Sendable, Equatable, Codable {
         return normalizedX < targetScreenBandMinX ? "볼·홀이 화면 왼쪽 밖" : "볼·홀이 화면 오른쪽 밖"
     }
 
-    /// 화면을 보며 스캔할 때 — 항상 사선(~30°), 틀기보다 안정 파지.
+    /// 화면을 보며 스캔할 때 — 항상 사선(~40°, 허용 30–45°), 틀기보다 안정 파지.
     public var puttLineScreenHint: String {
-        "폰을 안정적으로 잡고 바닥을 약 30° 사선으로 비추며 걸으세요. 멀리 보이다가 가까워지도록 유지하고, 좌우로 살짝 틀지 않아도 됩니다."
+        "폰을 안정적으로 잡고 바닥을 약 40° 사선(허용 30–45°)으로 비추며 걸으세요. 멀리 보이다가 가까워지도록 유지하고, 좌우로 살짝 틀지 않아도 됩니다."
     }
 
     private struct Parsed {
