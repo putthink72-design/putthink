@@ -16,16 +16,25 @@ struct ScanFlowView: View {
     @State private var exportError: String?
     @State private var savedBrightness: CGFloat?
     @State private var showSettings = false
+    @State private var exportGeneration = 0
+    /// 조준↔스캔 전환 시 ARView를 재생성하지 않기 위한 공유 카메라 뷰.
+    @State private var sessionARView: ARView?
 
     var body: some View {
-        Group {
+        ZStack {
+            PlacementARView(controller: controller, sessionARView: $sessionARView)
+                .ignoresSafeArea()
+
             if controller.flowState == .complete,
-               controller.completedScan != nil,
-               !controller.needsBallReanchor {
-                Gate55GuidanceView(controller: controller)
-                    .ignoresSafeArea(edges: .bottom)
+               controller.completedScan != nil {
+                Gate55GuidanceView(
+                    controller: controller,
+                    sessionARView: sessionARView,
+                    exportError: $exportError,
+                    onRequestClearHistory: clearScanHistory
+                )
             } else {
-                scanExperience
+                scanExperienceOverlays
             }
         }
         .preferredColorScheme(.dark)
@@ -44,7 +53,11 @@ struct ScanFlowView: View {
                 applyBrightnessPolicy()
                 UIApplication.shared.isIdleTimerDisabled = true
                 controller.resumeARSession()
-            case .inactive, .background:
+            case .inactive:
+                if !PerformanceSettings.forceMaxBrightness {
+                    restoreBrightness()
+                }
+            case .background:
                 restoreBrightness()
                 UIApplication.shared.isIdleTimerDisabled = false
                 controller.pauseARSession()
@@ -69,15 +82,22 @@ struct ScanFlowView: View {
         }
     }
 
-    private var scanExperience: some View {
+    private var scanExperienceOverlays: some View {
         ZStack {
-            PlacementARView(controller: controller)
-                .ignoresSafeArea()
-
-            if showsReticle {
-                OSDAmberReticle(dashedRing: controller.flowState == .placingHole)
+            if showsReticle && controller.flowState != .placingHole {
+                OSDAmberReticle(dashedRing: controller.flowState != .placingBall)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
+            }
+
+            if !controller.holeGroundRingPoints.isEmpty {
+                HoleCupRingOverlay(points: controller.holeGroundRingPoints)
+                    .ignoresSafeArea()
+            }
+
+            if controller.flowState == .placingBall, !controller.ballGroundRingPoints.isEmpty {
+                BallGroundRingOverlay(points: controller.ballGroundRingPoints)
+                    .ignoresSafeArea()
             }
 
             if controller.lidarTwistGuidance?.pitchInBand == true, showsTwistCards {
@@ -117,8 +137,6 @@ struct ScanFlowView: View {
                 Group {
                     if controller.flowState == .idle {
                         idleOnboardCard
-                    } else if controller.flowState == .complete, controller.needsBallReanchor {
-                        oneWayBallReanchorCard
                     } else if controller.flowState != .complete {
                         scanBottomPanel
                     }
@@ -129,10 +147,10 @@ struct ScanFlowView: View {
         }
     }
 
-    /// STEP 2/3에서는 안내 카드가 있으므로 파란 placement 배너는 숨김.
+    /// 스캔 중 placement 배너는 걷기·홀 지정 단계에서 숨김.
     private var showsPlacementBanner: Bool {
         switch controller.flowState {
-        case .behindBallSweep, .walkingToHole:
+        case .walkingToHole, .placingHole:
             return false
         default:
             return true
@@ -141,7 +159,7 @@ struct ScanFlowView: View {
 
     private var showsTwistCards: Bool {
         switch controller.flowState {
-        case .walkingToHole, .placingHole, .returningToBall, .processing:
+        case .walkingToHole, .placingHole, .processing:
             return true
         case .complete:
             return controller.needsBallReanchor
@@ -178,25 +196,21 @@ struct ScanFlowView: View {
     @ViewBuilder
     private var scanBottomPanel: some View {
         switch controller.flowState {
-        case .preparing:
-            OSDOnboardCard {
-                ProgressView("LiDAR와 AR 트래킹 준비 중…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(OSDPalette.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         case .placingBall:
             OSDOnboardCard {
                 stepPanel(
                     step: "STEP 1 / 2",
-                    title: "볼을 지정하세요",
-                    body: controller.meshReady
-                        ? "십자선을 실제 볼 중심에 맞춘 뒤 버튼을 누르세요."
-                        : "바닥(볼 주변)을 향해 천천히 비추세요. 파란 격자가 보이면 지정할 수 있습니다.",
-                    button: controller.meshReady ? "볼 지정" : "지면 준비 중…",
+                    title: controller.pendingDetectedBall == nil ? "볼 위치 지정" : "볼 후보 확인",
+                    body: ballPlacementBody,
+                    button: ballPlacementButtonTitle,
                     action: controller.requestBallPlacement,
                     enabled: controller.meshReady
                 ) {
+                    if let lock = controller.visualBallLockStatus.shortLabel {
+                        Text(lock)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(OSDPalette.accent)
+                    }
                     if !controller.meshReady {
                         HStack(spacing: 8) {
                             ProgressView().tint(OSDPalette.accent)
@@ -209,20 +223,6 @@ struct ScanFlowView: View {
                                 .foregroundStyle(OSDPalette.textSecondary)
                         }
                     }
-                    referenceStatusCompact
-                }
-            }
-        case .behindBallSweep:
-            // 레거시 상태 — 바로 걷기로 넘김.
-            OSDOnboardCard {
-                stepPanel(
-                    step: "STEP 2 / 2",
-                    title: "홀까지 사선 스캔",
-                    body: controller.lidarProfile.puttLineScreenHint,
-                    button: "홀 방향 걷기로",
-                    action: controller.finishBehindBallSweep,
-                    enabled: true
-                ) {
                     referenceStatusCompact
                 }
             }
@@ -245,22 +245,10 @@ struct ScanFlowView: View {
                     step: "STEP 2 / 2",
                     title: "홀을 지정하세요",
                     body: controller.pathMode.requiresBallReanchor
-                        ? "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산하고, 볼로 돌아가 실볼을 재지정합니다."
-                        : "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산·표시합니다.",
+                        ? "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산합니다. 볼로 돌아와 조준하면 흰 볼을 자동 정렬합니다."
+                        : "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산·표시하고, 조준 중 흰 볼을 자동 정렬합니다.",
                     button: "홀 지정 · 바로 계산",
                     action: controller.requestHolePlacement
-                ) {
-                    referenceStatusCompact
-                }
-            }
-        case .returningToBall:
-            OSDOnboardCard {
-                stepPanel(
-                    step: nil,
-                    title: "볼로 복귀",
-                    body: "볼로 돌아온 뒤 스캔을 종료하세요.",
-                    button: "스캔 종료 · 추천 계산",
-                    action: controller.finishScan
                 ) {
                     referenceStatusCompact
                 }
@@ -279,27 +267,13 @@ struct ScanFlowView: View {
                     title: "스캔 실패",
                     body: message,
                     button: "처음부터 다시",
-                    action: controller.reset
+                    action: resetScanSession
                 ) {
                     EmptyView()
                 }
             }
         default:
             EmptyView()
-        }
-    }
-
-    private var oneWayBallReanchorCard: some View {
-        OSDOnboardCard {
-            stepPanel(
-                step: nil,
-                title: "볼로 돌아가 재지정",
-                body: "같은 AR 화면을 유지합니다. 실볼 중심에 십자선을 맞춘 뒤 재지정하세요. 홀·높이맵은 그대로입니다.",
-                button: "볼 재지정",
-                action: controller.requestBallReanchor
-            ) {
-                referenceStatusCompact
-            }
         }
     }
 
@@ -311,8 +285,8 @@ struct ScanFlowView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
             OSDPrimaryButton(
-                title: "스캔 시작",
-                enabled: true
+                title: controller.scanPipelineReady ? "스캔 시작" : "LiDAR 준비 중…",
+                enabled: controller.scanPipelineReady
             ) {
                 controller.startScan()
             }
@@ -322,6 +296,30 @@ struct ScanFlowView: View {
                     .foregroundStyle(.red)
             }
         }
+    }
+
+    private var ballPlacementBody: String {
+        switch controller.visualBallLockStatus {
+        case .candidate:
+            return "감지된 후보가 맞으면 확인하세요. 틀리거나 볼이 없으면 십자선을 원하는 지면에 두고 직접 지정하세요."
+        case .searching, .waitingForView:
+            if controller.ballDetectionPreview != nil {
+                return "볼을 찾는 중입니다. 십자선을 볼 중심에 맞추면 지면 링이 따라옵니다."
+            }
+            return "볼이 있으면 십자선을 중심에 맞추면 후보를 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
+        case .locked, .aligned:
+            return "볼이 지정되었습니다."
+        default:
+            return "볼이 있으면 십자선을 중심에 맞추면 후보를 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
+        }
+    }
+
+    private var ballPlacementButtonTitle: String {
+        guard controller.meshReady else { return "지면 준비 중…" }
+        if controller.pendingDetectedBall != nil {
+            return "감지 후보로 지정"
+        }
+        return "십자선 지면 지정"
     }
 
     @ViewBuilder
@@ -386,7 +384,7 @@ struct ScanFlowView: View {
 
     private var showsCoverageUI: Bool {
         switch controller.flowState {
-        case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .processing:
+        case .placingBall, .walkingToHole, .placingHole, .processing:
             return true
         case .complete:
             return controller.needsBallReanchor
@@ -447,7 +445,7 @@ struct ScanFlowView: View {
     /// STEP 2/3에서는 안내 카드가 많아 커버리지를 한 줄로 줄임.
     private var isCompactCoverage: Bool {
         switch controller.flowState {
-        case .behindBallSweep, .walkingToHole:
+        case .walkingToHole:
             return true
         default:
             return false
@@ -488,17 +486,21 @@ struct ScanFlowView: View {
 
     private func exportCurrentScan() {
         guard let scan = controller.completedScan else { return }
+        exportGeneration += 1
+        let generation = exportGeneration
         let region = selectedRegion
         Task.detached(priority: .utility) {
             do {
                 let outcome = try ScanExporter.export(scan: scan, region: region)
                 await MainActor.run {
+                    guard generation == self.exportGeneration else { return }
                     diagnostics = outcome.diagnostics
                     exportURL = outcome.directory
                     exportError = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard generation == self.exportGeneration else { return }
                     exportError = "내보내기 실패: \(error.localizedDescription)"
                 }
             }
@@ -506,6 +508,7 @@ struct ScanFlowView: View {
     }
 
     private func clearScanHistory() {
+        exportGeneration += 1
         do {
             try ScanExporter.clearHistory()
             diagnostics = nil
@@ -516,12 +519,17 @@ struct ScanFlowView: View {
             exportError = "기록 초기화 실패: \(error.localizedDescription)"
         }
     }
+
+    private func resetScanSession() {
+        controller.reset()
+    }
 }
 
 // MARK: - AR view with raycast + markers
 
 private struct PlacementARView: UIViewRepresentable {
     @ObservedObject var controller: ARScanSessionController
+    @Binding var sessionARView: ARView?
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
@@ -533,6 +541,9 @@ private struct PlacementARView: UIViewRepresentable {
         view.renderOptions.insert(.disableCameraGrain)
         view.renderOptions.insert(.disableHDR)
         context.coordinator.arView = view
+        DispatchQueue.main.async {
+            sessionARView = view
+        }
         context.coordinator.attachDisplayLink(controller: controller)
         // 머티리얼 셰이더를 미리 컴파일 — 첫 메시 표시 히칭 제거.
         context.coordinator.brightMesh.prewarmRenderPipelines(in: view)
@@ -543,10 +554,14 @@ private struct PlacementARView: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARView, context: Context) {
         context.coordinator.arView = uiView
+        if sessionARView !== uiView {
+            sessionARView = uiView
+        }
         context.coordinator.controller = controller
         context.coordinator.lineWidthPixels = 2
         uiView.debugOptions.remove(.showSceneUnderstanding)
-        if controller.meshVisualizationAllowed {
+        let meshAllowed = controller.meshVisualizationAllowed
+        if meshAllowed {
             let wasVisible = context.coordinator.meshEnabled && !context.coordinator.meshHidden
             context.coordinator.meshEnabled = true
             context.coordinator.meshHidden = false
@@ -565,12 +580,15 @@ private struct PlacementARView: UIViewRepresentable {
             context.coordinator.meshHidden = true
             context.coordinator.brightMesh.contentHidden = true
         }
-        context.coordinator.syncMarkers(
-            in: uiView,
-            session: controller.session,
-            ball: controller.ballAnchor,
-            hole: controller.holeAnchor
-        )
+        if controller.flowState != .complete {
+            context.coordinator.syncMarkers(
+                in: uiView,
+                session: controller.session,
+                ball: controller.ballAnchor,
+                hole: controller.holeAnchor
+            )
+        }
+        context.coordinator.refreshBallRing(controller: controller, in: uiView)
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
@@ -603,8 +621,6 @@ private struct PlacementARView: UIViewRepresentable {
         private var burstRateApplied = false
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?
-        private var ballARAnchor: ARAnchor?
-        private var holeARAnchor: ARAnchor?
 
         func attachDisplayLink(controller: ARScanSessionController) {
             self.controller = controller
@@ -623,6 +639,9 @@ private struct PlacementARView: UIViewRepresentable {
         /// 스캔 시작 순간 — 워밍업된 지오메트리를 즉시 공개하고 첫 빌드도 바로 스케줄.
         func revealMeshNow(in view: ARView) {
             brightMesh.setEnabled(true, in: view)
+            if controller?.meshCoverageSnapshot.observedCellCount == 0 {
+                brightMesh.resetCoverageDisplayLock(in: view)
+            }
             brightMesh.contentHidden = false
             brightMesh.lineWidthPixels = lineWidthPixels
             brightMesh.burstMode = controller?.meshCaptureBurstActive ?? true
@@ -653,8 +672,10 @@ private struct PlacementARView: UIViewRepresentable {
             brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
             if let ball = controller.ballAnchor {
                 brightMesh.corridorBallXZ = SIMD2(ball.worldX, ball.worldZ)
+                brightMesh.corridorBallY = Float(ball.worldY)
             } else {
                 brightMesh.corridorBallXZ = nil
+                brightMesh.corridorBallY = nil
             }
             if let hole = controller.holeAnchor {
                 brightMesh.corridorHoleXZ = SIMD2(hole.worldX, hole.worldZ)
@@ -662,55 +683,60 @@ private struct PlacementARView: UIViewRepresentable {
                 brightMesh.corridorHoleXZ = nil
             }
             brightMesh.update(in: view)
+            let showsScanMarkers = controller.flowState != .complete
+            syncMarkers(
+                in: view,
+                session: controller.session,
+                ball: showsScanMarkers ? controller.ballAnchor : nil,
+                hole: showsScanMarkers ? controller.holeAnchor : nil
+            )
+            refreshPlacementRings(controller: controller, in: view)
+        }
+
+        func refreshPlacementRings(controller: ARScanSessionController, in view: ARView) {
+            let frame = view.session.currentFrame
+            let viewport = view.bounds.size
+            controller.refreshBallGroundRing(frame: frame, viewport: viewport)
+            controller.refreshHoleGroundRing(frame: frame, viewport: viewport)
+        }
+
+        func refreshBallRing(controller: ARScanSessionController, in view: ARView) {
+            refreshPlacementRings(controller: controller, in: view)
         }
 
         func syncMarkers(
             in view: ARView,
-            session: ARSession,
+            session _: ARSession,
             ball: ScanPose?,
             hole: ScanPose?
         ) {
             if let ball {
-                if ballAnchorEntity == nil {
-                    let world = SIMD3<Float>(Float(ball.worldX), Float(ball.worldY), Float(ball.worldZ))
-                    ARReferenceMarkers.placeWorldLocked(
-                        named: "trueputt.ball",
-                        entityFactory: { ARReferenceMarkers.makeBallEntity() },
-                        at: world,
-                        session: session,
-                        in: view,
-                        existingEntity: &ballAnchorEntity,
-                        existingARAnchor: &ballARAnchor
-                    )
-                }
-            } else {
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                let world = SIMD3<Float>(Float(ball.worldX), Float(ball.worldY), Float(ball.worldZ))
+                ARReferenceMarkers.placeRealityWorldFixed(
+                    entityFactory: { ARReferenceMarkers.makeBallEntity() },
+                    at: world,
                     in: view,
-                    existingEntity: &ballAnchorEntity,
-                    existingARAnchor: &ballARAnchor
+                    existingEntity: &ballAnchorEntity
+                )
+            } else {
+                ARReferenceMarkers.removeRealityWorldFixed(
+                    in: view,
+                    existingEntity: &ballAnchorEntity
                 )
             }
 
             if let hole {
-                if holeAnchorEntity == nil {
-                    let world = SIMD3<Float>(Float(hole.worldX), Float(hole.worldY), Float(hole.worldZ))
-                    ARReferenceMarkers.placeWorldLocked(
-                        named: "trueputt.hole",
-                        entityFactory: { ARReferenceMarkers.makeHoleEntity() },
-                        at: world,
-                        session: session,
-                        in: view,
-                        existingEntity: &holeAnchorEntity,
-                        existingARAnchor: &holeARAnchor
-                    )
-                }
-            } else {
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                let world = SIMD3<Float>(Float(hole.worldX), Float(hole.worldY), Float(hole.worldZ))
+                ARReferenceMarkers.placeRealityWorldFixed(
+                    entityFactory: { ARReferenceMarkers.makeHoleEntity() },
+                    at: world,
                     in: view,
-                    existingEntity: &holeAnchorEntity,
-                    existingARAnchor: &holeARAnchor
+                    existingEntity: &holeAnchorEntity
+                )
+            } else {
+                ARReferenceMarkers.removeRealityWorldFixed(
+                    in: view,
+                    existingEntity: &holeAnchorEntity
                 )
             }
         }

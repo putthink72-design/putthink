@@ -84,7 +84,7 @@ struct OSDGearButton: View {
     }
 }
 
-/// 상단 크롬 — safe area 아래 최소 여백.
+// MARK: - Top chrome
 enum OSDTopChromeMetrics {
     static let horizontalPadding: CGFloat = 14
     static let topPadding: CGFloat = 6
@@ -199,8 +199,14 @@ struct OSDOnboardCard<Content: View>: View {
 /// 스캔·조준 플로팅 카드 — 스크롤 가능, 스크롤바 비표시.
 struct OSDFloatingScrollCard<Content: View>: View {
     var maxHeight: CGFloat = 320
+    /// 지정 시 높이를 고정한다. safe area·Spacer 제안이 커져도 ScrollView가 늘어나지 않는다.
+    var fixedHeight: CGFloat? = nil
     var scrollToID: String?
     @ViewBuilder var content: () -> Content
+
+    private var scrollHeight: CGFloat {
+        fixedHeight ?? maxHeight
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -211,7 +217,8 @@ struct OSDFloatingScrollCard<Content: View>: View {
                 }
             }
             .scrollDismissesKeyboard(.never)
-            .frame(maxHeight: maxHeight)
+            .frame(height: scrollHeight, alignment: .top)
+            .clipped()
             .onChange(of: scrollToID) { _, id in
                 guard let id else { return }
                 DispatchQueue.main.async {
@@ -238,7 +245,8 @@ private enum OSDKeyboardMetrics {
     static func overlapPadding(for keyboardFrame: CGRect) -> CGFloat {
         let screenHeight = UIScreen.main.bounds.height
         let overlap = screenHeight - keyboardFrame.origin.y
-        guard overlap > 0 else { return 0 }
+        // 기울임·제스처로 키보드 프레임이 흔들려도 OSD가 밀리지 않게 한다.
+        guard overlap > 120 else { return 0 }
         return max(0, overlap - bottomSafeArea)
     }
 }

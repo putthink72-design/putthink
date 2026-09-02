@@ -102,6 +102,22 @@ final class Gate55GuidanceModel: ObservableObject {
            context != nil {
             return
         }
+        applyScanContext(scan: scan, physicsBall: physicsBall, physicsHole: physicsHole)
+    }
+
+    /// 홀 재앵커 등 — 물리 지형은 그대로, 표시용 상태만 갱신.
+    func refreshDisplay(for scan: CompletedScan) {
+        statusMessage = String(
+            format: "홀까지 %.2fm",
+            scan.holeDistance
+        )
+    }
+
+    private func applyScanContext(
+        scan: CompletedScan,
+        physicsBall: ScanPose,
+        physicsHole: ScanPose
+    ) {
         do {
             context = try Gate55Validation.contextFromScan(
                 result: scan.result,

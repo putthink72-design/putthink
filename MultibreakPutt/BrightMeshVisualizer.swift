@@ -37,19 +37,48 @@ final class BrightMeshVisualizer {
     private var lastCoverageRebuildTime: TimeInterval = 0
     private var depthBuilding = false
     private var coverageBuilding = false
+    private var coverageRebuildPending = false
+    private weak var coverageHostView: ARView?
     private var enabled = false
     private var pipelinePrewarmAnchor: AnchorEntity?
     /// 표시 격자 높이. 매 프레임 중앙값을 쓰면 폰을 움직일 때 면이 떠다닌다.
     private var lockedCoveragePlaneY: Float?
     private var lastCoverageDisplaySignature: Int = 0
+    private static let planeLockCellCount = CoverageDisplayLock.minCellsToPlant
+    /// 볼 지정 전 바둑판을 빨리 띄우기 위한 표시 전용 임계(물리 minCellsToPlant와 분리).
+    private static let quickDisplayCellCount = 2
+    /// 칸은 ARAnchor에 고정. 스캔 직후 레이캐스트로 끌면 격자가 흐른다.
+    private var coverageStickEntity: AnchorEntity?
+    /// 스틱 로컬 격자 원점에 대응하는 월드 5cm 셀 키.
+    private var coverageGridAnchorKey: Int64?
+    /// 볼 기준으로 심은 스틱이면 재심기 방지.
+    private var coverageStickPlantBallXZ: SIMD2<Double>?
+    private var frozenWorldKeys: Set<Int64> = []
+    private var worldToLocalKey: [Int64: Int64] = [:]
+    private var frozenLocalCells: [Int64: DisplaySurfaceGrid.Cell] = [:]
+    private var frozenLocalStable: Set<Int64> = []
+    private var originSettle = CoverageOriginSettle.quickDisplay
+    private var lastIngestCameraXZ: SIMD2<Float>?
+    /// 원점 점프 직후 잠깐 새 월드 키만 막는다. 영구 잠금은 보행 중 AR 보정 한 번에 격자가 멈춘다.
+    private var newCellIngestSuppressedUntil: TimeInterval = 0
+    /// 한 틱에 이보다 크면 걸음이 아니라 원점 보정으로 본다. 0.06s·1.5m/s 보행은 약 9cm.
+    private static let ingestOriginJumpMeters: Float = 0.25
+    /// 원점 점프 후 새 칸 억제 시간. 짧게 두면 보행 중 격자가 다시 쌓인다.
+    private static let ingestJumpSuppressDuration: TimeInterval = 0.35
 
     /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
     /// 스캔 시작 시 false로 바꾸면 이미 빌드된 메시가 즉시 나타난다.
     var contentHidden = false {
         didSet {
             guard oldValue != contentHidden else { return }
-            rootAnchor?.isEnabled = !contentHidden
+            applyContentVisibility()
         }
+    }
+
+    private func applyContentVisibility() {
+        let visible = !contentHidden
+        rootAnchor?.isEnabled = visible
+        coverageStickEntity?.isEnabled = visible
     }
 
     private static let tentativeColor = UIColor.systemBlue
@@ -77,6 +106,7 @@ final class BrightMeshVisualizer {
     var burstMode = false
     /// 홀이 지정되면 복도 밖 커버리지 격자를 숨긴다.
     var corridorBallXZ: SIMD2<Double>?
+    var corridorBallY: Float?
     var corridorHoleXZ: SIMD2<Double>?
     var corridorPastHoleMeters: Double = PuttScanCorridor.pastHoleMargin
     var corridorHalfWidthMeters: Double = PuttScanCorridor.orthogonalHalfWidth
@@ -97,7 +127,7 @@ final class BrightMeshVisualizer {
             // RealityKit 월드 고정 — 격자 정점은 ARKit 월드 좌표 그대로 둔다.
             let root = AnchorEntity(.world(transform: matrix_identity_float4x4))
             root.name = "trueputt.viz-origin"
-            root.isEnabled = !contentHidden
+            applyContentVisibility()
             view.scene.addAnchor(root)
             rootAnchor = root
         } else {
@@ -131,6 +161,7 @@ final class BrightMeshVisualizer {
             view.scene.removeAnchor(rootAnchor)
         }
         rootAnchor = nil
+        detachCoverageStick(in: view)
         entities.removeAll()
         missingMeshFrames.removeAll()
         depthGridEntity = nil
@@ -138,17 +169,45 @@ final class BrightMeshVisualizer {
         coverageSnapshot = .empty
         depthBuilding = false
         coverageBuilding = false
+        coverageRebuildPending = false
+        coverageHostView = nil
         coverageFillEntity = nil
         coverageBlueEntity = nil
         coverageWhiteEntity = nil
         corridorBallXZ = nil
+        corridorBallY = nil
         corridorHoleXZ = nil
         lockedCoveragePlaneY = nil
         lastCoverageDisplaySignature = 0
+        coverageStickPlantBallXZ = nil
+        lastIngestCameraXZ = nil
+        newCellIngestSuppressedUntil = 0
+        clearFrozenCoverageCells()
+    }
+
+    private func clearFrozenCoverageCells() {
+        frozenWorldKeys.removeAll(keepingCapacity: true)
+        worldToLocalKey.removeAll(keepingCapacity: true)
+        frozenLocalCells.removeAll(keepingCapacity: true)
+        frozenLocalStable.removeAll(keepingCapacity: true)
+    }
+
+    /// 스캔 시작 때 호출. 이전 워밍업 높이로 바둑판이 미끄러지지 않게 한다.
+    func resetCoverageDisplayLock(in view: ARView? = nil) {
+        lockedCoveragePlaneY = nil
+        lastCoverageDisplaySignature = 0
+        coverageStickPlantBallXZ = nil
+        lastIngestCameraXZ = nil
+        newCellIngestSuppressedUntil = 0
+        originSettle = CoverageOriginSettle.quickDisplay
+        clearFrozenCoverageCells()
+        if let view {
+            detachCoverageStick(in: view)
+        }
     }
 
     func update(in view: ARView) {
-        guard enabled, let rootAnchor else { return }
+        guard enabled, rootAnchor != nil else { return }
         guard let frame = view.session.currentFrame else { return }
         let now = frame.timestamp
 
@@ -157,7 +216,7 @@ final class BrightMeshVisualizer {
         clearARKitRibbonEntities()
 
         // sceneDepth 누적 커버리지 격자
-        updateCoverageGrid(now: now, in: rootAnchor)
+        updateCoverageGrid(now: now, in: view)
 
         // 매 프레임 depth 격자는 현재 화면만 보여 폰을 따라 흐른다. 쓰지 않는다.
         depthGridEntity?.isEnabled = false
@@ -180,34 +239,393 @@ final class BrightMeshVisualizer {
 
     // MARK: - Coverage grid (5cm, ARKit 메시와 독립)
 
-    private func updateCoverageGrid(now: TimeInterval, in root: AnchorEntity) {
+    /// 표시 격자는 5cm 키의 정규 중심에 맞춘다. lastX/lastZ 평균은 칸 안 샘플 편향으로 앵커가 옆으로 밀릴 수 있다.
+    private static func coverageGridCenters(from snapshot: ScanCoverageSnapshot) -> [SIMD2<Float>] {
+        snapshot.cellCenters.keys.map { CoverageDisplayLock.cellCenterXZ($0) }
+    }
+
+    private func updateCoverageGrid(now: TimeInterval, in view: ARView) {
         coverageFillEntity?.transform = Transform()
         coverageBlueEntity?.transform = Transform()
         coverageWhiteEntity?.transform = Transform()
-        guard !coverageBuilding else { return }
-        let snapshot = coverageSnapshot
-        guard snapshot.observedCellCount > 0 else {
+        guard !contentHidden else {
             coverageFillEntity?.isEnabled = false
             coverageBlueEntity?.isEnabled = false
             coverageWhiteEntity?.isEnabled = false
-            lastCoverageDisplaySignature = 0
             return
         }
+        let snapshot = coverageSnapshot
+        if snapshot.observedCellCount == 0, frozenLocalCells.isEmpty {
+            coverageFillEntity?.isEnabled = false
+            coverageBlueEntity?.isEnabled = false
+            coverageWhiteEntity?.isEnabled = false
+            return
+        }
+
         let ball = corridorBallXZ
         let hole = corridorHoleXZ
         let past = corridorPastHoleMeters
         let half = corridorHalfWidthMeters
-        let planeY = lockedDisplayPlaneY(from: snapshot)
-        let signature = Self.coverageDisplaySignature(
-            snapshot: snapshot,
-            planeY: planeY,
-            hasCorridor: ball != nil && hole != nil
-        )
-        guard signature != lastCoverageDisplaySignature else { return }
-        lastCoverageRebuildTime = now
-        lastCoverageDisplaySignature = signature
-        coverageBuilding = true
+        let planeY = lockedDisplayPlaneY(from: snapshot, ballY: corridorBallY)
+        guard lockedCoveragePlaneY != nil else {
+            coverageFillEntity?.isEnabled = false
+            coverageBlueEntity?.isEnabled = false
+            coverageWhiteEntity?.isEnabled = false
+            return
+        }
 
+        if !ensureCoverageStickPlanted(
+            planeY: planeY,
+            snapshot: snapshot,
+            ball: ball,
+            now: now,
+            in: view
+        ) {
+            coverageFillEntity?.isEnabled = false
+            coverageBlueEntity?.isEnabled = false
+            coverageWhiteEntity?.isEnabled = false
+            return
+        }
+        guard let stick = coverageStickEntity else { return }
+
+        if snapshot.observedCellCount > 0 {
+            let gate = coverageIngestGate(in: view, now: now)
+            if !gate.skip {
+                ingestFrozenCells(
+                    snapshot: snapshot,
+                    ball: ball,
+                    hole: hole,
+                    pastHole: past,
+                    halfWidth: half,
+                    planeY: planeY,
+                    allowNewCells: gate.allowNewCells
+                )
+            }
+        }
+        rebuildCoverageMeshIfNeeded(
+            now: now,
+            in: view,
+            snapshot: snapshot,
+            stick: stick,
+            ball: ball,
+            hole: hole,
+            pastHole: past,
+            halfWidth: half
+        )
+    }
+
+    private func currentCoverageDisplaySignature(
+        ball: SIMD2<Double>?,
+        hole: SIMD2<Double>?,
+        pastHole: Double,
+        halfWidth: Double
+    ) -> Int {
+        let localCells = visibleLocalCells(
+            ball: ball,
+            hole: hole,
+            pastHole: pastHole,
+            halfWidth: halfWidth
+        )
+        return frozenDisplaySignature(visibleCount: localCells.count)
+    }
+
+    private func rebuildCoverageMeshIfNeeded(
+        now: TimeInterval,
+        in view: ARView,
+        snapshot: ScanCoverageSnapshot,
+        stick: AnchorEntity,
+        ball: SIMD2<Double>?,
+        hole: SIMD2<Double>?,
+        pastHole: Double,
+        halfWidth: Double
+    ) {
+        coverageHostView = view
+        let signature = currentCoverageDisplaySignature(
+            ball: ball,
+            hole: hole,
+            pastHole: pastHole,
+            halfWidth: halfWidth
+        )
+        guard signature != lastCoverageDisplaySignature else {
+            coverageRebuildPending = false
+            return
+        }
+        if coverageBuilding {
+            coverageRebuildPending = true
+            return
+        }
+
+        coverageRebuildPending = false
+        lastCoverageRebuildTime = now
+        coverageBuilding = true
+        ensureCoverageEntities(on: stick)
+
+        let localCells = visibleLocalCells(
+            ball: ball,
+            hole: hole,
+            pastHole: pastHole,
+            halfWidth: halfWidth
+        )
+        let localSnapshot = localCoverageSnapshot(from: snapshot, cells: localCells)
+        let buildSignature = signature
+        buildQueue.async { [weak self] in
+            let split = DisplaySurfaceGrid.buildSplitMeshes(
+                cells: localCells,
+                coverage: localSnapshot,
+                cellSize: DisplaySurfaceGrid.cellSizeMeters,
+                lineHalfWidth: 0.001
+            )
+            let blueMesh = Self.generateMesh(
+                GeometryBuffers(positions: split.tentativeLines.positions, indices: split.tentativeLines.indices),
+                name: "cov-blue"
+            )
+            let whiteMesh = Self.generateMesh(
+                GeometryBuffers(positions: split.stableLines.positions, indices: split.stableLines.indices),
+                name: "cov-white"
+            )
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.coverageBuilding = false
+                let latestSignature = self.currentCoverageDisplaySignature(
+                    ball: ball,
+                    hole: hole,
+                    pastHole: pastHole,
+                    halfWidth: halfWidth
+                )
+                guard buildSignature == latestSignature else {
+                    if let host = self.coverageHostView {
+                        self.rebuildCoverageMeshIfNeeded(
+                            now: now,
+                            in: host,
+                            snapshot: self.coverageSnapshot,
+                            stick: stick,
+                            ball: ball,
+                            hole: hole,
+                            pastHole: pastHole,
+                            halfWidth: halfWidth
+                        )
+                    } else {
+                        self.coverageRebuildPending = true
+                    }
+                    return
+                }
+                if let fill = self.coverageFillEntity {
+                    fill.isEnabled = false
+                }
+                if let blue = self.coverageBlueEntity { self.assignCoverageMesh(blueMesh, to: blue) }
+                if let white = self.coverageWhiteEntity { self.assignCoverageMesh(whiteMesh, to: white) }
+                self.lastCoverageDisplaySignature = buildSignature
+                let afterSignature = self.currentCoverageDisplaySignature(
+                    ball: ball,
+                    hole: hole,
+                    pastHole: pastHole,
+                    halfWidth: halfWidth
+                )
+                if afterSignature != buildSignature, let host = self.coverageHostView {
+                    self.rebuildCoverageMeshIfNeeded(
+                        now: now,
+                        in: host,
+                        snapshot: self.coverageSnapshot,
+                        stick: stick,
+                        ball: ball,
+                        hole: hole,
+                        pastHole: pastHole,
+                        halfWidth: halfWidth
+                    )
+                }
+            }
+        }
+    }
+
+    private func ingestFrozenCells(
+        snapshot: ScanCoverageSnapshot,
+        ball: SIMD2<Double>?,
+        hole: SIMD2<Double>?,
+        pastHole: Double,
+        halfWidth: Double,
+        planeY: Float,
+        allowNewCells: Bool
+    ) {
+        guard let anchorKey = coverageGridAnchorKey else { return }
+        let lift: Float = 0.004
+        for (key, _) in snapshot.cellHeights {
+            let center = CoverageDisplayLock.cellCenterXZ(key)
+            if let ball, let hole {
+                guard Self.isInsideDisplayCorridor(
+                    x: Double(center.x),
+                    z: Double(center.y),
+                    ball: ball,
+                    hole: hole,
+                    halfWidth: halfWidth,
+                    pastHole: pastHole
+                ) else { continue }
+            }
+            let isStable = snapshot.stableKeys.contains(key)
+            if let localKey = worldToLocalKey[key] {
+                if isStable {
+                    frozenLocalStable.insert(localKey)
+                }
+                continue
+            }
+            guard allowNewCells else { continue }
+            let resolved = CoverageDisplayLock.localCell(
+                worldKey: key,
+                anchorKey: anchorKey,
+                lift: lift,
+                existing: frozenLocalCells
+            )
+            frozenWorldKeys.insert(key)
+            worldToLocalKey[key] = resolved.key
+            if resolved.created {
+                frozenLocalCells[resolved.key] = resolved.cell
+            }
+            if isStable {
+                frozenLocalStable.insert(resolved.key)
+            }
+        }
+    }
+
+    private func rekeyFrozenCoverageCells(to newAnchorKey: Int64) {
+        guard let oldAnchorKey = coverageGridAnchorKey, oldAnchorKey != newAnchorKey else { return }
+        var newWorldToLocal: [Int64: Int64] = [:]
+        var newFrozenLocal: [Int64: DisplaySurfaceGrid.Cell] = [:]
+        var newFrozenStable: Set<Int64> = []
+        for worldKey in frozenWorldKeys {
+            let newLocalKey = CoverageDisplayLock.localCellKey(worldKey: worldKey, anchorKey: newAnchorKey)
+            let oldLocalKey = worldToLocalKey[worldKey]
+            let height = oldLocalKey.flatMap { frozenLocalCells[$0]?.height } ?? 0
+            let (lix, liz) = CoverageDisplayLock.unpack(newLocalKey)
+            newFrozenLocal[newLocalKey] = DisplaySurfaceGrid.Cell(ix: lix, iz: liz, height: height)
+            newWorldToLocal[worldKey] = newLocalKey
+            if let oldLocalKey, frozenLocalStable.contains(oldLocalKey) {
+                newFrozenStable.insert(newLocalKey)
+            }
+        }
+        worldToLocalKey = newWorldToLocal
+        frozenLocalCells = newFrozenLocal
+        frozenLocalStable = newFrozenStable
+        coverageGridAnchorKey = newAnchorKey
+        lastCoverageDisplaySignature = 0
+    }
+
+    private func ensureCoverageStickPlanted(
+        planeY: Float,
+        snapshot: ScanCoverageSnapshot,
+        ball: SIMD2<Double>?,
+        now: TimeInterval,
+        in view: ARView
+    ) -> Bool {
+        if coverageStickEntity != nil {
+            if let ball {
+                coverageStickPlantBallXZ = ball
+            }
+            return true
+        }
+
+        let preBallPlacement = ball == nil && coverageStickPlantBallXZ == nil
+        let minCells = preBallPlacement ? Self.quickDisplayCellCount : Self.planeLockCellCount
+        let readyCount = snapshot.observedCellCount >= minCells
+            || (!frozenLocalCells.isEmpty && snapshot.observedCellCount > 0)
+        guard readyCount else { return false }
+        let centers = Self.coverageGridCenters(from: snapshot)
+        let centroid = CoverageDisplayLock.centroidXZ(of: centers)
+        guard let anchorKey = Self.coverageAnchorKey(from: snapshot) else { return false }
+        if preBallPlacement {
+            attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
+            return true
+        }
+        guard originSettle.observe(centroid, now: now) else { return false }
+        attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
+        if let ball {
+            coverageStickPlantBallXZ = ball
+        }
+        return true
+    }
+
+    /// AR 원점 점프 직후에만 새 칸을 잠깐 막는다. 서 있어도 LiDAR 스냅샷으로 구멍을 메운다.
+    private func coverageIngestGate(in view: ARView, now: TimeInterval) -> (allowNewCells: Bool, skip: Bool) {
+        guard let frame = view.session.currentFrame else { return (false, true) }
+        let cam = frame.camera.transform.columns.3
+        let xz = SIMD2<Float>(cam.x, cam.z)
+        defer { lastIngestCameraXZ = xz }
+
+        let suppressionActive = now < newCellIngestSuppressedUntil
+        if case .limited = frame.camera.trackingState {
+            return (false, false)
+        }
+        guard let previous = lastIngestCameraXZ else { return (true, false) }
+        let moved = simd_distance(previous, xz)
+        if moved >= Self.ingestOriginJumpMeters {
+            newCellIngestSuppressedUntil = now + Self.ingestJumpSuppressDuration
+            return (false, false)
+        }
+        return (!suppressionActive, false)
+    }
+
+    private static func coverageAnchorKey(forBall ball: SIMD2<Double>) -> Int64 {
+        CoverageDisplayLock.gridAnchorKey(
+            for: SIMD2(Float(ball.x), Float(ball.y))
+        )
+    }
+
+    private static func coverageAnchorKey(from snapshot: ScanCoverageSnapshot) -> Int64? {
+        guard let centroid = CoverageDisplayLock.centroidXZ(
+            of: coverageGridCenters(from: snapshot)
+        ) else { return nil }
+        return CoverageDisplayLock.gridAnchorKey(for: centroid)
+    }
+
+    private func attachCoverageStick(
+        planeY: Float,
+        anchorKey: Int64,
+        in view: ARView
+    ) {
+        guard coverageStickEntity == nil else { return }
+        let (anchorIX, anchorIZ) = CoverageDisplayLock.unpack(anchorKey)
+        let cellSize = CoverageDisplayLock.cellSizeMeters
+        coverageGridAnchorKey = anchorKey
+
+        var transform = matrix_identity_float4x4
+        transform.columns.3 = SIMD4(
+            Float(anchorIX) * cellSize,
+            planeY,
+            Float(anchorIZ) * cellSize,
+            1
+        )
+
+        // ARAnchor는 트래킹 보정 때 위치가 갱신되어 격자가 흐른다. 월드 고정만 사용.
+        let stick = AnchorEntity(.world(transform: transform))
+        stick.name = "trueputt.coverage-stick"
+        stick.isEnabled = !contentHidden
+        view.scene.addAnchor(stick)
+        coverageStickEntity = stick
+    }
+
+    private func assignCoverageMesh(_ mesh: MeshResource?, to entity: ModelEntity) {
+        if let mesh {
+            entity.model?.mesh = mesh
+            entity.isEnabled = !contentHidden
+        } else {
+            entity.isEnabled = false
+        }
+    }
+
+    private func detachCoverageStick(in view: ARView) {
+        if let stick = coverageStickEntity {
+            view.scene.removeAnchor(stick)
+        }
+        coverageStickEntity = nil
+        coverageGridAnchorKey = nil
+        coverageStickPlantBallXZ = nil
+        coverageFillEntity?.removeFromParent()
+        coverageBlueEntity?.removeFromParent()
+        coverageWhiteEntity?.removeFromParent()
+        coverageFillEntity = nil
+        coverageBlueEntity = nil
+        coverageWhiteEntity = nil
+    }
+
+    private func ensureCoverageEntities(on parent: Entity) {
         if coverageFillEntity == nil {
             let fill = ModelEntity(
                 mesh: .generateBox(size: 0.001),
@@ -224,70 +642,103 @@ final class BrightMeshVisualizer {
             fill.isEnabled = false
             blue.isEnabled = false
             white.isEnabled = false
-            fill.transform = Transform()
-            blue.transform = Transform()
-            white.transform = Transform()
-            root.addChild(fill)
-            root.addChild(blue)
-            root.addChild(white)
             coverageFillEntity = fill
             coverageBlueEntity = blue
             coverageWhiteEntity = white
         }
-
-        buildQueue.async { [weak self] in
-            let cells = Self.coverageDisplayCells(
-                snapshot: snapshot,
-                ball: ball,
-                hole: hole,
-                pastHole: past,
-                halfWidth: half,
-                planeY: planeY
-            )
-            let split = DisplaySurfaceGrid.buildSplitMeshes(
-                cells: cells,
-                coverage: snapshot,
-                cellSize: DisplaySurfaceGrid.cellSizeMeters,
-                lineHalfWidth: 0.001
-            )
-            let blueMesh = Self.generateMesh(
-                GeometryBuffers(positions: split.tentativeLines.positions, indices: split.tentativeLines.indices),
-                name: "cov-blue"
-            )
-            let whiteMesh = Self.generateMesh(
-                GeometryBuffers(positions: split.stableLines.positions, indices: split.stableLines.indices),
-                name: "cov-white"
-            )
-            let buildSignature = signature
-            DispatchQueue.main.async {
-                guard let self else { return }
-                // 오래된 비동기 빌드가 나중에 덮어쓰면 높이가 한 번 더 점프한다.
-                guard buildSignature == self.lastCoverageDisplaySignature else {
-                    self.coverageBuilding = false
-                    return
-                }
-                // 면 채움(쿼드→삼각)은 파란 폴리곤처럼 보여 쓰지 않는다. 격자선만.
-                if let fill = self.coverageFillEntity {
-                    fill.isEnabled = false
-                }
-                if let blue = self.coverageBlueEntity { Self.assign(blueMesh, to: blue) }
-                if let white = self.coverageWhiteEntity { Self.assign(whiteMesh, to: white) }
-                self.coverageBuilding = false
-            }
+        if let fill = coverageFillEntity, fill.parent !== parent {
+            fill.removeFromParent()
+            parent.addChild(fill)
+        }
+        if let blue = coverageBlueEntity, blue.parent !== parent {
+            blue.removeFromParent()
+            parent.addChild(blue)
+        }
+        if let white = coverageWhiteEntity, white.parent !== parent {
+            white.removeFromParent()
+            parent.addChild(white)
         }
     }
 
-    private func lockedDisplayPlaneY(from snapshot: ScanCoverageSnapshot) -> Float {
+    private func visibleLocalCells(
+        ball: SIMD2<Double>?,
+        hole: SIMD2<Double>?,
+        pastHole: Double,
+        halfWidth: Double
+    ) -> [DisplaySurfaceGrid.Cell] {
+        guard let ball, let hole else {
+            return Array(frozenLocalCells.values)
+        }
+        var allowed = Set<Int64>()
+        allowed.reserveCapacity(worldToLocalKey.count)
+        for (worldKey, localKey) in worldToLocalKey {
+            let center = CoverageDisplayLock.cellCenterXZ(worldKey)
+            if Self.isInsideDisplayCorridor(
+                x: Double(center.x),
+                z: Double(center.y),
+                ball: ball,
+                hole: hole,
+                halfWidth: halfWidth,
+                pastHole: pastHole
+            ) {
+                allowed.insert(localKey)
+            }
+        }
+        return frozenLocalCells.values.filter { allowed.contains($0.key) }
+    }
+
+    private func frozenDisplaySignature(visibleCount: Int) -> Int {
+        var hasher = Hasher()
+        hasher.combine(visibleCount)
+        hasher.combine(frozenLocalCells.count)
+        hasher.combine(frozenLocalStable.count)
+        return hasher.finalize()
+    }
+
+    private func localCoverageSnapshot(
+        from snapshot: ScanCoverageSnapshot,
+        cells: [DisplaySurfaceGrid.Cell]
+    ) -> ScanCoverageSnapshot {
+        var heights: [Int64: Float] = [:]
+        var centers: [Int64: SIMD2<Float>] = [:]
+        let cellSize = DisplaySurfaceGrid.cellSizeMeters
+        heights.reserveCapacity(cells.count)
+        centers.reserveCapacity(cells.count)
+        var keys = Set<Int64>()
+        keys.reserveCapacity(cells.count)
+        for cell in cells {
+            heights[cell.key] = cell.height
+            centers[cell.key] = SIMD2((Float(cell.ix) + 0.5) * cellSize, (Float(cell.iz) + 0.5) * cellSize)
+            keys.insert(cell.key)
+        }
+        let stable = frozenLocalStable.intersection(keys)
+        var local = snapshot
+        local.observedCellCount = cells.count
+        local.stableCellCount = stable.count
+        local.tentativeCellCount = max(0, cells.count - stable.count)
+        local.newlyStabilizedCount = 0
+        local.stableKeys = stable
+        local.tentativeKeys = keys.subtracting(stable)
+        local.cellHeights = heights
+        local.cellCenters = centers
+        return local
+    }
+
+    private func lockedDisplayPlaneY(from snapshot: ScanCoverageSnapshot, ballY: Float?) -> Float {
         let heights = Array(snapshot.cellHeights.values)
         let median = Self.medianFloat(heights) ?? 0
-        // 첫 몇 칸에서 바로 잠근다. 잠금 전 median이 매 프레임 바뀌면 바둑판 전체가 떠다닌다.
-        if lockedCoveragePlaneY == nil, snapshot.observedCellCount >= 3 {
-            lockedCoveragePlaneY = median
-        } else if let locked = lockedCoveragePlaneY, abs(median - locked) > 0.50 {
-            // 다른 층/테이블로 튀는 경우만 재잠금. 30cm는 실내 노이즈에도 자주 걸려 다시 흐름.
-            lockedCoveragePlaneY = median
+        let minCellsForPlane = corridorBallXZ == nil
+            ? Self.quickDisplayCellCount
+            : Self.planeLockCellCount
+        if lockedCoveragePlaneY == nil {
+            if let ballY {
+                lockedCoveragePlaneY = ballY
+            } else if snapshot.observedCellCount >= minCellsForPlane {
+                lockedCoveragePlaneY = median
+            }
+            return lockedCoveragePlaneY ?? ballY ?? median
         }
-        return lockedCoveragePlaneY ?? median
+        return lockedCoveragePlaneY ?? ballY ?? median
     }
 
     private static func coverageDisplaySignature(

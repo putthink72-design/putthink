@@ -51,6 +51,9 @@ final class ScanCoverageTests: XCTestCase {
         XCTAssertEqual(snap.tentativeCellCount, 1)
         XCTAssertEqual(snap.stableCellCount, 0)
         XCTAssertEqual(snap.state(worldX: -0.2, worldZ: 0.5), .tentative)
+        XCTAssertEqual(snap.cellCenters.count, 1)
+        XCTAssertEqual(snap.cellCenters[snap.tentativeKeys.first!]?.x ?? 0, Float(-0.2), accuracy: 1e-5)
+        XCTAssertEqual(snap.cellCenters[snap.tentativeKeys.first!]?.y ?? 0, Float(0.5), accuracy: 1e-5)
     }
 
     func testResetClearsCells() {

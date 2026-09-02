@@ -87,7 +87,7 @@ struct AppSettingsSheet: View {
                         systemContent
                     }
 
-                    if mode == .scan {
+                    if mode == .scan || onRequestClearHistory != nil {
                         clearHistorySection
                     }
                 }

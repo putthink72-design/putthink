@@ -109,8 +109,27 @@ private enum FieldCmPadTarget {
     case y
 }
 
+/// 바닥 조준 UI 전환 — AR `updateUIView`와 분리해 SwiftUI 재구성·`updateScene` 재호출을 막는다.
+final class FloorAddressUIModeBridge {
+    var onModeChanged: ((Bool) -> Void)?
+
+    func report(_ isFloor: Bool) {
+        if Thread.isMainThread {
+            onModeChanged?(isFloor)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.onModeChanged?(isFloor)
+            }
+        }
+    }
+}
+
 struct Gate55GuidanceView: View {
     @ObservedObject var controller: ARScanSessionController
+    /// 스캔 화면과 공유하는 ARView. 있으면 카메라 뷰를 재생성하지 않는다.
+    var sessionARView: ARView? = nil
+    @Binding var exportError: String?
+    var onRequestClearHistory: (() -> Void)? = nil
     @StateObject private var model = Gate55GuidanceModel()
     @State private var showDiagnostics = false
     @State private var runID = ""
@@ -128,37 +147,127 @@ struct Gate55GuidanceView: View {
     @State private var activeCmPad: FieldCmPadTarget?
     @State private var cmPadMounted = false
     @State private var floorAddressMode = false
+    @State private var floorUIModeBridge = FloorAddressUIModeBridge()
+    /// 조준 진입 시 한 번 고정. 기울임으로 safe area가 바뀌어도 하단 블록·OSD 높이가 변하지 않는다.
+    @State private var guidanceUILayout: GuidanceUILayoutLock?
+
+    private struct GuidanceUILayoutLock: Equatable {
+        var osdCardHeight: CGFloat
+        var homeIndicatorPadding: CGFloat
+        var panelWidth: CGFloat
+        var topContentInset: CGFloat
+        /// 진입 시 물리 화면 크기 고정. safe area 변화로 ZStack 자체가 커지는 것을 막는다.
+        var screenWidth: CGFloat
+        var screenHeight: CGFloat
+    }
+
+    /// 새 스캔 + 피커 + spacing.
+    private static let guidanceButtonChromeHeight: CGFloat = 92
 
     var body: some View {
         guidanceRoot
     }
 
+    private var showsBallAimReticle: Bool {
+        controller.placementRequest == .reanchorBall || !controller.visualBallLockStatus.isSettled
+    }
+
+    private var blocksNonReanchorPlacementUI: Bool {
+        guard let request = controller.placementRequest else { return false }
+        return request != .reanchorBall
+    }
+
+    private var activeGuidanceLayout: GuidanceUILayoutLock {
+        guidanceUILayout ?? Self.fallbackGuidanceLayout
+    }
+
+    /// onAppear 전 고정값. body·GeometryReader에서 live safe area를 읽지 않는다.
+    private static let fallbackGuidanceLayout: GuidanceUILayoutLock = {
+        makeGuidanceLayout(
+            screenWidth: UIScreen.main.bounds.width,
+            screenHeight: UIScreen.main.bounds.height,
+            topSafeInset: 47,
+            homeIndicator: 34
+        )
+    }()
+
+    /// 2번 스샷 기준: 하단 ~46%.
+    private static let osdLayoutHomeForSizing: CGFloat = 34
+
+    private static func makeGuidanceLayout(
+        screenWidth: CGFloat,
+        screenHeight: CGFloat,
+        topSafeInset: CGFloat,
+        homeIndicator: CGFloat
+    ) -> GuidanceUILayoutLock {
+        let horizontalInset = OSDTopChromeMetrics.floatingCardHorizontalPadding * 2
+        let bottomBlockHeight = min(max(screenHeight * 0.46, 360), 460)
+        let osdCardHeight = max(
+            bottomBlockHeight - guidanceButtonChromeHeight - osdLayoutHomeForSizing,
+            260
+        )
+        return GuidanceUILayoutLock(
+            osdCardHeight: osdCardHeight,
+            homeIndicatorPadding: max(homeIndicator, 8),
+            panelWidth: screenWidth - horizontalInset,
+            topContentInset: topSafeInset + OSDTopChromeMetrics.topPadding,
+            screenWidth: screenWidth,
+            screenHeight: screenHeight
+        )
+    }
+
+    private func lockGuidanceUILayoutIfNeeded() {
+        guard guidanceUILayout == nil else { return }
+        let bounds = UIScreen.main.bounds
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        let home = window?.safeAreaInsets.bottom ?? 34
+        let topSafe = window?.safeAreaInsets.top ?? 47
+        guidanceUILayout = Self.makeGuidanceLayout(
+            screenWidth: bounds.width,
+            screenHeight: bounds.height,
+            topSafeInset: topSafe,
+            homeIndicator: home
+        )
+    }
+
     private var guidanceRoot: some View {
-        ZStack(alignment: .top) {
+        let layout = activeGuidanceLayout
+        return ZStack(alignment: .bottom) {
             arPanel
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if !floorAddressMode {
-                    guidanceTopChrome
-                        .padding(.horizontal, OSDTopChromeMetrics.horizontalPadding)
-                        .padding(.top, OSDTopChromeMetrics.topPadding)
+                guidanceTopChrome
+
+                if let exportError {
+                    Text(exportError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(.top, 6)
                 }
 
                 Spacer(minLength: 0)
-
-                if floorAddressMode {
-                    floorAddressBottomOSD
-                } else {
-                    guidanceBottomStack
-                }
             }
+            .frame(width: layout.panelWidth, alignment: .top)
+            .padding(.top, layout.topContentInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            guidanceBottomArea
+                .frame(width: layout.panelWidth)
         }
+        .frame(width: layout.screenWidth, height: layout.screenHeight)
+        .ignoresSafeArea()
         .overlay(alignment: .bottom) {
             cmNumberPadOverlay
         }
-        .preferredColorScheme(.dark)
         .onAppear {
+            lockGuidanceUILayoutIfNeeded()
+            floorUIModeBridge.onModeChanged = { _ in
+                // HUD는 UIKit만 전환. SwiftUI 레이아웃은 바꾸지 않는다.
+            }
             cmPadMounted = true
             OSDDoneTextField.prewarmAccessoryBar()
             if runID.isEmpty {
@@ -170,6 +279,7 @@ struct Gate55GuidanceView: View {
                 aimRevision += 1
             }
         }
+        .preferredColorScheme(.dark)
         .onChange(of: controller.completedScan?.id) { _, _ in
             if let scan = controller.completedScan {
                 model.bind(scan: scan)
@@ -178,7 +288,7 @@ struct Gate55GuidanceView: View {
         }
         .onChange(of: controller.completedScan?.holeDistance) { _, _ in
             if let scan = controller.completedScan {
-                model.bind(scan: scan)
+                model.refreshDisplay(for: scan)
                 aimRevision += 1
             }
         }
@@ -207,6 +317,7 @@ struct Gate55GuidanceView: View {
                 mode: .guidance,
                 controller: controller,
                 guidanceModel: model,
+                onRequestClearHistory: onRequestClearHistory,
                 onAimSettingsChanged: {
                     aimRevision += 1
                 }
@@ -214,86 +325,11 @@ struct Gate55GuidanceView: View {
         }
     }
 
-    private var floorAddressBottomOSD: some View {
-        guidanceBottomOSD
-            .osdKeyboardAdaptive()
-            .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
-            .padding(.bottom, guidanceBottomPadding)
-    }
-
-    @ViewBuilder
-    private var arPanel: some View {
-        ZStack(alignment: .topLeading) {
-            Gate55ARAimView(
-                controller: controller,
-                scan: controller.completedScan,
-                betaDegrees: model.aimBetaDegrees,
-                visible: model.hasAimLine && !controller.needsBallReanchor,
-                revision: aimRevision,
-                trajectorySamples: trajectorySamplesForAR,
-                greenVizMode: greenVizMode,
-                floorAddressMode: $floorAddressMode
-            )
-            .id("gate55-guidance-ar")
-
-            if controller.placementRequest == .reanchorHole
-                || controller.placementRequest == .reanchorBall
-                || controller.needsBallReanchor {
-                OSDAmberReticle(dashedRing: controller.placementRequest != .reanchorHole)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-
-    private var trajectorySamplesForAR: [TrajectorySample] {
-        model.recommendation?.trajectory
-            ?? model.forwardResult?.trajectory
-            ?? []
-    }
-
-    private var guidanceTopChrome: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                OSDStatusPill(
-                    isHealthy: controller.guidanceTrackingOK && !controller.trackingLimited,
-                    title: "조준 중",
-                    subtitle: statusSubtitle
-                )
-
-                Spacer(minLength: 4)
-
-                OSDGearButton { showPerformanceSettings = true }
-            }
-
-            if let banner = model.thermalLevel.statusBanner {
-                Text(banner)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(OSDPalette.accentInk)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(OSDPalette.accent.opacity(0.9), in: Capsule())
-            }
-        }
-    }
-
-    private var statusSubtitle: String? {
-        var parts: [String] = []
-        if let scan = controller.completedScan {
-            parts.append(String(format: "볼→홀 %.1fm", scan.holeDistance))
-            parts.append(scan.pathMode.label)
-        }
-        if !controller.guidanceTrackingOK || controller.trackingLimited {
-            parts.append("limited")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private var guidanceBottomStack: some View {
+    private var guidanceBottomArea: some View {
         VStack(spacing: 6) {
             HStack {
                 Spacer(minLength: 0)
-                Button(action: controller.reset) {
+                Button(action: beginNewScan) {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 14, weight: .bold))
@@ -319,23 +355,118 @@ struct Gate55GuidanceView: View {
                 .frame(minWidth: 80, minHeight: 44)
                 .contentShape(Rectangle())
             }
-            HStack {
-                Spacer(minLength: 0)
+            HStack(alignment: .center, spacing: 8) {
+                if !controller.visualBallLockStatus.isSettled {
+                    visualBallLockMiniChip
+                }
+                Spacer(minLength: 8)
                 GreenVizModePicker(selection: $greenVizMode)
             }
             guidanceBottomOSD
         }
-        .osdKeyboardAdaptive()
-        .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
-        .padding(.bottom, guidanceBottomPadding)
+        .padding(
+            .bottom,
+            activeGuidanceLayout.homeIndicatorPadding
+                + (activeCmPad != nil ? OSDInlineNumberPad.height : 0)
+        )
     }
 
-    private var guidanceBottomPadding: CGFloat {
-        let base = OSDTopChromeMetrics.floatingCardBottomPadding
-        if activeCmPad != nil {
-            return base + OSDInlineNumberPad.height
+    @ViewBuilder
+    private var arPanel: some View {
+        ZStack(alignment: .topLeading) {
+            if let sessionARView {
+                Gate55GuidanceSceneBinder(
+                    arView: sessionARView,
+                    controller: controller,
+                    scan: controller.completedScan,
+                    betaDegrees: model.aimBetaDegrees,
+                    visible: model.hasAimLine,
+                    revision: aimRevision,
+                    trajectorySamples: trajectorySamplesForAR,
+                    greenVizMode: greenVizMode,
+                    floorAddressMode: floorAddressMode,
+                    floorUIModeBridge: floorUIModeBridge
+                )
+            } else {
+                Gate55ARAimView(
+                    controller: controller,
+                    scan: controller.completedScan,
+                    betaDegrees: model.aimBetaDegrees,
+                    visible: model.hasAimLine,
+                    revision: aimRevision,
+                    trajectorySamples: trajectorySamplesForAR,
+                    greenVizMode: greenVizMode,
+                    floorAddressMode: floorAddressMode,
+                    floorUIModeBridge: floorUIModeBridge
+                )
+                .id("gate55-guidance-ar")
+            }
+
+            if showsBallAimReticle {
+                // 배치 raycast(centerGroundPose)는 화면 중앙 광축. 십자선도 동일 위치여야 한다.
+                OSDAmberReticle(dashedRing: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+
+            if !controller.ballGroundRingPoints.isEmpty {
+                BallGroundRingOverlay(points: controller.ballGroundRingPoints)
+                    .ignoresSafeArea()
+            }
+
+            if !controller.holeGroundRingPoints.isEmpty, !floorAddressMode {
+                HoleCupRingOverlay(points: controller.holeGroundRingPoints)
+                    .ignoresSafeArea()
+            }
         }
-        return base
+    }
+
+    private var trajectorySamplesForAR: [TrajectorySample] {
+        model.recommendation?.trajectory
+            ?? model.forwardResult?.trajectory
+            ?? []
+    }
+
+    private var guidanceTopChrome: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                OSDStatusPill(
+                    isHealthy: controller.guidanceTrackingOK && !controller.trackingLimited,
+                    title: "조준 중",
+                    subtitle: statusSubtitle
+                )
+
+                Spacer(minLength: 4)
+
+                OSDGearButton { showPerformanceSettings = true }
+                    .fixedSize()
+            }
+
+            if let banner = model.thermalLevel.statusBanner {
+                Text(banner)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(OSDPalette.accentInk)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(OSDPalette.accent.opacity(0.9), in: Capsule())
+            }
+        }
+    }
+
+    private func beginNewScan() {
+        controller.reset()
+    }
+
+    private var statusSubtitle: String? {
+        var parts: [String] = []
+        if let scan = controller.completedScan {
+            parts.append(String(format: "볼→홀 %.1fm", scan.holeDistance))
+            parts.append(scan.pathMode.label)
+        }
+        if !controller.guidanceTrackingOK || controller.trackingLimited {
+            parts.append("limited")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -355,13 +486,11 @@ struct Gate55GuidanceView: View {
     }
 
     private var guidanceBottomOSD: some View {
-        OSDFloatingScrollCard(maxHeight: 320, scrollToID: osdScrollAnchor) {
+        OSDFloatingScrollCard(
+            fixedHeight: activeGuidanceLayout.osdCardHeight,
+            scrollToID: osdScrollAnchor
+        ) {
             VStack(alignment: .leading, spacing: 14) {
-                if controller.needsBallReanchor {
-                    ballReanchorCard
-                    OSDSectionDivider()
-                }
-
                 if model.isComputing {
                     ProgressView("계산 중…")
                         .tint(OSDPalette.accent)
@@ -377,31 +506,53 @@ struct Gate55GuidanceView: View {
         }
     }
 
-    private var ballReanchorCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("볼 재지정")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(OSDPalette.textPrimary)
-            Text("실볼에 십자선을 맞춘 뒤 재지정하세요. 홀은 그대로 두고, 계산은 다시 하지 않습니다.")
-                .font(.system(size: 11))
-                .foregroundStyle(OSDPalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: controller.requestBallReanchor) {
-                Text("볼 재지정")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(OSDPalette.accent)
+    private var miniBallLockLabel: String {
+        if controller.placementRequest == .reanchorBall {
+            return "십자선 확정"
         }
+        switch controller.visualBallLockStatus {
+        case .waitingForView:
+            return "실볼 대기"
+        case .searching:
+            return "실볼 감지"
+        case .candidate:
+            return "후보 확인"
+        default:
+            return controller.visualBallLockStatus.shortLabel ?? "실볼"
+        }
+    }
+
+    private var visualBallLockMiniChip: some View {
+        Button(action: controller.requestBallReanchor) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(
+                        controller.placementRequest == .reanchorBall
+                            ? OSDPalette.accent
+                            : Color.orange.opacity(0.95)
+                    )
+                    .frame(width: 6, height: 6)
+                Text(miniBallLockLabel)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(OSDPalette.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(OSDPalette.glass, in: Capsule())
+            .overlay(Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(blocksNonReanchorPlacementUI)
+        .accessibilityLabel(miniBallLockLabel)
     }
 
     @ViewBuilder
     private var recommendationSection: some View {
         if let rec = model.recommendation, rec.primary != nil {
+            let displayDistance = controller.completedScan?.holeDistance ?? rec.horizontalDistance
             OSDAimReadout(
-                horizontalDistance: rec.horizontalDistance,
+                horizontalDistance: displayDistance,
                 flatEquivalentDistance: rec.flatEquivalentDistance,
                 distanceAdjustment: rec.distanceAdjustment,
                 elevationDelta: rec.elevationDelta,
@@ -439,7 +590,7 @@ struct Gate55GuidanceView: View {
                 Text("스캔을 다시 하면 더 정확한 지형으로 안내할 수 있습니다. 추정 직선은 표시하지 않습니다.")
                     .font(.system(size: 11))
                     .foregroundStyle(OSDPalette.textSecondary)
-                Button(action: controller.reset) {
+                Button(action: beginNewScan) {
                     Text("스캔 다시하기")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -484,14 +635,16 @@ struct Gate55GuidanceView: View {
             }
 
             HStack(spacing: 8) {
-                Button("볼 다시 맞추기") {
+                Button(controller.placementRequest == .reanchorBall ? "십자선 위치 확정" : "볼 다시 맞추기") {
                     controller.requestBallReanchor()
                 }
                 .font(.caption.weight(.semibold))
+                .disabled(blocksNonReanchorPlacementUI)
                 Button("홀 재지정") {
                     controller.requestHoleReanchor()
                 }
                 .font(.caption.weight(.semibold))
+                .disabled(controller.placementRequest != nil)
             }
 
             OSDSectionDivider()
@@ -890,7 +1043,8 @@ private struct AimArrow: Shape {
 final class FloorAddressWorldHUDView: UIView {
     private let holeLayer = CAShapeLayer()
     private let aimLayer = CAShapeLayer()
-    private let betaLabel = UILabel()
+    /// OSD 카드와 겹치지 않게 하단을 비운다. SwiftUI 레이아웃은 바꾸지 않는다.
+    var bottomReservedHeight: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -912,11 +1066,7 @@ final class FloorAddressWorldHUDView: UIView {
         aimLayer.shadowOpacity = 0.08
         aimLayer.shadowRadius = 8
         aimLayer.shadowOffset = .zero
-
-        betaLabel.font = .monospacedDigitSystemFont(ofSize: 40, weight: .bold)
-        betaLabel.textColor = UIColor(red: 1, green: 176 / 255, blue: 32 / 255, alpha: 1)
-        betaLabel.textAlignment = .center
-        addSubview(betaLabel)
+        clipsToBounds = true
     }
 
     @available(*, unavailable)
@@ -945,9 +1095,7 @@ final class FloorAddressWorldHUDView: UIView {
         } else {
             aimLayer.isHidden = true
         }
-
-        betaLabel.text = betaText
-        betaLabel.isHidden = betaText == nil
+        _ = betaText
         setNeedsLayout()
     }
 
@@ -955,8 +1103,11 @@ final class FloorAddressWorldHUDView: UIView {
         super.layoutSubviews()
         holeLayer.frame = bounds
         aimLayer.frame = bounds
-        betaLabel.sizeToFit()
-        betaLabel.center = CGPoint(x: bounds.midX, y: bounds.maxY - 48)
+    }
+
+    func drawingBounds(in viewBounds: CGRect) -> CGRect {
+        let safeBottom = max(bottomReservedHeight, safeAreaInsets.bottom + 8)
+        return viewBounds.inset(by: UIEdgeInsets(top: 8, left: 8, bottom: safeBottom, right: 8))
     }
 }
 
@@ -970,7 +1121,8 @@ struct Gate55ARAimView: UIViewRepresentable {
     let revision: Int
     var trajectorySamples: [TrajectorySample] = []
     var greenVizMode: GreenSurfaceVizMode = .contours
-    @Binding var floorAddressMode: Bool
+    let floorAddressMode: Bool
+    let floorUIModeBridge: FloorAddressUIModeBridge
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
@@ -982,20 +1134,19 @@ struct Gate55ARAimView: UIViewRepresentable {
         hud.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(hud)
         context.coordinator.floorHUDView = hud
+        context.coordinator.onFloorAddressModeChanged = { [bridge = floorUIModeBridge] enabled in
+            bridge.report(enabled)
+        }
         return view
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
         uiView.environment.sceneUnderstanding.options = []
         uiView.debugOptions.remove(.showSceneUnderstanding)
+        context.coordinator.scanController = controller
         context.coordinator.floorHUDView?.frame = uiView.bounds
         if let hud = context.coordinator.floorHUDView {
             uiView.bringSubviewToFront(hud)
-        }
-        context.coordinator.onFloorAddressModeChanged = { newValue in
-            if floorAddressMode != newValue {
-                floorAddressMode = newValue
-            }
         }
         context.coordinator.updateScene(
             in: uiView,
@@ -1008,7 +1159,15 @@ struct Gate55ARAimView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
+        coordinator.updateScene(
+            in: uiView,
+            scan: nil,
+            betaDegrees: 0,
+            visible: false
+        )
         coordinator.cleanup()
+        coordinator.floorHUDView?.removeFromSuperview()
+        coordinator.floorHUDView = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1018,10 +1177,9 @@ struct Gate55ARAimView: UIViewRepresentable {
     final class Coordinator: NSObject {
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?
-        private var ballARAnchor: ARAnchor?
-        private var holeARAnchor: ARAnchor?
         private var lockedBallPose: ScanPose?
         private var lockedHolePose: ScanPose?
+        private var lockedScanTransform: ScanCoordinateTransform?
         /// 조준·경로·등고 — 볼 ARAnchor 아래 (편도 후 session 재구성에도 볼과 동일 좌표계).
         private var overlayRoot: Entity?
         private var zeroLineEntity: ModelEntity?
@@ -1047,8 +1205,15 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var lastAimLength: Float = 0
         private var lastAimWidth: Float = 0
         private var lastAimLift: Float = 0
+        private var lastAimAlpha: CGFloat = 1
         private var lastPathLift: Float = 0
-        private var lastAddressMode = false
+        private var lastPathAlpha: CGFloat = 1
+        private var lastAppliedWidthScale: Float = -1
+        private var lastAppliedPathAlpha: CGFloat = -1
+        private var lastAppliedAimAlpha: CGFloat = -1
+        private var lastAppliedBallAlpha: CGFloat = -1
+        /// 근접 하안에서 카메라 높이 노이즈로 선 굵기·알파가 매 프레임 튀지 않게 한다.
+        private var smoothedProximityHeight: Float = 0
         private var lastFloorAddressMode = false
         private var lastReportedFloorHUD = false
         private var lastARHiddenForFloorHUD = false
@@ -1056,10 +1221,21 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var lastFloorHeightAboveBall: Float = 0.8
         private var lastFloorBallDistance: Float = 1.2
         private var smoothedCamBallDistance: Float = 1.2
+        private static let floorAddressHUDEnabled = false
+
+        private static let standingPathWidth: Float = 0.028
+        private static let standingAimWidth: Float = 0.010
+        private static let floorPathWidthScale: Float = 0.38
+        /// 서서 볼 때 경로·조준선 알파. 하안에서 `proximityLineAlpha`로 0.5까지 보간.
+        private static let standingLineAlpha: CGFloat = 0.9
+
+        private var lastZeroWidth: Float = 0
         private var lastZeroHoleDistance: Double = .nan
         private var lastTrajectoryRevision: Int = -1
         var onFloorAddressModeChanged: ((Bool) -> Void)?
+        weak var scanController: ARScanSessionController?
         weak var floorHUDView: FloorAddressWorldHUDView?
+        weak var sceneARView: ARView?
         private weak var hudARView: ARView?
         private var hudDisplayLink: CADisplayLink?
         private var hudSceneState: FloorHUDSceneState?
@@ -1068,10 +1244,20 @@ struct Gate55ARAimView: UIViewRepresentable {
             var mode: GreenSurfaceVizMode
             var wormWidth: Float
         }
+        private struct CachedSceneParams {
+            var scan: CompletedScan
+            var betaDegrees: Double
+            var visible: Bool
+            var trajectory: [TrajectorySample]
+            var greenVizMode: GreenSurfaceVizMode
+        }
         private var terrainVizContext: TerrainVizContext?
+        private var cachedSceneParams: CachedSceneParams?
         private var lastTerrainVizRetry: TimeInterval = 0
         private var cachedHoleDirection: CGPoint?
         private var cachedAimDirection: CGPoint?
+        private var hudLockedHoleLine: (CGPoint, CGPoint)?
+        private var hudLockedAimLine: (CGPoint, CGPoint)?
         private var smoothedHUDAnchor: CGPoint?
         private var smoothedHoleUnit: CGPoint?
         private var smoothedAimUnit: CGPoint?
@@ -1100,6 +1286,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             var betaDegrees: Double
             var lift: Float
             var transform: ScanCoordinateTransform
+            var holeDistance: Double
         }
 
         private struct CameraAddressContext {
@@ -1260,7 +1447,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             trajectory: [TrajectorySample] = [],
             greenVizMode: GreenSurfaceVizMode = .contours
         ) {
-            let session = view.session
+            sceneARView = view
             guard let scan else {
                 terrainVizContext = nil
                 aimEntity?.isEnabled = false
@@ -1268,37 +1455,42 @@ struct Gate55ARAimView: UIViewRepresentable {
                 clearGridFlow()
                 clearTrajectory()
                 clearOverlayRoot()
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &ballAnchorEntity,
-                    existingARAnchor: &ballARAnchor
+                    existingEntity: &ballAnchorEntity
                 )
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &holeAnchorEntity,
-                    existingARAnchor: &holeARAnchor
+                    existingEntity: &holeAnchorEntity
                 )
                 lockedBallPose = nil
                 lockedHolePose = nil
+                lockedScanTransform = nil
                 lastAimBeta = .nan
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
                 lastAimWidth = 0
                 lastAimLift = 0
+                lastAimAlpha = 1
                 lastPathLift = 0
+                lastPathAlpha = 1
                 lastVizMode = nil
                 smoothedFloorAddressHUD = false
                 lastARHiddenForFloorHUD = false
                 stopFloorHUDDisplayLink()
                 hideFloorHUD()
-                if lastReportedFloorHUD {
-                    lastReportedFloorHUD = false
-                    onFloorAddressModeChanged?(false)
-                }
+                lastReportedFloorHUD = false
+                smoothedProximityHeight = 0
                 return
             }
+
+            cachedSceneParams = CachedSceneParams(
+                scan: scan,
+                betaDegrees: betaDegrees,
+                visible: visible,
+                trajectory: trajectory,
+                greenVizMode: greenVizMode
+            )
 
             if overlayScanID != scan.id {
                 clearContours()
@@ -1307,42 +1499,37 @@ struct Gate55ARAimView: UIViewRepresentable {
                 clearOverlayRoot()
                 zeroLineEntity = nil
                 aimEntity = nil
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &ballAnchorEntity,
-                    existingARAnchor: &ballARAnchor
+                    existingEntity: &ballAnchorEntity
                 )
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &holeAnchorEntity,
-                    existingARAnchor: &holeARAnchor
+                    existingEntity: &holeAnchorEntity
                 )
                 lockedBallPose = nil
                 lockedHolePose = nil
+                lockedScanTransform = nil
                 overlayScanID = scan.id
                 lastAimBeta = .nan
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
                 lastAimWidth = 0
                 lastAimLift = 0
+                lastAimAlpha = 1
                 lastPathLift = 0
+                lastPathAlpha = 1
                 lastVizMode = nil
+                smoothedProximityHeight = 0
             }
 
-            let ballWorld = SIMD3<Float>(
-                Float(scan.ballAnchor.worldX),
-                Float(scan.ballAnchor.worldY),
-                Float(scan.ballAnchor.worldZ)
-            )
-            let holeWorld = SIMD3<Float>(
-                Float(scan.holeAnchor.worldX),
-                Float(scan.holeAnchor.worldY),
-                Float(scan.holeAnchor.worldZ)
-            )
-
-            if lockedBallPose != scan.ballAnchor {
+            if shouldReplaceGuidancePose(lockedBallPose, with: scan.ballAnchor),
+               scanController?.guidanceLiveBallPose == nil {
+                let incomingBall = SIMD3<Float>(
+                    Float(scan.ballAnchor.worldX),
+                    Float(scan.ballAnchor.worldY),
+                    Float(scan.ballAnchor.worldZ)
+                )
                 clearContours()
                 clearGridFlow()
                 clearTrajectory()
@@ -1353,48 +1540,56 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimBeta = .nan
                 lastTrajectoryRevision = -1
                 lastVizMode = nil
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &ballAnchorEntity,
-                    existingARAnchor: &ballARAnchor
+                    existingEntity: &ballAnchorEntity
                 )
-                ARReferenceMarkers.placeWorldLocked(
-                    named: "trueputt.ball",
+                ARReferenceMarkers.placeRealityWorldFixed(
                     entityFactory: { ARReferenceMarkers.makeBallEntity() },
-                    at: ballWorld,
-                    session: session,
+                    at: incomingBall,
                     in: view,
-                    existingEntity: &ballAnchorEntity,
-                    existingARAnchor: &ballARAnchor
+                    existingEntity: &ballAnchorEntity
                 )
                 lockedBallPose = scan.ballAnchor
+                lockedScanTransform = scan.scanTransform
             }
-            if lockedHolePose != scan.holeAnchor {
+            if shouldReplaceGuidancePose(lockedHolePose, with: scan.holeAnchor) {
+                let incomingHole = SIMD3<Float>(
+                    Float(scan.holeAnchor.worldX),
+                    Float(scan.holeAnchor.worldY),
+                    Float(scan.holeAnchor.worldZ)
+                )
                 clearContours()
                 clearGridFlow()
                 lastVizMode = nil
-                ARReferenceMarkers.removeWorldLocked(
-                    session: session,
+                ARReferenceMarkers.removeRealityWorldFixed(
                     in: view,
-                    existingEntity: &holeAnchorEntity,
-                    existingARAnchor: &holeARAnchor
+                    existingEntity: &holeAnchorEntity
                 )
-                ARReferenceMarkers.placeWorldLocked(
-                    named: "trueputt.hole",
+                ARReferenceMarkers.placeRealityWorldFixed(
                     entityFactory: { ARReferenceMarkers.makeHoleEntity() },
-                    at: holeWorld,
-                    session: session,
+                    at: incomingHole,
                     in: view,
-                    existingEntity: &holeAnchorEntity,
-                    existingARAnchor: &holeARAnchor
+                    existingEntity: &holeAnchorEntity
                 )
                 lockedHolePose = scan.holeAnchor
             }
 
             guard let ballEntity = ballAnchorEntity else { return }
             let overlays = ensureOverlayRoot(under: ballEntity)
-            let transform = scan.scanTransform
+            let renderBall = lockedBallPose ?? scan.ballAnchor
+            let renderHole = lockedHolePose ?? scan.holeAnchor
+            let ballWorld = SIMD3<Float>(
+                Float(renderBall.worldX),
+                Float(renderBall.worldY),
+                Float(renderBall.worldZ)
+            )
+            let holeWorld = SIMD3<Float>(
+                Float(renderHole.worldX),
+                Float(renderHole.worldY),
+                Float(renderHole.worldZ)
+            )
+            let transform = lockedScanTransform ?? scan.scanTransform
 
             // 고정 월드 굵기 — 거리 따라 화면폭을 바꾸면 근접 시 굵어지고 매 프레임 흔들림
             let contourLift: Float = 0.006
@@ -1404,112 +1599,102 @@ struct Gate55ARAimView: UIViewRepresentable {
                 holeWorld: holeWorld,
                 in: view
             )
-            let addressModeChanged = lastAddressMode != address.isAddressPosition
-            let floorModeChanged = lastFloorAddressMode != address.isFloorAddressHUD
+            _ = address.isFloorAddressHUD
             if smoothedCamBallDistance <= 0 {
-                smoothedCamBallDistance = address.distance
+                smoothedCamBallDistance = stabilizedCamBallDistance(address.distance)
             } else {
-                smoothedCamBallDistance += (address.distance - smoothedCamBallDistance) * 0.18
+                let target = stabilizedCamBallDistance(address.distance)
+                let alpha: Float = address.distance < target ? 0.10 : 0.18
+                smoothedCamBallDistance += (target - smoothedCamBallDistance) * alpha
             }
 
             let pathLift: Float = 0.008
             let aimLift: Float = 0.010
-            var pathWidth: Float = 0.014
-            var aimWidth: Float = 0.010
-            if address.isAddressPosition {
-                pathWidth = 0.020
-                aimWidth = 0.014
-            }
+            let pathWidth = Self.standingPathWidth
+            let aimWidth = Self.standingAimWidth
 
-            reportFloorAddressHUD(address)
+            if Self.floorAddressHUDEnabled {
+                reportFloorAddressHUD(address)
+            } else if smoothedFloorAddressHUD || lastReportedFloorHUD {
+                smoothedFloorAddressHUD = false
+                lastReportedFloorHUD = false
+            }
             if visible {
                 hudSceneState = FloorHUDSceneState(
                     ballWorld: ballWorld,
                     holeWorld: holeWorld,
                     betaDegrees: betaDegrees,
                     lift: pathLift,
-                    transform: transform
+                    transform: transform,
+                    holeDistance: scan.holeDistance
                 )
                 hudARView = view
                 startFloorHUDDisplayLinkIfNeeded()
-                refreshFloorHUD(
-                    showLines: smoothedFloorAddressHUD,
-                    preferFastDirections: smoothedFloorAddressHUD
-                )
-                if !smoothedFloorAddressHUD {
-                    seedFloorHUDDirectionCache(
-                        in: view,
-                        ballWorld: ballWorld,
-                        lift: pathLift,
-                        transform: transform,
-                        betaDegrees: betaDegrees
+                if Self.floorAddressHUDEnabled {
+                    refreshFloorHUD(
+                        showLines: smoothedFloorAddressHUD,
+                        preferFastDirections: smoothedFloorAddressHUD
                     )
+                    if !smoothedFloorAddressHUD {
+                        seedFloorHUDDirectionCache(
+                            in: view,
+                            ballWorld: ballWorld,
+                            lift: pathLift,
+                            transform: transform,
+                            betaDegrees: betaDegrees
+                        )
+                    }
+                } else {
+                    hideFloorHUD()
                 }
             } else {
                 stopFloorHUDDisplayLink()
                 hideFloorHUD()
             }
 
-            let arHiddenForHUD = smoothedFloorAddressHUD
+            let arHiddenForHUD = Self.floorAddressHUDEnabled && smoothedFloorAddressHUD
             let arVisibilityChanged = lastARHiddenForFloorHUD != arHiddenForHUD
             lastARHiddenForFloorHUD = arHiddenForHUD
-            overlayRoot?.isEnabled = !arHiddenForHUD
-            ballAnchorEntity?.isEnabled = !arHiddenForHUD
-            holeAnchorEntity?.isEnabled = !arHiddenForHUD
+            applyFloorHUDOverlayVisibility(hidden: arHiddenForHUD)
             if arHiddenForHUD {
-                zeroLineEntity?.isEnabled = false
-                aimEntity?.isEnabled = false
-                trajectoryRoot?.isEnabled = false
-                clearContours()
-                clearGridFlow()
-                lastAddressMode = address.isAddressPosition
+                if arVisibilityChanged {
+                    stopWormFlowAnimation()
+                }
                 lastFloorAddressMode = address.isFloorAddressHUD
                 return
             }
 
-            if arVisibilityChanged && !arHiddenForHUD {
-                clearContours()
-                clearGridFlow()
-                lastVizMode = nil
+            if greenVizMode == .gridFlow, PerformanceSettings.wormAnimationEnabled {
+                startWormFlowAnimation()
             }
 
             zeroLineEntity?.isEnabled = true
             aimEntity?.isEnabled = visible
             trajectoryRoot?.isEnabled = visible
-            if arVisibilityChanged {
-                lastTrajectoryRevision = -1
-            }
 
-            if address.isFloorAddressHUD {
-                clearContours()
-                clearGridFlow()
-            } else {
-                terrainVizContext = TerrainVizContext(
-                    scan: scan,
-                    mode: greenVizMode,
-                    wormWidth: wormWidth
-                )
-                updateTerrainViz(
-                    mode: greenVizMode,
-                    for: scan,
-                    lift: contourLift,
-                    transform: transform,
-                    parent: overlays,
-                    wormWidth: wormWidth,
-                    in: view,
-                    ballWorld: ballWorld
-                )
-            }
+            terrainVizContext = TerrainVizContext(
+                scan: scan,
+                mode: greenVizMode,
+                wormWidth: wormWidth
+            )
+            updateTerrainViz(
+                mode: greenVizMode,
+                for: scan,
+                lift: contourLift,
+                transform: transform,
+                parent: overlays,
+                wormWidth: wormWidth,
+                in: view,
+                ballWorld: ballWorld
+            )
 
             let zeroNeedsRebuild = zeroLineEntity == nil
                 || abs(lastZeroHoleDistance - scan.holeDistance) > 1e-4
                 || abs(lastPathLift - pathLift) > 0.0015
-                || addressModeChanged
+                || abs(lastZeroWidth - pathWidth * 0.35) > 0.0008
                 || arVisibilityChanged
             if zeroNeedsRebuild {
-                let zeroWidth = address.isAddressPosition
-                    ? max(pathWidth * 0.55, 0.008)
-                    : max(pathWidth * 0.35, 0.004)
+                let zeroWidth = max(pathWidth * 0.35, 0.003)
                 placeBallLocalSegment(
                     toLocalX: 0,
                     toLocalY: scan.holeDistance,
@@ -1523,6 +1708,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 )
                 lastZeroHoleDistance = scan.holeDistance
                 lastPathLift = pathLift
+                lastZeroWidth = zeroWidth
             }
 
             guard visible else {
@@ -1532,33 +1718,40 @@ struct Gate55ARAimView: UIViewRepresentable {
                 return
             }
 
-            let trajSig = trajectorySignature(trajectory, pathWidth: pathWidth, lift: pathLift)
+            let trajSig = trajectorySignature(
+                trajectory,
+                pathWidth: pathWidth * proximityLineWidthScale(heightAboveBall: address.heightAboveBall),
+                lift: pathLift
+            )
             var trajectoryRebuilt = false
             if trajSig != lastTrajectoryRevision {
+                let pathWidthScale = proximityLineWidthScale(heightAboveBall: address.heightAboveBall)
                 updateTrajectory(
                     samples: trajectory,
-                    transform: transform,
+                    scan: scan,
+                    displayTransform: transform,
                     lift: pathLift,
-                    pathWidth: pathWidth,
+                    pathWidth: pathWidth * pathWidthScale,
+                    pathAlpha: proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall),
                     parent: overlays
                 )
                 lastTrajectoryRevision = trajSig
+                lastAppliedWidthScale = pathWidthScale
+                lastAppliedPathAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall)
+                lastAppliedBallAlpha = -1
                 trajectoryRebuilt = true
             }
 
-            let length: Double
-            if address.isAddressPosition {
-                length = max(1.5, min(scan.holeDistance * 0.82, 5.0))
-            } else {
-                length = max(1.0, min(scan.holeDistance * 0.45, 2.2))
-            }
+            let proximityT = proximityBlend(heightAboveBall: address.heightAboveBall)
+            let standingLength = max(1.0, min(scan.holeDistance * 0.45, 2.2))
+            let addressLength = max(1.5, min(scan.holeDistance * 0.82, 5.0))
+            let length = standingLength + (addressLength - standingLength) * Double(1 - proximityT)
             if trajectoryRebuilt
                 || aimEntity == nil
                 || abs(lastAimBeta - betaDegrees) > 0.05
-                || abs(lastAimLength - Float(length)) > 1e-3
+                || abs(lastAimLength - Float(length)) > 0.10
+                || abs(lastAimWidth - aimWidth) > 0.0008
                 || abs(lastAimLift - aimLift) > 0.0015
-                || addressModeChanged
-                || floorModeChanged
                 || arVisibilityChanged {
                 let beta = betaDegrees * .pi / 180
                 placeBallLocalSegment(
@@ -1576,22 +1769,103 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimLength = Float(length)
                 lastAimWidth = aimWidth
                 lastAimLift = aimLift
+                lastAppliedWidthScale = -1
+                lastAppliedAimAlpha = -1
+                lastAppliedBallAlpha = -1
             }
-            lastAddressMode = address.isAddressPosition
             lastFloorAddressMode = address.isFloorAddressHUD
         }
 
         private func reportFloorAddressHUD(_ address: CameraAddressContext) {
+            guard Self.floorAddressHUDEnabled else { return }
             lastFloorHeightAboveBall = address.heightAboveBall
             lastFloorBallDistance = address.distance
             if address.isFloorAddressHUD {
                 smoothedFloorAddressHUD = true
-            } else if lastFloorHeightAboveBall > 0.42 || lastFloorBallDistance > 1.40 {
+            } else if address.heightAboveBall > 0.42 || address.distance > 1.40 {
                 smoothedFloorAddressHUD = false
             }
-            guard smoothedFloorAddressHUD != lastReportedFloorHUD else { return }
+            // SwiftUI 레이아웃은 건드리지 않는다. HUD 전환으로 OSD가 커지며 잘리던 원인.
             lastReportedFloorHUD = smoothedFloorAddressHUD
-            onFloorAddressModeChanged?(smoothedFloorAddressHUD)
+        }
+
+        /// timestamp·실볼 미세 정렬은 무시. 일어선 뒤 감지가 8cm만 어긋나도 다시 심으면 AR이 계속 흐른다.
+        private func shouldReplaceGuidancePose(_ locked: ScanPose?, with incoming: ScanPose) -> Bool {
+            guard let locked else { return true }
+            let dx = locked.worldX - incoming.worldX
+            let dy = locked.worldY - incoming.worldY
+            let dz = locked.worldZ - incoming.worldZ
+            return (dx * dx + dz * dz) > 0.25 * 0.25 || abs(dy) > 0.12
+        }
+
+        private func applyFloorHUDOverlayVisibility(hidden: Bool) {
+            overlayRoot?.isEnabled = !hidden
+            zeroLineEntity?.isEnabled = !hidden
+            aimEntity?.isEnabled = !hidden
+            trajectoryRoot?.isEnabled = !hidden
+            contourRoot?.isEnabled = !hidden
+            gridFlowRoot?.isEnabled = !hidden
+            setWorldAnchorChildrenEnabled(ballAnchorEntity, enabled: !hidden)
+            setWorldAnchorChildrenEnabled(holeAnchorEntity, enabled: !hidden)
+        }
+
+        private func setWorldAnchorChildrenEnabled(_ anchor: AnchorEntity?, enabled: Bool) {
+            guard let anchor else { return }
+            for child in anchor.children {
+                child.isEnabled = enabled
+            }
+        }
+
+        /// DisplayLink 경로에서도 경로만 숨기거나 복구한다. 앵커 재배치는 하지 않는다.
+        private func syncFloorHUDARVisibility() {
+            let hidden = smoothedFloorAddressHUD
+            lastARHiddenForFloorHUD = hidden
+            applyFloorHUDOverlayVisibility(hidden: hidden)
+        }
+
+        /// limited 추적 중 바닥 HUD에 들어갔다 나오면 ARAnchor가 어긋날 수 있어 스캔 좌표로 재배치.
+        private func replantGuidanceMarkersFromScan(
+            scan: CompletedScan,
+            view: ARView
+        ) {
+            let ballWorld = SIMD3<Float>(
+                Float(scan.ballAnchor.worldX),
+                Float(scan.ballAnchor.worldY),
+                Float(scan.ballAnchor.worldZ)
+            )
+            let holeWorld = SIMD3<Float>(
+                Float(scan.holeAnchor.worldX),
+                Float(scan.holeAnchor.worldY),
+                Float(scan.holeAnchor.worldZ)
+            )
+            ARReferenceMarkers.replaceRealityWorldFixed(
+                entityFactory: { ARReferenceMarkers.makeBallEntity() },
+                at: ballWorld,
+                in: view,
+                existingEntity: &ballAnchorEntity
+            )
+            ARReferenceMarkers.replaceRealityWorldFixed(
+                entityFactory: { ARReferenceMarkers.makeHoleEntity() },
+                at: holeWorld,
+                in: view,
+                existingEntity: &holeAnchorEntity
+            )
+            lockedBallPose = scan.ballAnchor
+            lockedHolePose = scan.holeAnchor
+            lockedScanTransform = scan.scanTransform
+            clearOverlayRoot()
+            clearContours()
+            clearGridFlow()
+            clearTrajectory()
+            lastZeroHoleDistance = .nan
+            lastAimBeta = .nan
+            lastTrajectoryRevision = -1
+            lastVizMode = nil
+            lastAimWidth = 0
+            lastAimLift = 0
+            lastAimAlpha = 1
+            lastPathLift = 0
+            lastPathAlpha = 1
         }
 
         private func startFloorHUDDisplayLinkIfNeeded() {
@@ -1619,42 +1893,69 @@ struct Gate55ARAimView: UIViewRepresentable {
             cachedAimDirection = nil
             hudLockedHoleUnit = nil
             hudLockedAimUnit = nil
+            hudLockedHoleLine = nil
+            hudLockedAimLine = nil
             hudLockCameraForwardXZ = nil
             hudLockCameraPosition = nil
             hudSettleStartedAt = nil
         }
 
         private func beginFloorHUDSmoothingSession() {
-            smoothedHUDAnchor = nil
-            smoothedHoleUnit = nil
-            smoothedAimUnit = nil
-            smoothedBetaDegrees = nil
-            hudLockedHoleUnit = nil
-            hudLockedAimUnit = nil
-            hudLockCameraForwardXZ = nil
-            hudLockCameraPosition = nil
-            hudSettleStartedAt = nil
+            hudLockedHoleLine = nil
+            hudLockedAimLine = nil
         }
 
         @objc private func refreshFloorHUDTick() {
-            guard let view = hudARView, let state = hudSceneState else { return }
+            guard let view = sceneARView else { return }
+            if !Self.floorAddressHUDEnabled {
+                hideFloorHUD()
+                if let cached = cachedSceneParams {
+                    let ball = lockedBallPose ?? cached.scan.ballAnchor
+                    let hole = lockedHolePose ?? cached.scan.holeAnchor
+                    applyProximityLineAppearance(
+                        ballWorld: SIMD3(
+                            Float(ball.worldX),
+                            Float(ball.worldY),
+                            Float(ball.worldZ)
+                        ),
+                        holeWorld: SIMD3(
+                            Float(hole.worldX),
+                            Float(hole.worldY),
+                            Float(hole.worldZ)
+                        ),
+                        in: view
+                    )
+                }
+                return
+            }
+            guard let hudView = hudARView, let state = hudSceneState else { return }
             let address = cameraAddressContext(
                 ballWorld: state.ballWorld,
                 holeWorld: state.holeWorld,
-                in: view
+                in: hudView
             )
             let wasFloorHUD = smoothedFloorAddressHUD
             reportFloorAddressHUD(address)
+            syncFloorHUDARVisibility()
+
             if smoothedFloorAddressHUD, !wasFloorHUD {
-                beginFloorHUDSmoothingSession()
-                refreshFloorHUD(showLines: true, preferFastDirections: true)
+                hudLockedHoleLine = nil
+                hudLockedAimLine = nil
+                refreshFloorHUD(showLines: true)
+                stopWormFlowAnimation()
             } else if !smoothedFloorAddressHUD, wasFloorHUD {
                 resetFloorHUDSmoothing()
                 refreshFloorHUD(showLines: false)
+                applyFloorHUDOverlayVisibility(hidden: false)
+                if terrainVizContext?.mode == .gridFlow, PerformanceSettings.wormAnimationEnabled {
+                    startWormFlowAnimation()
+                }
             } else {
                 refreshFloorHUD(showLines: smoothedFloorAddressHUD)
             }
-            refreshTerrainVizIfNeeded(in: view)
+            if !smoothedFloorAddressHUD {
+                refreshTerrainVizIfNeeded(in: view)
+            }
         }
 
         private func hideFloorHUD() {
@@ -1666,96 +1967,109 @@ struct Gate55ARAimView: UIViewRepresentable {
                   let state = hudSceneState,
                   let hud = floorHUDView else { return }
 
-            let bounds = view.bounds.insetBy(dx: 8, dy: 8)
+            hud.bottomReservedHeight = Self.hudBottomReservedHeight(for: view.bounds.height)
+            let bounds = hud.drawingBounds(in: view.bounds)
             guard bounds.width > 1, bounds.height > 1 else { return }
 
-            guard let holeDir = horizontalWorldDirection(from: state.transform, localX: 0, localY: 1) else {
+            guard let frame = view.session.currentFrame else {
+                hud.update(holeLine: nil, aimLine: nil, betaText: nil, isVisible: showLines)
                 return
+            }
+
+            if showLines {
+                if hudLockedHoleLine == nil || hudLockedAimLine == nil {
+                    let captured = captureWorldLockedHUDLines(
+                        state: state,
+                        in: view,
+                        frame: frame,
+                        bounds: bounds
+                    )
+                    if let hole = captured.hole { hudLockedHoleLine = hole }
+                    if let aim = captured.aim { hudLockedAimLine = aim }
+                }
+                hud.update(
+                    holeLine: hudLockedHoleLine,
+                    aimLine: hudLockedAimLine,
+                    betaText: nil,
+                    isVisible: hudLockedHoleLine != nil || hudLockedAimLine != nil
+                )
+                return
+            }
+
+            hud.update(holeLine: nil, aimLine: nil, betaText: nil, isVisible: false)
+        }
+
+        private static func hudBottomReservedHeight(for viewHeight: CGFloat) -> CGFloat {
+            min(max(viewHeight * 0.40, 240), 400)
+        }
+
+        private func captureWorldLockedHUDLines(
+            state: FloorHUDSceneState,
+            in view: ARView,
+            frame: ARFrame,
+            bounds: CGRect
+        ) -> (hole: (CGPoint, CGPoint)?, aim: (CGPoint, CGPoint)?) {
+            let orientation = viewportOrientation(for: view)
+            guard let holeDir = horizontalWorldDirection(from: state.transform, localX: 0, localY: 1) else {
+                return (nil, nil)
             }
             let beta = state.betaDegrees * .pi / 180
             guard let aimDir = horizontalWorldDirection(
                 from: state.transform,
                 localX: sin(beta),
                 localY: cos(beta)
-            ) else { return }
+            ) else { return (nil, nil) }
 
-            let orientation = viewportOrientation(for: view)
-
-            guard let frame = view.session.currentFrame else {
-                if showLines {
-                    let betaText = formatSmoothedBeta(state.betaDegrees, immediate: false)
-                    hud.update(holeLine: nil, aimLine: nil, betaText: betaText, isVisible: true)
-                }
-                return
-            }
-
-            let cameraTransform = frame.camera.transform
-
-            let rawHoleUnit = viewMatrixScreenDirection(holeDir, frame: frame, orientation: orientation)
-            let rawAimUnit = viewMatrixScreenDirection(aimDir, frame: frame, orientation: orientation)
-            let rawAnchor = CGPoint(x: bounds.midX, y: bounds.maxY * 0.78)
-
-            cachedHoleDirection = rawHoleUnit
-            cachedAimDirection = rawAimUnit
-
-            let holeUnit: CGPoint
-            let aimUnit: CGPoint
-            let anchor: CGPoint
-            let betaText: String
-
-            if showLines {
-                if let lockedHole = hudLockedHoleUnit,
-                   let lockedAim = hudLockedAimUnit,
-                   !shouldUnlockHUD(cameraTransform: cameraTransform) {
-                    holeUnit = lockedHole
-                    aimUnit = lockedAim
-                    anchor = smoothedHUDAnchor ?? rawAnchor
-                    smoothedHUDAnchor = anchor
-                    betaText = formatSmoothedBeta(state.betaDegrees, immediate: false)
-                } else {
-                    hudLockedHoleUnit = nil
-                    hudLockedAimUnit = nil
-                    hudLockCameraForwardXZ = nil
-                    hudLockCameraPosition = nil
-                    holeUnit = smoothUnitDirection(
-                        smoothedHoleUnit,
-                        toward: rawHoleUnit,
-                        alpha: Self.hudDirectionSmoothAlpha
-                    )
-                    aimUnit = smoothUnitDirection(
-                        smoothedAimUnit,
-                        toward: rawAimUnit,
-                        alpha: Self.hudDirectionSmoothAlpha
-                    )
-                    smoothedHoleUnit = holeUnit
-                    smoothedAimUnit = aimUnit
-                    anchor = smoothHUDAnchor(
-                        smoothedHUDAnchor,
-                        toward: rawAnchor,
-                        alpha: Self.hudAnchorSmoothAlpha
-                    )
-                    smoothedHUDAnchor = anchor
-                    betaText = formatSmoothedBeta(state.betaDegrees, immediate: false)
-                    updateHUDSettleLock(
-                        holeUnit: holeUnit,
-                        aimUnit: aimUnit,
-                        rawHole: rawHoleUnit,
-                        cameraTransform: cameraTransform
-                    )
-                }
-            } else {
-                holeUnit = rawHoleUnit
-                aimUnit = rawAimUnit
-                anchor = rawAnchor
-                betaText = String(format: "%+.1f°", state.betaDegrees)
-            }
-
-            hud.update(
-                holeLine: clipLineThroughAnchor(anchor: anchor, unitDirection: holeUnit, bounds: bounds),
-                aimLine: clipLineThroughAnchor(anchor: anchor, unitDirection: aimUnit, bounds: bounds),
-                betaText: betaText,
-                isVisible: showLines
+            let origin = SIMD3<Float>(state.ballWorld.x, state.ballWorld.y + state.lift, state.ballWorld.z)
+            let holeHoriz = SIMD3<Float>(
+                state.holeWorld.x - state.ballWorld.x,
+                0,
+                state.holeWorld.z - state.ballWorld.z
             )
+            let holeLen = max(simd_length(holeHoriz), 0.5)
+            let aimLen = max(1.0, min(Float(state.holeDistance) * 0.82, 5.0))
+
+            guard let holeOrigin = projectWorldPoint(origin, in: view, frame: frame, orientation: orientation),
+                  let holeEnd = projectWorldPoint(origin + holeDir * holeLen, in: view, frame: frame, orientation: orientation),
+                  let aimEnd = projectWorldPoint(origin + aimDir * aimLen, in: view, frame: frame, orientation: orientation) else {
+                return (nil, nil)
+            }
+
+            return (
+                clipSegmentThroughPoints(from: holeOrigin, to: holeEnd, bounds: bounds),
+                clipSegmentThroughPoints(from: holeOrigin, to: aimEnd, bounds: bounds)
+            )
+        }
+
+        private func projectWorldPoint(
+            _ world: SIMD3<Float>,
+            in view: ARView,
+            frame: ARFrame,
+            orientation: UIInterfaceOrientation
+        ) -> CGPoint? {
+            if let projected = view.project(world) {
+                return projected
+            }
+            let projected = frame.camera.projectPoint(
+                world,
+                orientation: orientation,
+                viewportSize: view.bounds.size
+            )
+            guard projected.x.isFinite, projected.y.isFinite else { return nil }
+            return projected
+        }
+
+        private func clipSegmentThroughPoints(
+            from origin: CGPoint,
+            to end: CGPoint,
+            bounds: CGRect
+        ) -> (CGPoint, CGPoint) {
+            let dx = end.x - origin.x
+            let dy = end.y - origin.y
+            let len = hypot(dx, dy)
+            guard len > 1 else { return (origin, end) }
+            let unit = CGPoint(x: dx / len, y: dy / len)
+            return clipLineThroughAnchor(anchor: origin, unitDirection: unit, bounds: bounds)
         }
 
         private func formatSmoothedBeta(_ betaDegrees: Double, immediate: Bool) -> String {
@@ -2122,16 +2436,17 @@ struct Gate55ARAimView: UIViewRepresentable {
             let now = CACurrentMediaTime()
             guard now - lastTerrainVizRetry >= 0.25 else { return }
             lastTerrainVizRetry = now
+            let renderBall = lockedBallPose ?? ctx.scan.ballAnchor
             let ballWorld = SIMD3<Float>(
-                Float(ctx.scan.ballAnchor.worldX),
-                Float(ctx.scan.ballAnchor.worldY),
-                Float(ctx.scan.ballAnchor.worldZ)
+                Float(renderBall.worldX),
+                Float(renderBall.worldY),
+                Float(renderBall.worldZ)
             )
             updateTerrainViz(
                 mode: ctx.mode,
                 for: ctx.scan,
                 lift: 0.006,
-                transform: ctx.scan.scanTransform,
+                transform: lockedScanTransform ?? ctx.scan.scanTransform,
                 parent: overlays,
                 wormWidth: ctx.wormWidth,
                 in: view,
@@ -2202,7 +2517,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             guard let frame = view.session.currentFrame else { return 0.004 }
             let cam = frame.camera.transform.columns.3
             let camPos = SIMD3<Float>(cam.x, cam.y, cam.z)
-            let distance = max(simd_length(camPos - ballWorld), 0.35)
+            let distance = max(simd_length(camPos - ballWorld), Float(PerformanceSettings.aimCalcDistanceFloor))
             let viewport = view.bounds.size
             let orientation: UIInterfaceOrientation
             if let scene = view.window?.windowScene {
@@ -2260,6 +2575,33 @@ struct Gate55ARAimView: UIViewRepresentable {
             )
         }
 
+        private func stabilizedCamBallDistance(_ raw: Float) -> Float {
+            max(raw, Float(PerformanceSettings.aimCalcDistanceFloor))
+        }
+
+        /// 0 = 하안(약 22cm), 1 = 선 자세(약 72cm).
+        private func proximityBlend(heightAboveBall: Float) -> Float {
+            let floorHeight: Float = 0.22
+            let standingHeight: Float = 0.72
+            let t = (heightAboveBall - floorHeight) / (standingHeight - floorHeight)
+            return max(0, min(1, t))
+        }
+
+        /// 카메라가 볼에 가까울수록(낮을수록) 경로선을 얇게 — 근접 시 원근으로 굵어 보이는 것 완화.
+        private func proximityLineWidthScale(heightAboveBall: Float) -> Float {
+            let t = proximityBlend(heightAboveBall: heightAboveBall)
+            let raw = Self.floorPathWidthScale + t * (1 - Self.floorPathWidthScale)
+            return (raw * 10).rounded() / 10
+        }
+
+        /// 지면과 가까울수록 투명. 서서 볼 때 기본 알파, 하안에서 최대 50%.
+        private func proximityLineAlpha(base: CGFloat, heightAboveBall: Float) -> CGFloat {
+            let t = CGFloat(proximityBlend(heightAboveBall: heightAboveBall))
+            let floorAlpha: CGFloat = 0.5
+            let raw = floorAlpha + (base - floorAlpha) * t
+            return (raw * 10).rounded() / 10
+        }
+
         private func cameraAddressContext(
             ballWorld: SIMD3<Float>,
             holeWorld: SIMD3<Float>,
@@ -2290,7 +2632,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             }
             let along = simd_dot(SIMD2(toCam.x, toCam.z), forward)
             let isAddress = along < -0.08 || heightAboveBall < 0.38
-            let isFloorHUD = heightAboveBall < 0.36 && distance < 1.30
+            let isFloorHUD = heightAboveBall < 0.40 && distance < 1.35
 
             return CameraAddressContext(
                 distance: distance,
@@ -2316,6 +2658,137 @@ struct Gate55ARAimView: UIViewRepresentable {
             hasher.combine(Int((pathWidth * 10_000).rounded()))
             hasher.combine(Int((lift * 10_000).rounded()))
             return hasher.finalize()
+        }
+
+        /// 메시를 다시 만들지 않고 로컬 X(굵기)와 알파만 바꾼다. 하안 근접 끊김 방지.
+        private func applyProximityLineAppearance(
+            ballWorld: SIMD3<Float>,
+            holeWorld: SIMD3<Float>,
+            in view: ARView
+        ) {
+            let address = cameraAddressContext(
+                ballWorld: ballWorld,
+                holeWorld: holeWorld,
+                in: view
+            )
+            let rawHeight = address.heightAboveBall
+            if smoothedProximityHeight <= 0 {
+                smoothedProximityHeight = rawHeight
+            } else {
+                smoothedProximityHeight += (rawHeight - smoothedProximityHeight) * 0.14
+            }
+            let height = smoothedProximityHeight
+            let widthScale = proximityLineWidthScale(heightAboveBall: height)
+            let pathAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: height)
+            let aimAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: height)
+            let ballAlpha = proximityLineAlpha(
+                base: ARReferenceMarkers.ballMarkerStandingAlpha,
+                heightAboveBall: height
+            )
+            let widthChanged = abs(widthScale - lastAppliedWidthScale) >= 0.03
+            let pathAlphaChanged = abs(pathAlpha - lastAppliedPathAlpha) >= 0.03
+            let aimAlphaChanged = abs(aimAlpha - lastAppliedAimAlpha) >= 0.03
+            let ballAlphaChanged = abs(ballAlpha - lastAppliedBallAlpha) >= 0.03
+            guard widthChanged || pathAlphaChanged || aimAlphaChanged || ballAlphaChanged else { return }
+            let widthAxis = SIMD3<Float>(widthScale, 1, 1)
+            if widthChanged {
+                lastAppliedWidthScale = widthScale
+                // 곡선 리본은 엔티티 X축 스케일로 폭을 줄이면 접선 방향과 어긋나 뒤틀린다.
+                rebuildTrajectoryRibbon(
+                    widthScale: widthScale,
+                    pathAlpha: pathAlpha
+                )
+                applyLineScale(aimEntity, scale: widthAxis)
+            } else if pathAlphaChanged {
+                lastAppliedPathAlpha = pathAlpha
+                applyLineAlpha(
+                    trajectoryRoot,
+                    red: 1,
+                    green: 0.15,
+                    blue: 0.12,
+                    alpha: pathAlpha
+                )
+            }
+            if aimAlphaChanged {
+                lastAppliedAimAlpha = aimAlpha
+                applyLineAlpha(aimEntity, red: 1, green: 1, blue: 1, alpha: aimAlpha)
+            }
+            if ballAlphaChanged {
+                lastAppliedBallAlpha = ballAlpha
+                applyBallMarkerAlpha(ballAlpha)
+            }
+        }
+
+        /// 근접 시 경로 폭: 메시 생성 시 반영. `scale.x`는 곡선 리본 폭 방향과 맞지 않아 뒤틀림.
+        private func rebuildTrajectoryRibbon(
+            widthScale: Float,
+            pathAlpha: CGFloat
+        ) {
+            guard let cached = cachedSceneParams,
+                  let ballEntity = ballAnchorEntity else { return }
+            let overlays = ensureOverlayRoot(under: ballEntity)
+            let transform = lockedScanTransform ?? cached.scan.scanTransform
+            let effectiveWidth = Self.standingPathWidth * widthScale
+            updateTrajectory(
+                samples: cached.trajectory,
+                scan: cached.scan,
+                displayTransform: transform,
+                lift: lastPathLift,
+                pathWidth: effectiveWidth,
+                pathAlpha: pathAlpha,
+                parent: overlays
+            )
+            lastTrajectoryRevision = trajectorySignature(
+                cached.trajectory,
+                pathWidth: effectiveWidth,
+                lift: lastPathLift
+            )
+            lastAppliedPathAlpha = pathAlpha
+        }
+
+        private func ballMarkerEntity() -> ModelEntity? {
+            ballAnchorEntity?
+                .children
+                .first { $0.name == "ballMarker" } as? ModelEntity
+        }
+
+        private func applyBallMarkerAlpha(_ alpha: CGFloat) {
+            guard let ball = ballMarkerEntity() else { return }
+            ball.model?.materials = [ARReferenceMarkers.makeBallMarkerMaterial(alpha: alpha)]
+        }
+
+        private func applyLineScale(_ entity: Entity?, scale: SIMD3<Float>) {
+            guard let entity else { return }
+            if let model = entity as? ModelEntity {
+                model.scale = scale
+            }
+            for child in entity.children {
+                applyLineScale(child, scale: scale)
+            }
+        }
+
+        private func applyLineAlpha(
+            _ entity: Entity?,
+            red: CGFloat,
+            green: CGFloat,
+            blue: CGFloat,
+            alpha: CGFloat
+        ) {
+            guard let entity else { return }
+            if let model = entity as? ModelEntity {
+                var material = UnlitMaterial(
+                    color: UIColor(red: red, green: green, blue: blue, alpha: alpha)
+                )
+                if alpha < 0.99 {
+                    material.blending = .transparent(opacity: .init(floatLiteral: Float(alpha)))
+                } else {
+                    material.blending = .opaque
+                }
+                model.model?.materials = [material]
+            }
+            for child in entity.children {
+                applyLineAlpha(child, red: red, green: green, blue: blue, alpha: alpha)
+            }
         }
 
         /// 볼 앵커 자식으로 세그먼트 배치 — 왕복/편도 모두 볼·홀과 동일 좌표계.
@@ -2972,52 +3445,131 @@ struct Gate55ARAimView: UIViewRepresentable {
 
         private func updateTrajectory(
             samples: [TrajectorySample],
-            transform: ScanCoordinateTransform,
+            scan: CompletedScan,
+            displayTransform: ScanCoordinateTransform,
             lift: Float,
             pathWidth: Float,
+            pathAlpha: CGFloat,
             parent: Entity
         ) {
             clearTrajectory()
             guard samples.count >= 2 else { return }
 
+            let physicsTransform = scan.terrainTransform
             var localPoints: [PuttVector2] = [PuttVector2(x: 0, y: 0)]
             for sample in samples {
                 let p = sample.position
                 if hypot(p.x, p.y) < 1e-4 { continue }
-                localPoints.append(p)
+                let world = physicsTransform.worldXZ(localX: p.x, localY: p.y)
+                let display = displayTransform.localFromWorld(
+                    worldX: world.worldX,
+                    worldZ: world.worldZ
+                )
+                localPoints.append(display)
             }
             guard localPoints.count >= 2 else { return }
 
+            let holeLocal = PuttVector2(x: 0, y: scan.holeDistance)
+            let nearestHole = localPoints.map {
+                hypot($0.x - holeLocal.x, $0.y - holeLocal.y)
+            }.min() ?? .infinity
+            if nearestHole > 0.15 {
+                localPoints.append(holeLocal)
+            }
+
+            let pathPositions = localPoints.map {
+                ballLocalPoint(
+                    localX: $0.x,
+                    localY: $0.y,
+                    lift: lift,
+                    transform: displayTransform
+                )
+            }
+
             let root = Entity()
             root.name = "trajectory"
-            let pathColor = UIColor(red: 1, green: 0.15, blue: 0.12, alpha: 0.8)
-            let step = max(1, localPoints.count / 80)
-            var index = 0
-            while index < localPoints.count - 1 {
-                let a = localPoints[index]
-                let b = localPoints[min(index + step, localPoints.count - 1)]
-                let from = ballLocalPoint(localX: a.x, localY: a.y, lift: lift, transform: transform)
-                let to = ballLocalPoint(localX: b.x, localY: b.y, lift: lift, transform: transform)
-                let delta = to - from
-                let len = simd_length(SIMD3(delta.x, 0, delta.z))
-                if len > 1e-4 {
-                    let dir = SIMD3(delta.x, 0, delta.z) / len
-                    let seg = ARReferenceMarkers.makeLineEntity(
-                        length: len,
-                        width: pathWidth,
-                        color: pathColor,
-                        unlit: true,
-                        thickness: 0.0025
-                    )
-                    seg.orientation = ARReferenceMarkers.yawRotation(aligningLocalZToHorizontal: dir)
-                    seg.position = (from + to) * 0.5
-                    root.addChild(seg)
-                }
-                index += step
+            let pathColor = UIColor(red: 1, green: 0.15, blue: 0.12, alpha: pathAlpha)
+            if let ribbon = ARReferenceMarkers.makePolylineRibbon(
+                points: pathPositions,
+                width: pathWidth,
+                color: pathColor
+            ) {
+                root.addChild(ribbon)
             }
             parent.addChild(root)
             trajectoryRoot = root
         }
+    }
+}
+
+/// 조준 AR 씬을 공유 `ARView`에 그린다. 카메라 뷰 재생성 없이 씬만 갱신.
+struct Gate55GuidanceSceneBinder: UIViewRepresentable {
+    let arView: ARView
+    @ObservedObject var controller: ARScanSessionController
+    let scan: CompletedScan?
+    let betaDegrees: Double
+    let visible: Bool
+    let revision: Int
+    var trajectorySamples: [TrajectorySample] = []
+    var greenVizMode: GreenSurfaceVizMode = .contours
+    let floorAddressMode: Bool
+    let floorUIModeBridge: FloorAddressUIModeBridge
+
+    func makeUIView(context: Context) -> UIView {
+        let placeholder = UIView(frame: .zero)
+        placeholder.isUserInteractionEnabled = false
+        placeholder.backgroundColor = .clear
+        attachFloorHUDIfNeeded(context: context)
+        context.coordinator.onFloorAddressModeChanged = { [bridge = floorUIModeBridge] enabled in
+            bridge.report(enabled)
+        }
+        return placeholder
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.scanController = controller
+        context.coordinator.sceneARView = arView
+        attachFloorHUDIfNeeded(context: context)
+        context.coordinator.floorHUDView?.frame = arView.bounds
+        if let hud = context.coordinator.floorHUDView {
+            arView.bringSubviewToFront(hud)
+        }
+        context.coordinator.updateScene(
+            in: arView,
+            scan: scan,
+            betaDegrees: betaDegrees,
+            visible: visible,
+            trajectory: trajectorySamples,
+            greenVizMode: greenVizMode
+        )
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Gate55ARAimView.Coordinator) {
+        if let arView = coordinator.sceneARView {
+            coordinator.updateScene(
+                in: arView,
+                scan: nil,
+                betaDegrees: 0,
+                visible: false
+            )
+        }
+        coordinator.cleanup()
+        coordinator.floorHUDView?.removeFromSuperview()
+        coordinator.floorHUDView = nil
+        coordinator.sceneARView = nil
+    }
+
+    func makeCoordinator() -> Gate55ARAimView.Coordinator {
+        Gate55ARAimView.Coordinator()
+    }
+
+    private func attachFloorHUDIfNeeded(context: Context) {
+        guard context.coordinator.floorHUDView == nil else { return }
+        let hud = FloorAddressWorldHUDView(frame: arView.bounds)
+        hud.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hud.isUserInteractionEnabled = false
+        arView.addSubview(hud)
+        context.coordinator.floorHUDView = hud
     }
 }
 

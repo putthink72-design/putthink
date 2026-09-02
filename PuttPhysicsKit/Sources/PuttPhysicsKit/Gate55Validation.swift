@@ -222,6 +222,7 @@ public enum Gate55Validation {
     // MARK: - Mode 1 / Mode 2
 
     /// 모드 1: 지형 + v0·β → 예측 궤적·정지위치.
+    /// 궤적은 홀 캡처에서 끊기지 않고 오버런 정지까지 표시한다.
     public static func runForward(
         context: Gate55TerrainContext,
         greenSpeed: Double,
@@ -229,26 +230,38 @@ public enum Gate55Validation {
         directionDegrees: Double,
         recordTrajectory: Bool = true
     ) -> Gate55ForwardResult {
-        let result = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: initialVelocity,
-                initialDirectionDegrees: directionDegrees,
-                holeDistance: context.holeDistance,
-                holeDirectionDegrees: 0
-            ),
-            terrain: context.field,
-            recordTrajectory: recordTrajectory
+        let configuration = MultibreakPuttConfiguration(
+            greenSpeed: greenSpeed,
+            initialVelocity: initialVelocity,
+            initialDirectionDegrees: directionDegrees,
+            holeDistance: context.holeDistance,
+            holeDirectionDegrees: 0
         )
+        let capture = MultibreakPuttPhysics.simulate(
+            configuration: configuration,
+            terrain: context.field,
+            recordTrajectory: false
+        )
+        let display: FlatPuttResult
+        if recordTrajectory {
+            display = MultibreakPuttPhysics.simulate(
+                configuration: configuration,
+                terrain: context.field,
+                recordTrajectory: true,
+                ignoreCapture: true
+            )
+        } else {
+            display = capture
+        }
         return Gate55ForwardResult(
             initialVelocity: initialVelocity,
             directionDegrees: directionDegrees,
-            stopPosition: result.finalPosition,
-            trajectory: result.trajectory,
-            ballHoleIf: result.ballHoleIf == 1,
-            ballStopIf: result.ballStopIf == 1,
-            ballPassOverHoleIf: result.ballPassOverHoleIf == 1,
-            arcLength: result.arcLength
+            stopPosition: display.finalPosition,
+            trajectory: display.trajectory,
+            ballHoleIf: capture.ballHoleIf == 1,
+            ballStopIf: display.ballStopIf == 1,
+            ballPassOverHoleIf: capture.ballPassOverHoleIf == 1,
+            arcLength: display.arcLength
         )
     }
 

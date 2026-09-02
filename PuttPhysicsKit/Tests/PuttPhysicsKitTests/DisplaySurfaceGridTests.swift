@@ -52,7 +52,8 @@ final class DisplaySurfaceGridTests: XCTestCase {
             cameraSpeedMetersPerSecond: 0,
             stableKeys: keys,
             tentativeKeys: [],
-            cellHeights: [:]
+            cellHeights: [:],
+            cellCenters: [:]
         )
         let split = DisplaySurfaceGrid.buildSplitMeshes(
             cells: cells,
@@ -63,6 +64,19 @@ final class DisplaySurfaceGridTests: XCTestCase {
         XCTAssertTrue(split.tentativeFill.isEmpty)
         XCTAssertTrue(split.tentativeLines.isEmpty)
         XCTAssertFalse(split.stableLines.isEmpty)
+    }
+
+    func testIsolatedCellDrawsFullOutline() {
+        let cells = [DisplaySurfaceGrid.Cell(ix: 3, iz: -1, height: 0.3)]
+        let split = DisplaySurfaceGrid.buildSplitMeshes(
+            cells: cells,
+            coverage: .empty,
+            cellSize: 0.05,
+            lineHalfWidth: 0.001
+        )
+        XCTAssertFalse(split.tentativeLines.isEmpty)
+        // 네 변 × 두 삼각형 × 3 인덱스
+        XCTAssertEqual(split.tentativeLines.indices.count, 4 * 6)
     }
 
     func testFlattenToMedianHeightMakesHorizontalBoard() {

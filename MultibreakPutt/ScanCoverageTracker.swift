@@ -5,8 +5,8 @@ import simd
 
 /// ARKit sceneDepth → ScanCoverage 순수 코어 브리지.
 /// 배경 큐에서 샘플링하고, 메인에는 스냅샷만 전달한다.
-final class ScanCoverageTracker {
-    static let processInterval: TimeInterval = 0.20
+final class ScanCoverageTracker: @unchecked Sendable {
+    static let processInterval: TimeInterval = 0.12
     /// depth 맵 다운샘플 스텝 (픽셀).
     private static let sampleStride = 8
 

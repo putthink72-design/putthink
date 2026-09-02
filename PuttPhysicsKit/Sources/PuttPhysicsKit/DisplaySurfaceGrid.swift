@@ -166,40 +166,17 @@ public enum DisplaySurfaceGrid {
                 fill.indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
             }
 
-            // 격자선: 오른쪽·위쪽 이웃이 있을 때만 그려 중복을 줄인다.
-            if let y10 {
-                if isStable {
-                    appendRibbon(
-                        a: SIMD3(x0, y00, z0),
-                        b: SIMD3(x1, y10, z0),
-                        halfWidth: lineHalfWidth,
-                        into: &stableLines
-                    )
-                } else {
-                    appendRibbon(
-                        a: SIMD3(x0, y00, z0),
-                        b: SIMD3(x1, y10, z0),
-                        halfWidth: lineHalfWidth,
-                        into: &tentativeLines
-                    )
-                }
-            }
-            if let y01 {
-                if isStable {
-                    appendRibbon(
-                        a: SIMD3(x0, y00, z0),
-                        b: SIMD3(x0, y01, z1),
-                        halfWidth: lineHalfWidth,
-                        into: &stableLines
-                    )
-                } else {
-                    appendRibbon(
-                        a: SIMD3(x0, y00, z0),
-                        b: SIMD3(x0, y01, z1),
-                        halfWidth: lineHalfWidth,
-                        into: &tentativeLines
-                    )
-                }
+            // 이웃이 없어도 칸 네 변을 그린다. 공유 변만 그리면 고립 칸·외곽이 빠져
+            // 바둑판이 듬성듬성해 보인다.
+            var lines = isStable ? stableLines : tentativeLines
+            appendRibbon(a: SIMD3(x0, y00, z0), b: SIMD3(x1, y00, z0), halfWidth: lineHalfWidth, into: &lines)
+            appendRibbon(a: SIMD3(x1, y00, z0), b: SIMD3(x1, y00, z1), halfWidth: lineHalfWidth, into: &lines)
+            appendRibbon(a: SIMD3(x1, y00, z1), b: SIMD3(x0, y00, z1), halfWidth: lineHalfWidth, into: &lines)
+            appendRibbon(a: SIMD3(x0, y00, z1), b: SIMD3(x0, y00, z0), halfWidth: lineHalfWidth, into: &lines)
+            if isStable {
+                stableLines = lines
+            } else {
+                tentativeLines = lines
             }
         }
 

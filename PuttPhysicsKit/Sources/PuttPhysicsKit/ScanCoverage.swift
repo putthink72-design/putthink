@@ -60,6 +60,8 @@ public struct ScanCoverageSnapshot: Sendable, Equatable {
     public var tentativeKeys: Set<Int64>
     /// 표시용 셀 높이(월드 Y). 물리에는 쓰지 않는다.
     public var cellHeights: [Int64: Float]
+    /// 표시용 셀 실제 XZ(월드). 5cm 키 대신 이 점으로 바둑판을 붙여 원점 밀림 때 옆 칸이 생기지 않게 한다.
+    public var cellCenters: [Int64: SIMD2<Float>]
 
     public var stableRatio: Double {
         guard observedCellCount > 0 else { return 0 }
@@ -88,7 +90,8 @@ public struct ScanCoverageSnapshot: Sendable, Equatable {
         cameraSpeedMetersPerSecond: 0,
         stableKeys: [],
         tentativeKeys: [],
-        cellHeights: [:]
+        cellHeights: [:],
+        cellCenters: [:]
     )
 }
 
@@ -109,7 +112,9 @@ public final class ScanCoverage {
         var hitCount: UInt16 = 0
         var lastTimestamp: TimeInterval = 0
         var maxConfidence: UInt8 = 0
+        var lastX: Float = 0
         var lastY: Float = 0
+        var lastZ: Float = 0
     }
 
     private var cells: [Int64: Cell] = [:]
@@ -206,16 +211,18 @@ public final class ScanCoverage {
                 if cell.hitCount == 0 { cell.hitCount = UInt16.max }
                 cell.lastTimestamp = timestamp
                 cell.maxConfidence = max(cell.maxConfidence, bucket.maxConfidence)
-                cell.lastY = bucket.sumY / Float(max(bucket.count, 1))
+                let inv = 1 / Float(max(bucket.count, 1))
+                cell.lastX = bucket.sumX * inv
+                cell.lastY = bucket.sumY * inv
+                cell.lastZ = bucket.sumZ * inv
                 cells[key] = cell
                 if !wasStable, Int(cell.hitCount) >= Self.observationsForStable {
                     newlyStable += 1
                 }
 
-                let inv = 1 / Float(max(bucket.count, 1))
-                let meanX = bucket.sumX * inv
-                let meanY = bucket.sumY * inv
-                let meanZ = bucket.sumZ * inv
+                let meanX = cell.lastX
+                let meanY = cell.lastY
+                let meanZ = cell.lastZ
                 let dx = meanX - cameraPosition.x
                 let dy = meanY - cameraPosition.y
                 let dz = meanZ - cameraPosition.z
@@ -242,11 +249,14 @@ public final class ScanCoverage {
         var stableKeys = Set<Int64>()
         var tentativeKeys = Set<Int64>()
         var cellHeights: [Int64: Float] = [:]
+        var cellCenters: [Int64: SIMD2<Float>] = [:]
         stableKeys.reserveCapacity(cells.count)
         tentativeKeys.reserveCapacity(cells.count / 2)
         cellHeights.reserveCapacity(cells.count)
+        cellCenters.reserveCapacity(cells.count)
         for (key, cell) in cells {
             cellHeights[key] = cell.lastY
+            cellCenters[key] = SIMD2(cell.lastX, cell.lastZ)
             if Int(cell.hitCount) >= Self.observationsForStable {
                 stableKeys.insert(key)
             } else if cell.hitCount > 0 {
@@ -264,7 +274,8 @@ public final class ScanCoverage {
             cameraSpeedMetersPerSecond: speed,
             stableKeys: stableKeys,
             tentativeKeys: tentativeKeys,
-            cellHeights: cellHeights
+            cellHeights: cellHeights,
+            cellCenters: cellCenters
         )
     }
 

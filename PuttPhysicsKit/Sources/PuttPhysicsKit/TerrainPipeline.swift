@@ -55,6 +55,24 @@ public struct ScanCoordinateTransform: Sendable, Equatable {
             progress: progress
         )
     }
+
+    /// scan-local (x=우, y=앞) → 월드 XZ.
+    public func worldXZ(localX: Double, localY: Double) -> (worldX: Double, worldZ: Double) {
+        (
+            origin.worldX + localX * rightX + localY * forwardX,
+            origin.worldZ + localX * rightZ + localY * forwardZ
+        )
+    }
+
+    /// 월드 XZ → 이 변환의 scan-local (x=우, y=앞).
+    public func localFromWorld(worldX: Double, worldZ: Double) -> PuttVector2 {
+        let dx = worldX - origin.worldX
+        let dz = worldZ - origin.worldZ
+        return PuttVector2(
+            x: dx * rightX + dz * rightZ,
+            y: dx * forwardX + dz * forwardZ
+        )
+    }
 }
 
 public enum DriftCorrector {

@@ -8,12 +8,9 @@ import UIKit
 
 enum ScanFlowState: Equatable {
     case idle
-    case preparing
     case placingBall
-    case behindBallSweep
     case walkingToHole
     case placingHole
-    case returningToBall
     case processing
     case complete
     case failed(String)
@@ -37,15 +34,50 @@ enum ScanPathMode: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .oneWay:
-            return "홀 지정 직후 경로를 계산·표시합니다. 돌아와 실볼 위치가 그대로일 때 사용하세요."
+            return "홀 지정 직후 경로를 계산·표시합니다. 조준하는 동안 RGB·LiDAR로 흰 볼을 감지해 AR 볼을 맞춥니다."
         case .roundTrip:
-            return "홀 지정 직후 경로를 계산한 뒤, 볼로 돌아가 실제 볼 위치를 다시 지정합니다."
+            return "홀 지정 직후 경로를 계산합니다. 볼로 돌아와 조준하면 흰 볼을 자동 정렬합니다. 실패 시에만 재지정하세요."
         }
     }
 
-    /// 조준 전 실볼 재지정이 필요한지.
+    /// 조준 전 실볼 재지정이 필요한지. 자동 정렬이 성공하면 해제된다.
     var requiresBallReanchor: Bool {
         self == .roundTrip
+    }
+}
+
+enum VisualBallLockStatus: Equatable {
+    case idle
+    case waitingForView
+    case searching
+    case candidate
+    case aligned
+    case locked(offsetMeters: Double)
+
+    var isSettled: Bool {
+        switch self {
+        case .aligned, .locked:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var shortLabel: String? {
+        switch self {
+        case .idle:
+            return nil
+        case .waitingForView:
+            return "실볼을 화면에"
+        case .searching:
+            return "실볼 감지 중"
+        case .candidate:
+            return "후보 · 확인 필요"
+        case .aligned:
+            return "실볼 일치"
+        case .locked:
+            return "실볼 정렬"
+        }
     }
 }
 
@@ -130,12 +162,21 @@ final class ARScanSessionController: NSObject, ObservableObject {
     @Published private(set) var placementMessage: String?
     /// 스캔 중 LiDAR 권장 화면 구역·틀기 게이지.
     @Published private(set) var lidarTwistGuidance: LiDARTwistGuidanceState?
-    /// 볼 뒤 사선 Phase 진행·품질 게이지.
-    @Published private(set) var behindBallSweepGuidance: BehindBallSweepGuidanceState?
     /// AR 뷰가 화면 중앙 raycast를 수행하도록 요청한다.
     @Published var placementRequest: PlacementKind?
     /// 볼홀볼지정계산: 조준 전 실볼 재지정. 높이맵은 다시 계산하지 않는다.
     @Published private(set) var needsBallReanchor = false
+    /// 조준 중 RGB·LiDAR 흰 볼 자동 정렬.
+    @Published private(set) var visualBallLockStatus: VisualBallLockStatus = .idle
+    /// 하안 근접 백그라운드 보정. OSD/상태를 바꾸지 않는다.
+    private(set) var guidanceLiveBallPose: ScanPose?
+    /// 감지된 볼 후보. 골퍼가 확인하기 전에는 지정되지 않는다. 볼 없는 스캔도 가능.
+    @Published private(set) var pendingDetectedBall: ScanPose?
+    /// 1프레임 미리보기(링). 확인 버튼은 `pendingDetectedBall` 합의 후에만.
+    @Published private(set) var ballDetectionPreview: ScanPose?
+    /// 지면 링 투영(디스플레이 링크 갱신).
+    @Published private(set) var ballGroundRingPoints: [CGPoint] = []
+    @Published private(set) var holeGroundRingPoints: [CGPoint] = []
     /// 커버리지가 홀 뒤로 얼마나 들어왔는지(최대 1.0m).
     @Published private(set) var pastHoleMeasuredMeters = 0.0
     @Published var sigma = 1.5
@@ -165,8 +206,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var pendingMeshVertexCount = 0
     private var lastMeshCaptureTime: TimeInterval = 0
     private var lastTwistGuidanceUpdate: CFTimeInterval = 0
-    private var lastBehindBallGuidanceUpdate: CFTimeInterval = 0
-    private var behindBallSweepStatsSnapshot = BehindBallSweepGate.Stats.empty
     private var walkCorridorStatsSnapshot = WalkCorridorGate.Stats.empty
     private var lastWalkTwistInBandSample: CFTimeInterval = 0
 
@@ -184,15 +223,15 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private let coverageHaptic = UIImpactFeedbackGenerator(style: .light)
     /// ARMeshAnchor 정점 복사·필터 전용 직렬 큐 — 메인에서 하면 버튼 탭·스캔 중 히칭.
     private let meshExtractionQueue = DispatchQueue(label: "trueputt.mesh-extract", qos: .userInitiated)
+    private let visualLockQueue = DispatchQueue(label: "trueputt.ball-lock", qos: .userInitiated)
+    private var visualLockConsensus = GolfBallLockConsensus()
+    private let ballPreviewSmoothing = 0.58
+    private var visualLockProcessing = false
+    private var lastVisualLockTime: TimeInterval = 0
 
     var currentHoleDistance: Double? {
         guard let ball = ballAnchor, let hole = holeAnchor else { return nil }
         return hypot(hole.worldX - ball.worldX, hole.worldZ - ball.worldZ)
-    }
-
-    /// 볼 뒤 사선 Phase — 언제든 다음 단계로(품질은 참고).
-    var canFinishBehindBallSweep: Bool {
-        flowState == .behindBallSweep
     }
 
     /// 볼 지정 전에 LiDAR 메시 또는 sceneDepth가 있는지. 흰 커버리지와 무관.
@@ -253,6 +292,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var heavyWorkAllowedAfter: CFTimeInterval = 0
     /// 볼 지정 전까지 메시 정점을 촘촘히 수집.
     private(set) var meshCaptureBurstActive = false
+    /// reset/새 스캔 시 진행 중인 높이맵 Task 완료를 무시한다.
+    private var processingGeneration = 0
+    private var isResetting = false
 
     /// idle 화면에서 스캔 시작 버튼을 켤 수 있는지.
     /// 상용 LiDAR 앱과 같이 session.run 직후 바로 시작. tracking.normal 대기는 20초급 멈춤을 만든다.
@@ -269,13 +311,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
     /// idle 워밍업 중 관측된 ARMeshAnchor 수 (시작 버튼 UX용).
     @Published private(set) var warmupMeshAnchorCount = 0
 
-    /// 메시 오버레이를 켜도 되는지 (스캔 진행 중만 — idle 워밍업은 화면에 표시하지 않음).
+    /// 메시 오버레이를 켜도 되는지 (스캔 진행 중만 — 조준·경로 표시 중에는 겹침 방지).
     var meshVisualizationAllowed: Bool {
         switch flowState {
-        case .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .preparing, .processing:
+        case .placingBall, .walkingToHole, .placingHole, .processing:
             return true
-        case .complete:
-            return needsBallReanchor
         default:
             return false
         }
@@ -287,31 +327,46 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     /// 스캔용 ARKit 구성.
-    /// Apple: 쓰지 않는 옵션은 켜지 말 것(분류·평면·환경텍스처·고해상도 영상은 초기 메시를 늦춘다).
-    /// 상용 스캐너는 `.mesh` + raw `sceneDepth` + 가장 가벼운 videoFormat만 켠다.
-    private static func makeScanConfiguration() -> ARWorldTrackingConfiguration {
+    /// Apple: 쓰지 않는 옵션은 켜지 말 것(분류·평면·환경텍스처는 초기 메시를 늦춘다).
+    /// videoFormat은 기본 FOV에 가까운 해상도를 고정한다. 최소 해상도는 중앙 크롭처럼
+    /// 잠깐 줌인됐다 돌아오는 체감이 난다.
+    /// LiDAR 파이프라인이 올라가고 트래킹 초기화가 끝났을 때만 스캔 시작.
+    var scanPipelineReady: Bool {
+#if targetEnvironment(simulator)
+        return true
+#else
+        return scanConfigActive && !trackingInitializing
+#endif
+    }
+
+    private static func makeScanConfiguration(reusing session: ARSession? = nil) -> ARWorldTrackingConfiguration {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
         configuration.environmentTexturing = .none
         configuration.sceneReconstruction = .mesh
         configuration.frameSemantics.insert(.sceneDepth)
-        if let format = lightestScanVideoFormat() {
+        if let existing = session?.configuration as? ARWorldTrackingConfiguration {
+            // 이미 돌고 있는 포맷을 유지 — 스캔 시작 시 가로↔세로 플래시 방지.
+            configuration.videoFormat = existing.videoFormat
+        } else if let format = stableScanVideoFormat() {
             configuration.videoFormat = format
         }
         return configuration
     }
 
-    /// 픽셀 수·프레임이 가장 가벼운 지원 포맷. LiDAR 메시는 영상 해상도와 무관하다.
-    private static func lightestScanVideoFormat() -> ARConfiguration.VideoFormat? {
+    /// 기본 AR 미리보기와 같은 시야각에 가까운 포맷(대략 1920×1440 @ 30).
+    private static func stableScanVideoFormat() -> ARConfiguration.VideoFormat? {
         let formats = ARWorldTrackingConfiguration.supportedVideoFormats
-        let ranked = formats.filter { $0.framesPerSecond >= 30 }
+        let ranked = formats.filter { $0.framesPerSecond >= 30 && $0.framesPerSecond <= 60 }
         let pool = ranked.isEmpty ? formats : ranked
+        let targetPixels: CGFloat = 1920 * 1440
         return pool.min { a, b in
-            let ap = a.imageResolution.width * a.imageResolution.height
-            let bp = b.imageResolution.width * b.imageResolution.height
+            let ap = abs(a.imageResolution.width * a.imageResolution.height - targetPixels)
+            let bp = abs(b.imageResolution.width * b.imageResolution.height - targetPixels)
             if ap != bp { return ap < bp }
-            return a.framesPerSecond < b.framesPerSecond
+            // 동점이면 30fps 우선(열·부하).
+            return abs(a.framesPerSecond - 30) < abs(b.framesPerSecond - 30)
         }
     }
 
@@ -334,6 +389,15 @@ final class ARScanSessionController: NSObject, ObservableObject {
 #if !targetEnvironment(simulator)
         guard flowState == .idle else { return }
         guard !scanConfigActive, !prewarmTaskPending else { return }
+        ensureIdleLiDARPipelineRunning()
+#endif
+    }
+
+    /// idle 워밍업·실패 후 reset — session.run으로 LiDAR 파이프라인을 다시 올린다.
+    private func ensureIdleLiDARPipelineRunning() {
+#if !targetEnvironment(simulator)
+        guard flowState == .idle else { return }
+        guard !prewarmTaskPending else { return }
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
               ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
         else { return }
@@ -341,7 +405,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         prewarmTaskPending = true
         isPrewarmingPipeline = true
         meshCaptureEnabled = true
-        session.run(Self.makeScanConfiguration(), options: [])
+        session.run(Self.makeScanConfiguration(reusing: session), options: [])
         scanConfigActive = true
         warmupMeshAnchorCount = 0
         isPrewarmingPipeline = false
@@ -371,6 +435,12 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     func startScan() {
         guard flowState == .idle || isTerminalState else { return }
+#if !targetEnvironment(simulator)
+        if !scanConfigActive {
+            prewarmLiDARPipelineIfNeeded()
+        }
+        guard scanPipelineReady else { return }
+#endif
 
         applyPathModeForFieldMode()
 
@@ -396,7 +466,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         pendingMeshVertexCount = 0
         meshCaptureBurstActive = true
         // depth 복사는 백그라운드. 상용 앱처럼 스캔 시작 직후부터 커버리지를 쌓는다.
-        heavyWorkAllowedAfter = CACurrentMediaTime() + 0.05
+        heavyWorkAllowedAfter = CACurrentMediaTime()
 
         if reusingPrewarmedPipeline {
             // 워밍업된 ARMeshAnchor·세션 유지 — 버퍼/카운트/session.run 재시작 없음.
@@ -439,7 +509,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
             }
         } else {
             isPrewarmingPipeline = true
-            session.run(Self.makeScanConfiguration(), options: [])
+            session.run(Self.makeScanConfiguration(reusing: session), options: [])
             scanConfigActive = true
             meshCaptureEnabled = true
             isPrewarmingPipeline = false
@@ -453,11 +523,13 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private func beginPlacingBallPhase() {
         flowState = .placingBall
-        placementMessage = "바닥을 비추면 메시가 바로 보입니다. 볼 중심에 십자선을 맞추세요."
+        resetVisualBallLock()
+        visualBallLockStatus = .searching
+        placementMessage = "볼이 있으면 십자선을 맞추고 확인하세요. 없으면 십자선 지면을 직접 지정하세요."
         trackingDescription = "스캔 중"
     }
 
-    /// UI에서 "볼 기준점 지정" 버튼을 눌렀을 때.
+    /// UI에서 볼 지정 확인. 감지는 후보만 올리고, 여기서 골퍼가 확정한다.
     func requestBallPlacement() {
         guard flowState == .placingBall else { return }
 #if targetEnvironment(simulator)
@@ -467,28 +539,35 @@ final class ARScanSessionController: NSObject, ObservableObject {
             placementMessage = "트래킹이 정상일 때 다시 지정하세요."
             return
         }
-        placementMessage = "화면 중앙을 볼 중심에 맞추고 있습니다…"
+        if let candidate = pendingDetectedBall {
+            if trackingLimited {
+                placementMessage = "트래킹이 정상일 때 다시 지정하세요."
+                return
+            }
+            confirmBallAnchor(candidate)
+            visualBallLockStatus = .locked(offsetMeters: 0)
+            markVisualLock(at: candidate)
+            pendingDetectedBall = nil
+            placementMessage = "감지 후보로 볼 지정"
+            coverageHaptic.impactOccurred()
+            return
+        }
+        if let preview = ballDetectionPreview {
+            confirmBallAnchor(preview)
+            visualBallLockStatus = .locked(offsetMeters: 0)
+            markVisualLock(at: preview)
+            pendingDetectedBall = nil
+            placementMessage = "감지 미리보기로 볼 지정"
+            coverageHaptic.impactOccurred()
+            return
+        }
+        placementMessage = "십자선 지면을 볼 위치로 지정합니다…"
         guard let pose = immediateGroundPose() else {
             placementMessage = "지면을 찾지 못했습니다. 십자선을 잔디/바닥에 맞추고 다시 시도하세요."
             return
         }
         confirmBallAnchor(pose)
 #endif
-    }
-
-    /// 호환용 — UI에서 볼 뒤 STEP을 제거했으므로 호출되면 걷기로만 보냄.
-    func finishBehindBallSweep() {
-        guard flowState == .behindBallSweep else { return }
-        advanceToWalkingAfterBehindBallSweep()
-    }
-
-    private func advanceToWalkingAfterBehindBallSweep() {
-        coverageTracker.setPhase(.walkCorridor)
-        coverageTracker.resetWalkCorridorAccumulator()
-        walkCorridorStatsSnapshot = .empty
-        flowState = .walkingToHole
-        behindBallSweepGuidance = nil
-        placementMessage = nil
     }
 
     /// 홀까지 스캔 후 홀 지정 단계로 진입. 짧은 퍼트도 언제든 가능.
@@ -524,6 +603,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     /// 조준 화면에서 홀 재앵커링 (중앙 즉시 raycast).
     func requestHoleReanchor() {
         guard flowState == .complete else { return }
+        guard placementRequest == nil else { return }
 #if targetEnvironment(simulator)
         applySimulatorHoleReanchor()
 #else
@@ -533,19 +613,35 @@ final class ARScanSessionController: NSObject, ObservableObject {
         }
         placementRequest = .reanchorHole
         placementMessage = "화면 중앙을 홀컵에 맞추고 재앵커링…"
-        guard let pose = immediateGroundPose() else {
-            placementMessage = "홀 재앵커: 지면을 찾지 못했습니다."
-            placementRequest = nil
-            return
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer { self.placementRequest = nil }
+            guard let pose = self.immediateGroundPose() else {
+                self.placementMessage = "홀 재앵커: 지면을 찾지 못했습니다."
+                return
+            }
+            self.confirmHoleReanchor(pose)
         }
-        confirmHoleReanchor(pose)
-        placementRequest = nil
 #endif
     }
 
     /// 볼홀볼지정계산: 돌아와 실볼에 맞춰 조준 프레임만 회전. 높이맵 재계산 없음.
     func requestBallReanchor() {
         guard flowState == .complete, completedScan != nil else { return }
+        if placementRequest == .reanchorBall {
+            if trackingLimited {
+                placementMessage = "트래킹이 정상일 때 다시 지정하세요."
+                return
+            }
+            guard let pose = resolvedManualBallPlacementPose() else {
+                placementMessage = "지면을 찾지 못했습니다. 십자선을 잔디에 맞추고 다시 눌러주세요."
+                return
+            }
+            placementRequest = nil
+            confirmBallReanchor(pose)
+            return
+        }
+        guard placementRequest == nil else { return }
 #if targetEnvironment(simulator)
         applySimulatorBallReanchor()
 #else
@@ -554,14 +650,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
             return
         }
         placementRequest = .reanchorBall
-        placementMessage = "실볼 중심에 십자선을 맞추는 중…"
-        guard let pose = immediateGroundPose() else {
-            placementMessage = "볼 재지정: 지면을 찾지 못했습니다. 볼 앞 잔디에 십자선을 맞추세요."
-            placementRequest = nil
-            return
-        }
-        confirmBallReanchor(pose)
-        placementRequest = nil
+        placementMessage = "십자선을 볼 중심에 맞춘 뒤 다시 눌러 확정하세요."
 #endif
     }
 
@@ -602,6 +691,19 @@ final class ARScanSessionController: NSObject, ObservableObject {
     /// 버튼 탭 순간 카메라 전방 raycast + sceneDepth 폴백. SwiftUI 지연 없이 좌표를 고정한다.
     private func immediateGroundPose() -> ScanPose? {
         guard let frame = session.currentFrame else { return nil }
+        return centerGroundPose(frame: frame)
+    }
+
+    /// 링(`ballGroundRingPoints`)과 동일한 월드 좌표. preview만 있을 때 raycast로 떨어지면 오차가 난다.
+    private func resolvedManualBallPlacementPose() -> ScanPose? {
+        if let pending = pendingDetectedBall { return pending }
+        if (flowState == .placingBall || isVisualBallHunting), let preview = ballDetectionPreview {
+            return preview
+        }
+        return immediateGroundPose()
+    }
+
+    func centerGroundPose(frame: ARFrame) -> ScanPose? {
         let cam = frame.camera.transform
         let origin = SIMD3<Float>(cam.columns.3.x, cam.columns.3.y, cam.columns.3.z)
         var direction = SIMD3<Float>(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
@@ -649,19 +751,6 @@ final class ARScanSessionController: NSObject, ObservableObject {
         return nil
     }
 
-    func finishScan() {
-        guard flowState == .returningToBall,
-              let ballAnchor,
-              let holeAnchor,
-              let cameraStartPose else { return }
-        processCompletedScan(
-            ballAnchor: ballAnchor,
-            holeAnchor: holeAnchor,
-            cameraStartPose: cameraStartPose,
-            requireReturnToBall: true
-        )
-    }
-
     /// 홀 지정까지 끝난 뒤 높이맵 처리. 기본은 홀에서 바로 계산(드리프트 0).
     private func processCompletedScan(
         ballAnchor: ScanPose,
@@ -669,6 +758,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         cameraStartPose: ScanPose,
         requireReturnToBall: Bool
     ) {
+        processingGeneration += 1
+        let generation = processingGeneration
         flowState = .processing
 
         // UI에 쓰로틀된 정점 수를 최종값으로 맞춤
@@ -680,7 +771,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let fieldMode = ScanFieldSettings.fieldMode
         let corridorMargins = PuttScanCorridor.margins(for: fieldMode)
         let lidarProfile = self.lidarProfile
-        let behindBallStats = self.behindBallSweepStatsSnapshot
+        let behindBallStats = BehindBallSweepGate.Stats.empty
         let walkStats = self.walkCorridorStatsSnapshot
 
 #if targetEnvironment(simulator)
@@ -762,31 +853,32 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     walkCorridorStats: walkStats
                 )
                 await MainActor.run {
+                    guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
-                    if !pathMode.requiresBallReanchor {
-                        self.resetCoverageState()
-                        self.latestMeshes.removeAll()
-                    }
+                    self.resetCoverageState()
+                    self.latestMeshes.removeAll()
                     self.completedScan = scan
                     self.needsBallReanchor = pathMode.requiresBallReanchor
+                    self.resetVisualBallLock()
+#if targetEnvironment(simulator)
+                    self.needsBallReanchor = false
+                    self.visualBallLockStatus = .aligned
+#else
+                    self.visualBallLockStatus = .searching
+#endif
                     self.guidancePhaseActive = true
                     self.guidanceTrackingEvents.removeAll()
                     self.guidanceTrackingOK = !self.trackingLimited
-                    self.placementMessage = pathMode.requiresBallReanchor
-                        ? String(
-                            format: "계산 완료 · 볼로 돌아가 실볼을 재지정하세요 · %.2fm · %@",
-                            holeDistance,
-                            pathMode.label
-                        )
-                        : String(
-                            format: "경로 계산 완료 · %.2fm · %@",
-                            holeDistance,
-                            pathMode.label
-                        )
+                    self.placementMessage = String(
+                        format: "경로 계산 완료 · %.2fm · %@ · 흰 볼을 비추면 자동 정렬",
+                        holeDistance,
+                        pathMode.label
+                    )
                     self.flowState = .complete
                 }
             } catch {
                 await MainActor.run {
+                    guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
                     self.resetCoverageState()
                     self.fail(error.localizedDescription)
@@ -830,6 +922,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let holeOK = holePlacementTrackingOK
         let pipelineReturn = returnCamera
         let coverage = coverageTracker
+        let coverageSnapshot = self.coverageSnapshot
 
         Task.detached(priority: .userInitiated) {
             // flatMap·융합은 메인 밖에서 — 워치독/히칭 방지
@@ -844,12 +937,19 @@ final class ARScanSessionController: NSObject, ObservableObject {
                 hole: holeAnchor,
                 margins: corridorMargins
             )
-            let usesFusedDepth = fusedVertices.count >= 100
-            let vertices = usesFusedDepth ? fusedVertices : rawMeshVertices
-            let surfaceSource = usesFusedDepth ? "temporal_scene_depth" : "arkit_mesh_fallback"
+            let (vertices, surfaceSource) = Self.selectTerrainVertices(
+                fused: fusedVertices,
+                rawMesh: rawMeshVertices,
+                coverage: coverageSnapshot,
+                ball: ballAnchor,
+                hole: holeAnchor,
+                margins: corridorMargins
+            )
+            let usesFusedDepth = surfaceSource.hasPrefix("temporal_scene_depth")
             let surfaceVertexCount = vertices.count
 
             await MainActor.run {
+                guard generation == self.processingGeneration else { return }
                 self.placementMessage = usesFusedDepth
                     ? "다중 프레임 깊이 융합 \(fusedVertices.count.formatted())점 처리 중…"
                     : "깊이 융합 관측 부족 · AR 메시 \(rawMeshVertices.count.formatted())점 처리 중…"
@@ -897,31 +997,32 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     walkCorridorStats: walkStats
                 )
                 await MainActor.run {
+                    guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
-                    if !pathMode.requiresBallReanchor {
-                        self.resetCoverageState()
-                        self.latestMeshes.removeAll()
-                    }
+                    self.resetCoverageState()
+                    self.latestMeshes.removeAll()
                     self.completedScan = scan
                     self.needsBallReanchor = pathMode.requiresBallReanchor
+                    self.resetVisualBallLock()
+#if targetEnvironment(simulator)
+                    self.needsBallReanchor = false
+                    self.visualBallLockStatus = .aligned
+#else
+                    self.visualBallLockStatus = .searching
+#endif
                     self.guidancePhaseActive = true
                     self.guidanceTrackingEvents.removeAll()
                     self.guidanceTrackingOK = !self.trackingLimited
-                    self.placementMessage = pathMode.requiresBallReanchor
-                        ? String(
-                            format: "계산 완료 · 볼로 돌아가 실볼을 재지정하세요 · %.2fm · %@",
-                            holeDistance,
-                            pathMode.label
-                        )
-                        : String(
-                            format: "경로 계산 완료 · %.2fm · %@",
-                            holeDistance,
-                            pathMode.label
-                        )
+                    self.placementMessage = String(
+                        format: "경로 계산 완료 · %.2fm · %@ · 흰 볼을 비추면 자동 정렬",
+                        holeDistance,
+                        pathMode.label
+                    )
                     self.flowState = .complete
                 }
             } catch {
                 await MainActor.run {
+                    guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
                     self.resetCoverageState()
                     self.fail(error.localizedDescription)
@@ -974,6 +1075,70 @@ final class ARScanSessionController: NSObject, ObservableObject {
         return kept
     }
 
+    /// 바둑판(커버리지) 표시와 지형 파이프라인 요건이 다르다. 융합·메시가 비면 관측 셀 중심으로 폴백.
+    private static func selectTerrainVertices(
+        fused: [ScanVertex],
+        rawMesh: [ScanVertex],
+        coverage: ScanCoverageSnapshot,
+        ball: ScanPose,
+        hole: ScanPose,
+        margins: ScanCorridorMargins
+    ) -> (vertices: [ScanVertex], source: String) {
+        let coverageVerts = coverageSnapshotVertices(
+            coverage,
+            ball: ball,
+            hole: hole,
+            margins: margins
+        )
+        if fused.count >= 100 {
+            return (fused, "temporal_scene_depth")
+        }
+        if !fused.isEmpty, fused.count >= rawMesh.count {
+            return (fused, "temporal_scene_depth")
+        }
+        if !rawMesh.isEmpty {
+            return (rawMesh, "arkit_mesh_fallback")
+        }
+        if !fused.isEmpty {
+            return (fused, "temporal_scene_depth_partial")
+        }
+        if coverageVerts.count >= CoverageDisplayLock.minCellsToPlant {
+            return (coverageVerts, "coverage_cell_fallback")
+        }
+        return ([], "none")
+    }
+
+    private static func coverageSnapshotVertices(
+        _ snapshot: ScanCoverageSnapshot,
+        ball: ScanPose,
+        hole: ScanPose,
+        margins: ScanCorridorMargins
+    ) -> [ScanVertex] {
+        var output: [ScanVertex] = []
+        output.reserveCapacity(snapshot.cellHeights.count)
+        for (key, height) in snapshot.cellHeights {
+            let center = CoverageDisplayLock.cellCenterXZ(key)
+            guard isNearPuttCorridor(
+                x: Double(center.x),
+                z: Double(center.y),
+                ball: ball,
+                hole: hole,
+                lateralMargin: margins.lateralHalfWidth,
+                ballEndMargin: margins.ballEndMargin,
+                pastHoleMargin: margins.pastHoleMargin
+            ) else { continue }
+            output.append(
+                ScanVertex(
+                    worldX: Double(center.x),
+                    worldY: Double(height),
+                    worldZ: Double(center.y),
+                    timestamp: 0
+                )
+            )
+        }
+        return output
+    }
+
     private static func isNearPuttCorridor(
         x: Double,
         z: Double,
@@ -1002,6 +1167,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     func reset() {
+        guard !isResetting else { return }
+        isResetting = true
+        defer { isResetting = false }
+        processingGeneration += 1
         ballAnchor = nil
         holeAnchor = nil
         cameraStartPose = nil
@@ -1011,6 +1180,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         latestMeshes.removeAll()
         completedScan = nil
         needsBallReanchor = false
+        visualBallLockStatus = .idle
+        resetVisualBallLock()
         pastHoleMeasuredMeters = 0
         sceneDepthReady = false
         meshVertexCount = 0
@@ -1022,13 +1193,13 @@ final class ARScanSessionController: NSObject, ObservableObject {
         resetCoverageState()
         flowState = .idle
         lidarTwistGuidance = nil
-        behindBallSweepGuidance = nil
-        behindBallSweepStatsSnapshot = .empty
         walkCorridorStatsSnapshot = .empty
         lastWalkTwistInBandSample = 0
+        trackingLimited = false
+        trackingDescription = "대기 중"
         // LiDAR 끄고, idle에서 다시 워밍업
         stopLiDARReconstructionKeepingWorld()
-        prewarmCameraPreview()
+        ensureIdleLiDARPipelineRunning()
     }
 
     private func resetCoverageState() {
@@ -1100,15 +1271,16 @@ final class ARScanSessionController: NSObject, ObservableObject {
         case .failed:
             break
         default:
-            // 구성 교체 없이 같은 스캔 세션을 재개한다. 홀에서 session.run을 바꾸면 월드가 밀린다.
-            session.run(Self.makeScanConfiguration(), options: [])
+            // 이미 프레임이 오면 session.run 재호출을 피한다(월드 드리프트 방지).
+            guard session.currentFrame == nil else { return }
+            session.run(Self.makeScanConfiguration(reusing: session), options: [])
             scanConfigActive = true
         }
     }
 
     private var isCoverageActiveState: Bool {
         switch flowState {
-        case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall, .processing:
+        case .placingBall, .walkingToHole, .placingHole, .processing:
             return true
         case .complete:
             return needsBallReanchor
@@ -1139,6 +1311,9 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private func confirmBallAnchor(_ pose: ScanPose) {
         guard flowState == .placingBall else { return }
         ballAnchor = pose
+        ballDetectionPreview = nil
+        ballGroundRingPoints = []
+        holeGroundRingPoints = []
         if let transform = session.currentFrame?.camera.transform {
             coverageTracker.captureTiltReference(from: transform)
         }
@@ -1152,9 +1327,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         coverageTracker.setPhase(.walkCorridor)
         coverageTracker.resetWalkCorridorAccumulator()
         coverageTracker.resetBehindBallAccumulator()
-        behindBallSweepStatsSnapshot = .empty
         walkCorridorStatsSnapshot = .empty
-        behindBallSweepGuidance = nil
         // 별도 「볼 뒤 대기」 STEP 없음 — 걷기부터 항상 사선 스캔.
         flowState = .walkingToHole
         placementMessage = nil
@@ -1274,6 +1447,12 @@ final class ARScanSessionController: NSObject, ObservableObject {
             )
             ballAnchor = pose
             needsBallReanchor = false
+            guidanceLiveBallPose = nil
+            visualBallLockStatus = .locked(offsetMeters: hypot(
+                pose.worldX - scan.ballAnchor.worldX,
+                pose.worldZ - scan.ballAnchor.worldZ
+            ))
+            markVisualLock(at: pose)
             resetCoverageState()
             latestMeshes.removeAll()
             guidanceTrackingEvents.removeAll()
@@ -1282,6 +1461,332 @@ final class ARScanSessionController: NSObject, ObservableObject {
             trackingDescription = "볼 재지정 완료"
         } catch {
             placementMessage = "볼 재지정 실패: \(error.localizedDescription)"
+        }
+    }
+
+    private func resetVisualBallLock() {
+        visualLockConsensus.reset()
+        visualLockProcessing = false
+        lastVisualLockTime = 0
+        pendingDetectedBall = nil
+        ballDetectionPreview = nil
+        guidanceLiveBallPose = nil
+        ballGroundRingPoints = []
+        holeGroundRingPoints = []
+    }
+
+    /// 볼 배치 단계에서 링에 쓸 월드 좌표(확정 > 후보 > 미리보기).
+    var ballRingWorldPose: ScanPose? {
+        if flowState == .placingBall {
+            return pendingDetectedBall ?? ballDetectionPreview
+        }
+        if flowState == .complete, guidancePhaseActive, !visualBallLockStatus.isSettled {
+            return pendingDetectedBall
+                ?? ballDetectionPreview
+                ?? completedScan?.ballAnchor
+        }
+        return nil
+    }
+
+    private var isVisualBallHunting: Bool {
+        if flowState == .placingBall { return true }
+        if flowState == .complete, guidancePhaseActive, !visualBallLockStatus.isSettled { return true }
+        return false
+    }
+
+    func refreshBallGroundRing(frame: ARFrame?, viewport: CGSize) {
+        guard let pose = ballRingWorldPose, let frame else {
+            if !ballGroundRingPoints.isEmpty {
+                ballGroundRingPoints = []
+            }
+            return
+        }
+        let projected = BallGroundRingProjector.screenPoints(
+            worldX: pose.worldX,
+            worldY: pose.worldY,
+            worldZ: pose.worldZ,
+            camera: frame.camera,
+            viewport: viewport,
+            orientation: Self.interfaceOrientation()
+        ) ?? []
+        if projected != ballGroundRingPoints {
+            ballGroundRingPoints = projected
+        }
+    }
+
+    private var showsHoleCupPlacementRing: Bool {
+        flowState == .placingHole || placementRequest == .reanchorHole
+    }
+
+    func refreshHoleGroundRing(frame: ARFrame?, viewport: CGSize) {
+        guard showsHoleCupPlacementRing, let frame else {
+            if !holeGroundRingPoints.isEmpty {
+                holeGroundRingPoints = []
+            }
+            return
+        }
+        guard let pose = centerGroundPose(frame: frame) else {
+            if !holeGroundRingPoints.isEmpty {
+                holeGroundRingPoints = []
+            }
+            return
+        }
+        let projected = GroundCircleProjector.screenPoints(
+            worldX: pose.worldX,
+            worldY: pose.worldY,
+            worldZ: pose.worldZ,
+            radiusMeters: Double(ARReferenceMarkers.holeRadius),
+            camera: frame.camera,
+            viewport: viewport,
+            orientation: Self.interfaceOrientation()
+        ) ?? []
+        if projected != holeGroundRingPoints {
+            holeGroundRingPoints = projected
+        }
+    }
+
+    private func updateBallDetectionPreview(_ contact: GolfBallWorldContact, timestamp: TimeInterval) {
+        guard contact.confidence >= 0.50 else { return }
+        let pose = ScanPose(
+            worldX: contact.worldX,
+            worldY: contact.worldY,
+            worldZ: contact.worldZ,
+            timestamp: timestamp
+        )
+        guard let previous = ballDetectionPreview else {
+            ballDetectionPreview = pose
+            return
+        }
+        let alpha = ballPreviewSmoothing
+        ballDetectionPreview = ScanPose(
+            worldX: previous.worldX * (1 - alpha) + pose.worldX * alpha,
+            worldY: previous.worldY * (1 - alpha) + pose.worldY * alpha,
+            worldZ: previous.worldZ * (1 - alpha) + pose.worldZ * alpha,
+            timestamp: timestamp
+        )
+    }
+
+    private func markVisualLock(at pose: ScanPose) {
+        visualLockConsensus.locked = true
+        visualLockConsensus.lastAppliedX = pose.worldX
+        visualLockConsensus.lastAppliedZ = pose.worldZ
+        visualLockConsensus.recent = [
+            GolfBallLockConsensus.Sample(x: pose.worldX, y: pose.worldY, z: pose.worldZ)
+        ]
+        freezeGuidanceWorldAnchor()
+    }
+
+    /// 조준 오버레이는 스캔 볼 월드 좌표에 고정. 실볼 미세 보정으로 앵커를 옮기면 하안에서 AR이 흐른다.
+    private func freezeGuidanceWorldAnchor() {
+        guidanceLiveBallPose = nil
+    }
+
+    private func processVisualBallLock(frame: ARFrame) {
+        let placing = flowState == .placingBall
+        let guiding = flowState == .complete && guidancePhaseActive
+        let hunting = isVisualBallHunting
+        guard hunting else { return }
+        guard placing || guiding, placementRequest == nil else { return }
+#if targetEnvironment(simulator)
+        return
+#else
+        let now = frame.timestamp
+        guard now - lastVisualLockTime >= GolfBallVisualLockSession.placingProcessInterval else { return }
+        guard !visualLockProcessing else { return }
+
+        // 스캔 시작: 십자선. 조준·볼 복귀: 스캔 때 확정한 월드 볼 투영 주변.
+        let currentBall: ScanPose? = guiding
+            ? (completedScan?.ballAnchor)
+            : nil
+        let viewport = UIScreen.main.bounds.size
+        let orientation = Self.interfaceOrientation()
+        guard let snapshot = GolfBallVisualLockSession.snapshot(
+            frame: frame,
+            currentBall: currentBall,
+            viewport: viewport,
+            orientation: orientation
+        ) else {
+            lastVisualLockTime = now
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.visualLockConsensus.noteMiss()
+                if !self.visualBallLockStatus.isSettled, self.visualBallLockStatus != .waitingForView {
+                    self.visualBallLockStatus = .waitingForView
+                    if self.flowState == .placingBall {
+                        self.placementMessage = "십자선을 볼 중심에 맞추세요."
+                    }
+                }
+            }
+            return
+        }
+        lastVisualLockTime = now
+        visualLockProcessing = true
+        let scanID = completedScan?.id
+        visualLockQueue.async { [weak self] in
+            let contact = GolfBallVisualLockSession.analyze(snapshot)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.visualLockProcessing = false
+                let stillPlacing = self.flowState == .placingBall
+                let stillGuiding = self.flowState == .complete && self.guidancePhaseActive
+                let stillHunting = self.isVisualBallHunting
+                guard stillPlacing || stillGuiding, self.placementRequest == nil else { return }
+                if stillGuiding, self.completedScan?.id != scanID { return }
+                guard let contact else {
+                    self.visualLockConsensus.noteMiss()
+                    if stillHunting {
+                        if self.visualLockConsensus.recent.isEmpty {
+                            self.ballDetectionPreview = nil
+                        }
+                        if self.visualLockConsensus.recent.count < 2 {
+                            self.pendingDetectedBall = nil
+                            if self.visualBallLockStatus == .candidate {
+                                self.visualBallLockStatus = .searching
+                            }
+                        }
+                        if !self.visualBallLockStatus.isSettled,
+                           self.visualBallLockStatus != .searching,
+                           self.visualBallLockStatus != .candidate {
+                            self.visualBallLockStatus = .searching
+                        }
+                    }
+                    return
+                }
+                if stillHunting {
+                    self.updateBallDetectionPreview(contact, timestamp: now)
+                    if !self.visualBallLockStatus.isSettled,
+                       self.visualBallLockStatus == .waitingForView {
+                        self.visualBallLockStatus = .searching
+                    }
+                }
+                let action = self.visualLockConsensus.ingest(
+                    contact: contact,
+                    currentBallX: stillGuiding ? self.completedScan?.ballAnchor.worldX : nil,
+                    currentBallZ: stillGuiding ? self.completedScan?.ballAnchor.worldZ : nil,
+                    physicsBallX: stillGuiding ? self.completedScan?.physicsStartPose.worldX : nil,
+                    physicsBallZ: stillGuiding ? self.completedScan?.physicsStartPose.worldZ : nil,
+                    minAgree: 2
+                )
+                switch action {
+                case .none:
+                    if stillHunting,
+                       !self.visualBallLockStatus.isSettled,
+                       self.visualBallLockStatus != .searching,
+                       self.visualBallLockStatus != .candidate {
+                        self.visualBallLockStatus = .searching
+                    }
+                case .confirmAligned:
+                    self.needsBallReanchor = false
+                    if stillHunting, !self.visualBallLockStatus.isSettled {
+                        self.visualBallLockStatus = .aligned
+                    }
+                    self.freezeGuidanceWorldAnchor()
+                case .apply(let fix):
+                    if stillPlacing {
+                        self.offerDetectedBallCandidate(fix, timestamp: now)
+                    } else if stillHunting, fix.confidence >= 0.62, let live = self.completedScan {
+                        self.applyVisualBallLock(fix, scan: live, timestamp: now)
+                    }
+                }
+            }
+        }
+#endif
+    }
+
+    /// 감지는 후보만 제시. 지정은 `requestBallPlacement`에서 골퍼 확인 후.
+    private func offerDetectedBallCandidate(
+        _ contact: GolfBallWorldContact,
+        timestamp: TimeInterval
+    ) {
+        guard flowState == .placingBall else { return }
+        guard contact.confidence >= 0.62 else { return }
+        let pose = ScanPose(
+            worldX: contact.worldX,
+            worldY: contact.worldY,
+            worldZ: contact.worldZ,
+            timestamp: timestamp
+        )
+        if let previous = pendingDetectedBall {
+            let jump = hypot(previous.worldX - pose.worldX, previous.worldZ - pose.worldZ)
+            guard jump < 0.12 else {
+                // 갑자기 다른 곳으로 튀면 오탐으로 보고 후보를 갱신하지 않는다.
+                return
+            }
+        }
+        pendingDetectedBall = pose
+        ballDetectionPreview = pose
+        visualBallLockStatus = .candidate
+        placementMessage = "볼 후보를 찾았습니다. 맞으면 확인, 틀리면 십자선으로 직접 지정하세요."
+        coverageHaptic.impactOccurred()
+    }
+
+    private func applyVisualBallLock(
+        _ contact: GolfBallWorldContact,
+        scan: CompletedScan,
+        timestamp: TimeInterval
+    ) {
+        let pose = ScanPose(
+            worldX: contact.worldX,
+            worldY: contact.worldY,
+            worldZ: contact.worldZ,
+            timestamp: timestamp
+        )
+        let holeDistance = hypot(
+            scan.holeAnchor.worldX - pose.worldX,
+            scan.holeAnchor.worldZ - pose.worldZ
+        )
+        guard holeDistance >= Self.minimumHoleDistance else { return }
+        do {
+            let transform = try ScanCoordinateTransform(ball: pose, hole: scan.holeAnchor)
+            let offset = hypot(
+                pose.worldX - scan.ballAnchor.worldX,
+                pose.worldZ - scan.ballAnchor.worldZ
+            )
+            let physicsOffset = hypot(
+                pose.worldX - scan.physicsStartPose.worldX,
+                pose.worldZ - scan.physicsStartPose.worldZ
+            )
+            completedScan = CompletedScan(
+                id: scan.id,
+                result: scan.result,
+                trackingEvents: scan.trackingEvents,
+                limitedTrackingRatio: scan.limitedTrackingRatio,
+                startedAt: scan.startedAt,
+                ballAnchor: pose,
+                holeAnchor: scan.holeAnchor,
+                cameraStartPose: scan.cameraStartPose,
+                cameraReturnPose: scan.cameraReturnPose,
+                holeDistance: holeDistance,
+                scanTransform: transform,
+                terrainTransform: scan.terrainTransform,
+                terrainHoleAnchor: scan.terrainHoleAnchor,
+                referenceMethod: Self.referenceMethod,
+                ballPlacementTrackingOK: !trackingLimited,
+                holePlacementTrackingOK: scan.holePlacementTrackingOK,
+                driftCorrected: scan.driftCorrected,
+                pathMode: scan.pathMode,
+                fieldMode: scan.fieldMode,
+                surfaceSource: scan.surfaceSource,
+                surfaceVertexCount: scan.surfaceVertexCount,
+                lidarProfile: scan.lidarProfile,
+                behindBallSweepStats: scan.behindBallSweepStats,
+                walkCorridorStats: scan.walkCorridorStats
+            )
+            ballAnchor = pose
+            needsBallReanchor = false
+            visualBallLockStatus = .locked(offsetMeters: offset)
+            freezeGuidanceWorldAnchor()
+            if physicsOffset >= 0.20 {
+                placementMessage = String(
+                    format: "실볼 자동 정렬 · AR %.0fcm · 볼이 많이 옮겨졌으면 재스캔",
+                    offset * 100
+                )
+            } else {
+                placementMessage = String(format: "실볼 자동 정렬 · %.0fcm", offset * 100)
+            }
+            coverageHaptic.impactOccurred()
+        } catch {
+            placementMessage = "실볼 자동 정렬 실패"
         }
     }
 
@@ -1346,6 +1851,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         meshCaptureEnabled = true
         guidancePhaseActive = false
         placementRequest = nil
+        visualBallLockStatus = .idle
+        resetVisualBallLock()
         resetCoverageState()
         flowState = .failed(message)
     }
@@ -1408,63 +1915,10 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private var showsLiDARTwistGuidance: Bool {
         switch flowState {
-        case .walkingToHole, .placingHole, .returningToBall:
+        case .walkingToHole, .placingHole:
             return ballAnchor != nil
         default:
             return false
-        }
-    }
-
-    private var showsBehindBallSweepGuidance: Bool {
-        flowState == .behindBallSweep && ballAnchor != nil
-    }
-
-    private func updateBehindBallSweepGuidance(frame: ARFrame, stats: BehindBallSweepGate.Stats) {
-        guard showsBehindBallSweepGuidance else {
-            if behindBallSweepGuidance != nil { behindBallSweepGuidance = nil }
-            return
-        }
-        let now = CACurrentMediaTime()
-        guard now - lastBehindBallGuidanceUpdate >= 0.12 else { return }
-        lastBehindBallGuidanceUpdate = now
-
-        let pitchOK = Self.isPhonePitchInScanBand(cameraTransform: frame.camera.transform)
-        let cellProgress = min(
-            1,
-            Double(stats.acceptedCells) / Double(BehindBallSweepGate.requiredAcceptedCells)
-        )
-        let timeProgress = min(
-            1,
-            stats.durationSeconds / BehindBallSweepGate.minimumDurationSeconds
-        )
-        let frameProgress = min(
-            1,
-            Double(stats.goodFrames) / Double(BehindBallSweepGate.minimumGoodFrames)
-        )
-        let progress = min(1, max(cellProgress, 0.65 * max(timeProgress, frameProgress)))
-        let canContinue = stats.qualityMet
-        let statusText: String
-        if canContinue {
-            statusText = "참고 품질 OK"
-        } else if stats.acceptedCells < BehindBallSweepGate.requiredAcceptedCells {
-            statusText = "홀 방향 바닥을 더 훑으면 좋음"
-        } else if stats.durationSeconds < BehindBallSweepGate.minimumDurationSeconds {
-            statusText = "조금 더 유지하면 좋음"
-        } else {
-            statusText = "각도·거리 확인"
-        }
-        let next = BehindBallSweepGuidanceState(
-            progress: progress,
-            acceptedCells: stats.acceptedCells,
-            requiredCells: BehindBallSweepGate.requiredAcceptedCells,
-            durationSeconds: stats.durationSeconds,
-            pitchOK: pitchOK,
-            canContinue: canContinue,
-            statusText: statusText
-        )
-        behindBallSweepStatsSnapshot = stats
-        if behindBallSweepGuidance != next {
-            behindBallSweepGuidance = next
         }
     }
 
@@ -1631,15 +2085,6 @@ extension ARScanSessionController: ARSessionDelegate {
                 }
             }
         }
-        if state == .preparing {
-            DispatchQueue.main.async {
-                guard self.flowState == .preparing else { return }
-                // 첫 프레임은 카메라 pose가 아니라 트래킹 준비 완료 신호로만 쓴다.
-                self.flowState = .placingBall
-                self.placementMessage = "화면 중앙 십자선을 실제 볼 중심에 맞춘 뒤 지정하세요."
-            }
-        }
-
         updateLiDARTwistGuidance(frame: frame)
 
         let depthReady = frame.sceneDepth != nil
@@ -1657,27 +2102,23 @@ extension ARScanSessionController: ARSessionDelegate {
             let ball = self.ballAnchor
             let ballY = ball?.worldY
             let ballXZ = ball.map { SIMD2<Double>($0.worldX, $0.worldZ) }
-            let phase: ScanDepthPhase = state == .behindBallSweep ? .behindBallSweep : .walkCorridor
             coverageTracker.process(
                 frame: frame,
                 trackingLimited: limited,
-                phase: phase,
+                phase: .walkCorridor,
                 ball: ball,
                 ballY: ballY,
                 ballXZ: ballXZ
             ) { [weak self] snapshot in
                 guard let self, self.isCoverageActiveState else { return }
                 self.applyCoverageSnapshot(snapshot)
-                if self.flowState == .behindBallSweep {
-                    let stats = self.coverageTracker.latestBehindBallStats
-                    self.updateBehindBallSweepGuidance(frame: frame, stats: stats)
-                } else if self.flowState == .walkingToHole {
+                if self.flowState == .walkingToHole {
                     self.walkCorridorStatsSnapshot = self.coverageTracker.latestWalkCorridorStats
                 }
             }
-        } else if showsBehindBallSweepGuidance {
-            updateBehindBallSweepGuidance(frame: frame, stats: behindBallSweepStatsSnapshot)
         }
+
+        processVisualBallLock(frame: frame)
     }
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
@@ -1752,7 +2193,7 @@ extension ARScanSessionController: ARSessionDelegate {
                 self.warmupMeshAnchorCount = meshAnchorCount
             }
             switch self.flowState {
-            case .preparing, .placingBall, .behindBallSweep, .walkingToHole, .placingHole, .returningToBall:
+            case .placingBall, .walkingToHole, .placingHole:
                 self.trackingEvents.append(
                     TrackingEvent(timestamp: timestamp, state: description, isLimited: limited)
                 )
@@ -1839,7 +2280,7 @@ extension ARScanSessionController: ARSessionDelegate {
             guard !snapshots.isEmpty else { return }
 
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.isMeshCaptureState else { return }
                 for (identifier, vertices) in snapshots {
                     self.latestMeshes[identifier] = vertices
                 }

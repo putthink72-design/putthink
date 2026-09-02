@@ -7,14 +7,61 @@ import simd
 /// 볼·홀 지면 기준점을 시각적으로 보여주는 AR 마커.
 /// ARAnchor에 묶어 카메라가 움직여도 월드 좌표에 고정된다.
 enum ARReferenceMarkers {
+    /// 규격 홀컵 직경 108mm.
+    static let holeCupDiameter: Float = 0.108
     static let ballRadius: Float = 0.0214
-    static let holeRadius: Float = 0.054
+    /// 서서 볼 때 AR 볼 마커 알파. 하안에서는 `ballMarkerFloorAlpha`까지 `proximityBlend`로 보간.
+    static let ballMarkerStandingAlpha: CGFloat = 0.9
+    static let ballMarkerFloorAlpha: CGFloat = 0.5
+    static let holeRadius: Float = holeCupDiameter * 0.5
+
+    /// 지면에 눕힌 홀컵 링(Ø108mm). 가운데는 비워 경로가 보인다.
+    static func makeHoleCupGroundRing(
+        color: UIColor,
+        lineWidth: Float = 0.0035,
+        lift: Float = 0.003
+    ) -> ModelEntity {
+        let root = ModelEntity()
+        root.name = "holeCupRing"
+        let segments = 56
+        for index in 0..<segments {
+            let a0 = Float(index) / Float(segments) * 2 * .pi
+            let a1 = Float(index + 1) / Float(segments) * 2 * .pi
+            let p0 = SIMD3<Float>(cos(a0) * holeRadius, lift, sin(a0) * holeRadius)
+            let p1 = SIMD3<Float>(cos(a1) * holeRadius, lift, sin(a1) * holeRadius)
+            let delta = p1 - p0
+            let len = simd_length(delta)
+            guard len > 1e-5 else { continue }
+            let dir = delta / len
+            let seg = makeLineEntity(
+                length: len,
+                width: lineWidth,
+                color: color,
+                unlit: true,
+                thickness: 0.0012
+            )
+            seg.orientation = yawRotation(aligningLocalZToHorizontal: dir)
+            seg.position = (p0 + p1) * 0.5
+            root.addChild(seg)
+        }
+        return root
+    }
+
+    static func makeBallMarkerMaterial(alpha: CGFloat) -> UnlitMaterial {
+        var material = UnlitMaterial(color: UIColor(white: 1, alpha: alpha))
+        if alpha < 0.99 {
+            material.blending = .transparent(opacity: .init(floatLiteral: Float(alpha)))
+        } else {
+            material.blending = .opaque
+        }
+        return material
+    }
 
     static func makeBallEntity() -> ModelEntity {
         let mesh = MeshResource.generateSphere(radius: ballRadius)
         let entity = ModelEntity(
             mesh: mesh,
-            materials: [UnlitMaterial(color: .white)]
+            materials: [makeBallMarkerMaterial(alpha: ballMarkerStandingAlpha)]
         )
         entity.position = SIMD3(0, ballRadius, 0)
         entity.name = "ballMarker"
@@ -25,16 +72,11 @@ enum ARReferenceMarkers {
         let root = ModelEntity()
         root.name = "holeMarker"
 
-        let ringMesh = MeshResource.generateBox(
-            size: [holeRadius * 2, 0.008, holeRadius * 2],
-            cornerRadius: holeRadius * 0.9
+        let cupRing = makeHoleCupGroundRing(
+            color: UIColor(white: 0.95, alpha: 1),
+            lineWidth: 0.004
         )
-        let ring = ModelEntity(
-            mesh: ringMesh,
-            materials: [UnlitMaterial(color: UIColor(white: 0.05, alpha: 1))]
-        )
-        ring.position = SIMD3(0, 0.004, 0)
-        root.addChild(ring)
+        root.addChild(cupRing)
 
         let poleMesh = MeshResource.generateBox(size: [0.012, 0.45, 0.012])
         let pole = ModelEntity(
@@ -162,9 +204,18 @@ enum ARReferenceMarkers {
         descriptor.positions = MeshBuffers.Positions(positions)
         descriptor.primitives = .triangles(indices)
         guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
+        return ModelEntity(mesh: mesh, materials: [unlitMaterial(color: color)])
+    }
+
+    static func unlitMaterial(color: UIColor) -> UnlitMaterial {
         var material = UnlitMaterial(color: color)
-        material.blending = .opaque
-        return ModelEntity(mesh: mesh, materials: [material])
+        let alpha = Float(color.cgColor.alpha)
+        if alpha < 0.99 {
+            material.blending = .transparent(opacity: .init(floatLiteral: alpha))
+        } else {
+            material.blending = .opaque
+        }
+        return material
     }
 
     /// 채움 리본 + 더 굵은 어두운 외곽선 — 야외 시인성용.
@@ -269,5 +320,50 @@ enum ARReferenceMarkers {
         }
         existingEntity = nil
         existingARAnchor = nil
+    }
+
+    /// ARKit `ARAnchor` 없이 RealityKit 월드 좌표에 고정 — relocalization 시 흐름 방지.
+    static func placeRealityWorldFixed(
+        entityFactory: () -> ModelEntity,
+        at world: SIMD3<Float>,
+        in view: ARView,
+        existingEntity: inout AnchorEntity?
+    ) {
+        if existingEntity != nil { return }
+        removeRealityWorldFixed(in: view, existingEntity: &existingEntity)
+        let anchor = AnchorEntity(world: worldTransform(at: world))
+        anchor.addChild(entityFactory())
+        view.scene.addAnchor(anchor)
+        existingEntity = anchor
+    }
+
+    static func moveRealityWorldFixed(
+        to world: SIMD3<Float>,
+        existingEntity: AnchorEntity?
+    ) {
+        existingEntity?.transform = Transform(matrix: worldTransform(at: world))
+    }
+
+    static func replaceRealityWorldFixed(
+        entityFactory: () -> ModelEntity,
+        at world: SIMD3<Float>,
+        in view: ARView,
+        existingEntity: inout AnchorEntity?
+    ) {
+        removeRealityWorldFixed(in: view, existingEntity: &existingEntity)
+        let anchor = AnchorEntity(world: worldTransform(at: world))
+        anchor.addChild(entityFactory())
+        view.scene.addAnchor(anchor)
+        existingEntity = anchor
+    }
+
+    static func removeRealityWorldFixed(
+        in view: ARView,
+        existingEntity: inout AnchorEntity?
+    ) {
+        if let existingEntity {
+            view.scene.removeAnchor(existingEntity)
+        }
+        existingEntity = nil
     }
 }
