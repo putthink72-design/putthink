@@ -27,95 +27,18 @@ enum ScanPhonePitchGuidance {
     }
 }
 
-/// 걷기 스캔 안내 — 안정 파지·피치 밴드·참고 진행. 밴드 안이면 전체 초록 워시.
-struct LiDARTwistGuidanceCards: View {
+/// 걷기 스캔 안내 상태 (피치 배너·워시용).
+struct ScanPitchGuidancePill: View {
     let guidance: LiDARTwistGuidanceState
 
     var body: some View {
-        VStack(spacing: 8) {
-            postureCard
-            if let walkProgress = guidance.walkProgress {
-                walkProgressRow(
-                    progress: walkProgress,
-                    distance: guidance.walkDistanceMeters ?? 0,
-                    ribbonCells: guidance.walkRibbonCells ?? 0,
-                    status: guidance.walkStatusText ?? ""
-                )
-            }
-            pitchCapsule
-        }
-    }
-
-    private var postureCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("스캔 자세")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(OSDPalette.textPrimary)
-                Spacer()
-                Text(guidance.actionText)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(guidance.inBand ? OSDPalette.status : OSDPalette.accent)
-            }
-            Text("좌우로 살짝 틀지 마세요. 흔들리지 않게 잡고, 바닥을 \(ScanPhonePitchGuidance.targetLabel) 사선으로 비추며 걸으세요 (\(ScanPhonePitchGuidance.bandLabel)).")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(OSDPalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(OSDPalette.glassStrong, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(OSDPalette.glassBorder, lineWidth: 1)
-        )
-    }
-
-    private func walkProgressRow(
-        progress: Double,
-        distance: Double,
-        ribbonCells: Int,
-        status: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("걷기 스캔(참고)")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(OSDPalette.textPrimary)
-                Spacer()
-                Text(status)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(OSDPalette.textSecondary)
-            }
-            ProgressView(value: min(max(progress, 0), 1))
-                .tint(OSDPalette.accent)
-            Text(
-                String(
-                    format: "볼에서 %.1fm · 라인 리본 %d/%d칸 · 언제든 홀 지정 가능",
-                    distance,
-                    ribbonCells,
-                    WalkCorridorGate.requiredRibbonCells
-                )
-            )
-            .font(.system(size: 10, weight: .medium).monospacedDigit())
-            .foregroundStyle(OSDPalette.textSecondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(OSDPalette.glassStrong, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(OSDPalette.glassBorder, lineWidth: 1)
-        )
-    }
-
-    private var pitchCapsule: some View {
         HStack(spacing: 8) {
             Image(systemName: guidance.pitchInBand ? "checkmark.circle.fill" : "arrow.up.and.down")
                 .foregroundStyle(guidance.pitchInBand ? OSDPalette.status : Color.orange)
             Text(ScanPhonePitchGuidance.actionHint(degrees: guidance.pitchDegrees))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(OSDPalette.textPrimary)
+                .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)

@@ -30,8 +30,10 @@ final class BrightMeshVisualizer {
     private static let meshMissingGraceFrames = 12
     private var depthGridEntity: ModelEntity?
     private var coverageFillEntity: ModelEntity?
-    private var coverageBlueEntity: ModelEntity?
-    private var coverageWhiteEntity: ModelEntity?
+    private var coverageBlueChunks: [ModelEntity] = []
+    private var coverageWhiteChunks: [ModelEntity] = []
+    /// RealityKit 메시는 내부 16비트 인덱스를 쓰는 경우가 많다. 칸당 16정점이면 ~4천 칸에서 생성 실패.
+    private static let maxCellsPerMeshChunk = 2_800
     private var lastGlobalRebuildTime: TimeInterval = 0
     private var lastDepthRebuildTime: TimeInterval = 0
     private var lastCoverageRebuildTime: TimeInterval = 0
@@ -81,7 +83,7 @@ final class BrightMeshVisualizer {
         coverageStickEntity?.isEnabled = visible
     }
 
-    private static let tentativeColor = UIColor.systemBlue
+    private static let tentativeColor = UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 1)
     private static let tentativeFillOpacity: Float = 0.5
     private static let stableColor = UIColor.white
     private static let depthGridColor = UIColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 0.95)
@@ -172,8 +174,8 @@ final class BrightMeshVisualizer {
         coverageRebuildPending = false
         coverageHostView = nil
         coverageFillEntity = nil
-        coverageBlueEntity = nil
-        coverageWhiteEntity = nil
+        coverageBlueChunks.removeAll(keepingCapacity: true)
+        coverageWhiteChunks.removeAll(keepingCapacity: true)
         corridorBallXZ = nil
         corridorBallY = nil
         corridorHoleXZ = nil
@@ -246,19 +248,17 @@ final class BrightMeshVisualizer {
 
     private func updateCoverageGrid(now: TimeInterval, in view: ARView) {
         coverageFillEntity?.transform = Transform()
-        coverageBlueEntity?.transform = Transform()
-        coverageWhiteEntity?.transform = Transform()
+        for entity in coverageBlueChunks { entity.transform = Transform() }
+        for entity in coverageWhiteChunks { entity.transform = Transform() }
         guard !contentHidden else {
             coverageFillEntity?.isEnabled = false
-            coverageBlueEntity?.isEnabled = false
-            coverageWhiteEntity?.isEnabled = false
+            setCoverageChunksEnabled(false)
             return
         }
         let snapshot = coverageSnapshot
         if snapshot.observedCellCount == 0, frozenLocalCells.isEmpty {
             coverageFillEntity?.isEnabled = false
-            coverageBlueEntity?.isEnabled = false
-            coverageWhiteEntity?.isEnabled = false
+            setCoverageChunksEnabled(false)
             return
         }
 
@@ -269,8 +269,7 @@ final class BrightMeshVisualizer {
         let planeY = lockedDisplayPlaneY(from: snapshot, ballY: corridorBallY)
         guard lockedCoveragePlaneY != nil else {
             coverageFillEntity?.isEnabled = false
-            coverageBlueEntity?.isEnabled = false
-            coverageWhiteEntity?.isEnabled = false
+            setCoverageChunksEnabled(false)
             return
         }
 
@@ -282,8 +281,7 @@ final class BrightMeshVisualizer {
             in: view
         ) {
             coverageFillEntity?.isEnabled = false
-            coverageBlueEntity?.isEnabled = false
-            coverageWhiteEntity?.isEnabled = false
+            setCoverageChunksEnabled(false)
             return
         }
         guard let stick = coverageStickEntity else { return }
@@ -369,19 +367,9 @@ final class BrightMeshVisualizer {
         let localSnapshot = localCoverageSnapshot(from: snapshot, cells: localCells)
         let buildSignature = signature
         buildQueue.async { [weak self] in
-            let split = DisplaySurfaceGrid.buildSplitMeshes(
+            let built = Self.buildChunkedCoverageMeshes(
                 cells: localCells,
-                coverage: localSnapshot,
-                cellSize: DisplaySurfaceGrid.cellSizeMeters,
-                lineHalfWidth: 0.001
-            )
-            let blueMesh = Self.generateMesh(
-                GeometryBuffers(positions: split.tentativeLines.positions, indices: split.tentativeLines.indices),
-                name: "cov-blue"
-            )
-            let whiteMesh = Self.generateMesh(
-                GeometryBuffers(positions: split.stableLines.positions, indices: split.stableLines.indices),
-                name: "cov-white"
+                coverage: localSnapshot
             )
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -412,8 +400,18 @@ final class BrightMeshVisualizer {
                 if let fill = self.coverageFillEntity {
                     fill.isEnabled = false
                 }
-                if let blue = self.coverageBlueEntity { self.assignCoverageMesh(blueMesh, to: blue) }
-                if let white = self.coverageWhiteEntity { self.assignCoverageMesh(whiteMesh, to: white) }
+                self.applyCoverageChunkMeshes(
+                    built.yellow,
+                    to: &self.coverageBlueChunks,
+                    color: Self.tentativeColor,
+                    parent: stick
+                )
+                self.applyCoverageChunkMeshes(
+                    built.white,
+                    to: &self.coverageWhiteChunks,
+                    color: Self.stableColor,
+                    parent: stick
+                )
                 self.lastCoverageDisplaySignature = buildSignature
                 let afterSignature = self.currentCoverageDisplaySignature(
                     ball: ball,
@@ -601,13 +599,72 @@ final class BrightMeshVisualizer {
         coverageStickEntity = stick
     }
 
-    private func assignCoverageMesh(_ mesh: MeshResource?, to entity: ModelEntity) {
-        if let mesh {
+    private func setCoverageChunksEnabled(_ on: Bool) {
+        for entity in coverageBlueChunks { entity.isEnabled = on }
+        for entity in coverageWhiteChunks { entity.isEnabled = on }
+    }
+
+    /// 생성 실패 시 직전 청크를 유지한다. 7–8m에서 한 메시가 커져 격자 전체가 꺼지던 경로.
+    private func applyCoverageChunkMeshes(
+        _ meshes: [MeshResource],
+        to existing: inout [ModelEntity],
+        color: UIColor,
+        parent: Entity
+    ) {
+        guard !meshes.isEmpty else { return }
+        while existing.count < meshes.count {
+            let entity = ModelEntity(
+                mesh: .generateBox(size: 0.001),
+                materials: [Self.makeLineMaterial(color: color)]
+            )
+            parent.addChild(entity)
+            existing.append(entity)
+        }
+        while existing.count > meshes.count {
+            existing.removeLast().removeFromParent()
+        }
+        for (entity, mesh) in zip(existing, meshes) {
+            if entity.parent !== parent {
+                entity.removeFromParent()
+                parent.addChild(entity)
+            }
             entity.model?.mesh = mesh
             entity.isEnabled = !contentHidden
-        } else {
-            entity.isEnabled = false
         }
+    }
+
+    private static func buildChunkedCoverageMeshes(
+        cells: [DisplaySurfaceGrid.Cell],
+        coverage: ScanCoverageSnapshot
+    ) -> (yellow: [MeshResource], white: [MeshResource]) {
+        var yellow: [MeshResource] = []
+        var white: [MeshResource] = []
+        let step = maxCellsPerMeshChunk
+        var start = 0
+        while start < cells.count {
+            let end = min(start + step, cells.count)
+            let slice = Array(cells[start..<end])
+            let split = DisplaySurfaceGrid.buildSplitMeshes(
+                cells: slice,
+                coverage: coverage,
+                cellSize: DisplaySurfaceGrid.cellSizeMeters,
+                lineHalfWidth: 0.001
+            )
+            if let mesh = generateMesh(
+                GeometryBuffers(positions: split.tentativeLines.positions, indices: split.tentativeLines.indices),
+                name: "cov-yellow-\(start)"
+            ) {
+                yellow.append(mesh)
+            }
+            if let mesh = generateMesh(
+                GeometryBuffers(positions: split.stableLines.positions, indices: split.stableLines.indices),
+                name: "cov-white-\(start)"
+            ) {
+                white.append(mesh)
+            }
+            start = end
+        }
+        return (yellow, white)
     }
 
     private func detachCoverageStick(in view: ARView) {
@@ -618,11 +675,11 @@ final class BrightMeshVisualizer {
         coverageGridAnchorKey = nil
         coverageStickPlantBallXZ = nil
         coverageFillEntity?.removeFromParent()
-        coverageBlueEntity?.removeFromParent()
-        coverageWhiteEntity?.removeFromParent()
+        for entity in coverageBlueChunks { entity.removeFromParent() }
+        for entity in coverageWhiteChunks { entity.removeFromParent() }
         coverageFillEntity = nil
-        coverageBlueEntity = nil
-        coverageWhiteEntity = nil
+        coverageBlueChunks.removeAll(keepingCapacity: true)
+        coverageWhiteChunks.removeAll(keepingCapacity: true)
     }
 
     private func ensureCoverageEntities(on parent: Entity) {
@@ -631,32 +688,20 @@ final class BrightMeshVisualizer {
                 mesh: .generateBox(size: 0.001),
                 materials: [Self.makeFillMaterial()]
             )
-            let blue = ModelEntity(
-                mesh: .generateBox(size: 0.001),
-                materials: [Self.makeLineMaterial(color: Self.tentativeColor)]
-            )
-            let white = ModelEntity(
-                mesh: .generateBox(size: 0.001),
-                materials: [Self.makeLineMaterial(color: Self.stableColor)]
-            )
             fill.isEnabled = false
-            blue.isEnabled = false
-            white.isEnabled = false
             coverageFillEntity = fill
-            coverageBlueEntity = blue
-            coverageWhiteEntity = white
         }
         if let fill = coverageFillEntity, fill.parent !== parent {
             fill.removeFromParent()
             parent.addChild(fill)
         }
-        if let blue = coverageBlueEntity, blue.parent !== parent {
-            blue.removeFromParent()
-            parent.addChild(blue)
+        for entity in coverageBlueChunks where entity.parent !== parent {
+            entity.removeFromParent()
+            parent.addChild(entity)
         }
-        if let white = coverageWhiteEntity, white.parent !== parent {
-            white.removeFromParent()
-            parent.addChild(white)
+        for entity in coverageWhiteChunks where entity.parent !== parent {
+            entity.removeFromParent()
+            parent.addChild(entity)
         }
     }
 

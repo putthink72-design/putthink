@@ -593,7 +593,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         }
         placementMessage = "화면 중앙을 홀컵 중심에 맞추고 있습니다…"
         guard let pose = immediateGroundPose() else {
-            placementMessage = "지면을 찾지 못했습니다. 십자선을 홀컵 앞 잔디에 맞추고 다시 시도하세요."
+            placementMessage = "지면을 찾지 못했습니다. 십자선을 홀컵 중심에 맞추고 다시 시도하세요."
             return
         }
         confirmHoleAnchor(pose)
@@ -1915,15 +1915,15 @@ final class ARScanSessionController: NSObject, ObservableObject {
 
     private var showsLiDARTwistGuidance: Bool {
         switch flowState {
-        case .walkingToHole, .placingHole:
-            return ballAnchor != nil
+        case .placingBall, .walkingToHole, .placingHole, .processing:
+            return true
         default:
             return false
         }
     }
 
     private func updateLiDARTwistGuidance(frame: ARFrame) {
-        guard showsLiDARTwistGuidance, let ball = ballAnchor else {
+        guard showsLiDARTwistGuidance else {
             if lidarTwistGuidance != nil { lidarTwistGuidance = nil }
             return
         }
@@ -1934,7 +1934,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let orientation = Self.interfaceOrientation()
         let viewport = UIScreen.main.bounds.size
         var xs: [Double] = []
-        if let x = Self.normalizedScreenX(
+        if let ball = ballAnchor,
+           let x = Self.normalizedScreenX(
             worldX: ball.worldX,
             worldY: ball.worldY,
             worldZ: ball.worldZ,

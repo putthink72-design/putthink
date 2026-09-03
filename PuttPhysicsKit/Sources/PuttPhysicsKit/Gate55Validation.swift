@@ -289,11 +289,35 @@ public enum Gate55Validation {
             context.field.height(at: context.holeLocal)
             - context.field.height(at: context.ballLocal)
 
-        let corridor = selection.allCandidates.sorted {
-            $0.actualOverrunDistance < $1.actualOverrunDistance
+        // 평탄한데 |β|만 큰 후보는 LiDAR 노이즈로 보고 스피드 코리도·경로에서 제외.
+        let corridor = selection.allCandidates
+            .filter {
+                !isLikelyFlatNoiseAim(
+                    elevationDelta: elevationDelta,
+                    directionDegrees: $0.candidate.directionDegrees
+                )
+            }
+            .sorted {
+                $0.actualOverrunDistance < $1.actualOverrunDistance
+            }
+
+        let primary: RankedPuttCandidate?
+        if let selected = selection.primary,
+           !isLikelyFlatNoiseAim(
+               elevationDelta: elevationDelta,
+               directionDegrees: selected.candidate.directionDegrees
+           ) {
+            primary = selected
+        } else if let selected = selection.primary {
+            primary = corridor.min(by: {
+                abs($0.actualOverrunDistance - selected.actualOverrunDistance)
+                    < abs($1.actualOverrunDistance - selected.actualOverrunDistance)
+            })
+        } else {
+            primary = corridor.first
         }
 
-        guard let primary = selection.primary else {
+        guard let primary else {
             return Gate55Recommendation(
                 horizontalDistance: horizontal,
                 flatEquivalentDistance: 0,
@@ -339,12 +363,20 @@ public enum Gate55Validation {
             overrunDistance: primary.actualOverrunDistance,
             usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
             searchTier: selection.searchTier,
-            candidateCount: selection.allCandidates.count,
+            candidateCount: corridor.count,
             trajectory: forward.trajectory,
             primary: primary,
             corridorCandidates: corridor,
             defaultCorridorIndex: defaultIndex
         )
+    }
+
+    /// 평탄 지형에서 |β|만 큰 조준 — LiDAR 노이즈로 보고 경로·스피드 코리도에서 제외.
+    public static func isLikelyFlatNoiseAim(
+        elevationDelta: Double,
+        directionDegrees: Double
+    ) -> Bool {
+        abs(elevationDelta) < 0.025 && abs(directionDegrees) > 8
     }
 
     /// 게이트 2 FlatPuttPhysics를 평지(α=0)에서 순방향 실행한 정지 이동거리.

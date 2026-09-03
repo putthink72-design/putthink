@@ -14,7 +14,7 @@ enum GreenSurfaceVizMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .contours: return "등고선"
-        case .gridFlow: return "격자·흐름"
+        case .gridFlow: return "격자흐름"
         }
     }
 
@@ -30,83 +30,9 @@ enum GreenSurfaceVizMode: String, CaseIterable, Identifiable {
         case .contours:
             return "등고: 고도(파랑↓ · 빨강↑)"
         case .gridFlow:
-            return "격자 각 변마다 지렁이 방향·속도(기복) · 점선 흐름"
+            return "흰 격자 흐름 (지렁이 없음)"
         }
     }
-}
-
-/// X 좌우 편차 부호 — 키패드 마이너스 대신 탭으로 선택.
-private enum MeasuredXLateral: String, CaseIterable, Identifiable {
-    case left
-    case center
-    case right
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .left: return "←"
-        case .center: return "·"
-        case .right: return "→"
-        }
-    }
-
-    func signedMagnitude(_ magnitude: Double) -> Double {
-        switch self {
-        case .left: return -abs(magnitude)
-        case .center: return 0
-        case .right: return abs(magnitude)
-        }
-    }
-}
-
-/// Y 직선 편차 부호 — ↓ 짧음 · 정확 · ↑ 김.
-private enum MeasuredYAlong: String, CaseIterable, Identifiable {
-    case short
-    case onLine
-    case long
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .short: return "↓"
-        case .onLine: return "·"
-        case .long: return "↑"
-        }
-    }
-
-    func adjustedHoleDistance(holeDistance: Double, centimeters: Int) -> Double {
-        let meters = Double(max(centimeters, 0)) / 100.0
-        switch self {
-        case .short: return holeDistance - meters
-        case .onLine: return holeDistance
-        case .long: return holeDistance + meters
-        }
-    }
-}
-
-/// 현장 퍼팅 후 주관적 경로 일치도 (궤적 자동 추적 없음).
-private enum FieldPuttPathMatch: String, CaseIterable, Identifiable {
-    case similar
-    case fair
-    case different
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .similar: return "경로 유사"
-        case .fair: return "대체로"
-        case .different: return "다름"
-        }
-    }
-}
-
-/// 현장 퍼팅 cm 입력 대상.
-private enum FieldCmPadTarget {
-    case x
-    case y
 }
 
 /// 바닥 조준 UI 전환 — AR `updateUIView`와 분리해 SwiftUI 재구성·`updateScene` 재호출을 막는다.
@@ -129,23 +55,9 @@ struct Gate55GuidanceView: View {
     /// 스캔 화면과 공유하는 ARView. 있으면 카메라 뷰를 재생성하지 않는다.
     var sessionARView: ARView? = nil
     @Binding var exportError: String?
-    var onRequestClearHistory: (() -> Void)? = nil
     @StateObject private var model = Gate55GuidanceModel()
-    @State private var showDiagnostics = false
-    @State private var runID = ""
-    @State private var measuredXLateral: MeasuredXLateral = .center
-    @State private var measuredStopXcm = ""
-    @State private var measuredYAlong: MeasuredYAlong = .onLine
-    @State private var measuredStopYcm = ""
-    @State private var fieldHoleIn = false
-    @State private var fieldPathMatch: FieldPuttPathMatch = .similar
-    @State private var recordMessage: String?
     @State private var aimRevision = 0
-    @State private var greenVizMode: GreenSurfaceVizMode = .contours
-    @State private var showPerformanceSettings = false
-    @State private var osdScrollAnchor: String?
-    @State private var activeCmPad: FieldCmPadTarget?
-    @State private var cmPadMounted = false
+    @State private var greenVizMode: GreenSurfaceVizMode? = nil
     @State private var floorAddressMode = false
     @State private var floorUIModeBridge = FloorAddressUIModeBridge()
     /// 조준 진입 시 한 번 고정. 기울임으로 safe area가 바뀌어도 하단 블록·OSD 높이가 변하지 않는다.
@@ -240,8 +152,6 @@ struct Gate55GuidanceView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                guidanceTopChrome
-
                 if let exportError {
                     Text(exportError)
                         .font(.caption)
@@ -260,18 +170,10 @@ struct Gate55GuidanceView: View {
         }
         .frame(width: layout.screenWidth, height: layout.screenHeight)
         .ignoresSafeArea()
-        .overlay(alignment: .bottom) {
-            cmNumberPadOverlay
-        }
         .onAppear {
             lockGuidanceUILayoutIfNeeded()
             floorUIModeBridge.onModeChanged = { _ in
                 // HUD는 UIKit만 전환. SwiftUI 레이아웃은 바꾸지 않는다.
-            }
-            cmPadMounted = true
-            OSDDoneTextField.prewarmAccessoryBar()
-            if runID.isEmpty {
-                runID = defaultRunID()
             }
             model.computeMode = .recommend
             if let scan = controller.completedScan {
@@ -300,28 +202,6 @@ struct Gate55GuidanceView: View {
         }
         .onChange(of: greenVizMode) { _, _ in
             aimRevision += 1
-        }
-        .onReceive(NotificationCenter.default.publisher(for: PerformanceSettings.didChangeNotification)) { _ in
-            aimRevision += 1
-            if model.computeMode == .recommend {
-                model.recompute()
-            }
-        }
-        .sheet(isPresented: $showDiagnostics) {
-            if let scan = controller.completedScan {
-                Gate1DiagnosticsSheet(scan: scan, onDismiss: { showDiagnostics = false })
-            }
-        }
-        .sheet(isPresented: $showPerformanceSettings) {
-            AppSettingsSheet(
-                mode: .guidance,
-                controller: controller,
-                guidanceModel: model,
-                onRequestClearHistory: onRequestClearHistory,
-                onAimSettingsChanged: {
-                    aimRevision += 1
-                }
-            )
         }
     }
 
@@ -367,7 +247,6 @@ struct Gate55GuidanceView: View {
         .padding(
             .bottom,
             activeGuidanceLayout.homeIndicatorPadding
-                + (activeCmPad != nil ? OSDInlineNumberPad.height : 0)
         )
     }
 
@@ -427,69 +306,12 @@ struct Gate55GuidanceView: View {
             ?? []
     }
 
-    private var guidanceTopChrome: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                OSDStatusPill(
-                    isHealthy: controller.guidanceTrackingOK && !controller.trackingLimited,
-                    title: "조준 중",
-                    subtitle: statusSubtitle
-                )
-
-                Spacer(minLength: 4)
-
-                OSDGearButton { showPerformanceSettings = true }
-                    .fixedSize()
-            }
-
-            if let banner = model.thermalLevel.statusBanner {
-                Text(banner)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(OSDPalette.accentInk)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(OSDPalette.accent.opacity(0.9), in: Capsule())
-            }
-        }
-    }
-
     private func beginNewScan() {
         controller.reset()
     }
 
-    private var statusSubtitle: String? {
-        var parts: [String] = []
-        if let scan = controller.completedScan {
-            parts.append(String(format: "볼→홀 %.1fm", scan.holeDistance))
-            parts.append(scan.pathMode.label)
-        }
-        if !controller.guidanceTrackingOK || controller.trackingLimited {
-            parts.append("limited")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    @ViewBuilder
-    private var cmNumberPadOverlay: some View {
-        if cmPadMounted {
-            OSDInlineNumberPad(
-                onDigit: appendCmDigit,
-                onDelete: deleteCmDigit,
-                onDone: { activeCmPad = nil }
-            )
-            .opacity(activeCmPad == nil ? 0 : 1)
-            .allowsHitTesting(activeCmPad != nil)
-            .animation(nil, value: activeCmPad)
-            .padding(.horizontal, OSDTopChromeMetrics.floatingCardHorizontalPadding)
-            .padding(.bottom, OSDTopChromeMetrics.floatingCardBottomPadding)
-        }
-    }
-
     private var guidanceBottomOSD: some View {
-        OSDFloatingScrollCard(
-            fixedHeight: activeGuidanceLayout.osdCardHeight,
-            scrollToID: osdScrollAnchor
-        ) {
+        OSDOnboardCard {
             VStack(alignment: .leading, spacing: 14) {
                 if model.isComputing {
                     ProgressView("계산 중…")
@@ -499,9 +321,6 @@ struct Gate55GuidanceView: View {
                     OSDSectionDivider()
                     speedCorridorSection
                 }
-
-                OSDSectionDivider()
-                advancedPanelContent
             }
         }
     }
@@ -557,29 +376,13 @@ struct Gate55GuidanceView: View {
                 distanceAdjustment: rec.distanceAdjustment,
                 elevationDelta: rec.elevationDelta,
                 directionDegrees: rec.directionDegrees,
-                strokeGuidance: rec.strokeGuidance,
-                detailLines: [
-                    String(format: "v0 %.2f m/s · β %+.1f°", rec.initialVelocity, rec.directionDegrees),
-                    String(
-                        format: "정지 (%.2f, %.2f) · 오버런 %.2fm",
-                        rec.stopPosition.x,
-                        rec.stopPosition.y,
-                        rec.overrunDistance
-                    )
-                ]
+                strokeGuidance: rec.strokeGuidance
             )
 
             if !rec.searchTier.isHoleInVerified {
                 Text(rec.searchTier.statusLabel)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.orange)
-            }
-
-            if abs(rec.elevationDelta) < 0.025, abs(rec.directionDegrees) > 8,
-               rec.searchTier.isHoleInVerified {
-                Text("평탄한 면인데 |β|가 큽니다. 라이다 노이즈 가능성 — 볼·홀을 다시 지정하거나 조명을 바꿔 재스캔하세요.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(OSDPalette.accent.opacity(0.9))
             }
         } else if !model.isComputing, model.recommendation?.searchTier == .noPath
             || (model.recommendation != nil && model.recommendation?.primary == nil) {
@@ -606,78 +409,6 @@ struct Gate55GuidanceView: View {
         }
     }
 
-    @ViewBuilder
-    private var advancedPanelContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("게이트 5.5 조준")
-                    .font(.headline)
-                Spacer()
-                Button("진단") { showDiagnostics = true }
-                    .font(.caption)
-                    .foregroundStyle(OSDPalette.accent)
-            }
-
-            Text(greenVizMode.hint)
-                .font(.caption2)
-                .foregroundStyle(OSDPalette.textTertiary)
-
-            if let scan = controller.completedScan {
-                Text(scanStatusText(scan))
-                    .font(.caption2)
-                    .foregroundStyle(OSDPalette.textSecondary)
-            }
-
-            if let message = controller.placementMessage {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(OSDPalette.textSecondary)
-            }
-
-            HStack(spacing: 8) {
-                Button(controller.placementRequest == .reanchorBall ? "십자선 위치 확정" : "볼 다시 맞추기") {
-                    controller.requestBallReanchor()
-                }
-                .font(.caption.weight(.semibold))
-                .disabled(blocksNonReanchorPlacementUI)
-                Button("홀 재지정") {
-                    controller.requestHoleReanchor()
-                }
-                .font(.caption.weight(.semibold))
-                .disabled(controller.placementRequest != nil)
-            }
-
-            OSDSectionDivider()
-            fieldPuttSection
-
-            if let recordMessage {
-                Text(recordMessage)
-                    .font(.caption2)
-                    .foregroundStyle(OSDPalette.textSecondary)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(.top, 4)
-    }
-
-    private func scanStatusText(_ scan: CompletedScan) -> String {
-        let base = String(
-            format: "기준 AR raycast · 볼→홀 %.2fm · %@ · %@ · %@",
-            scan.holeDistance,
-            scan.pathMode.label,
-            scan.driftCorrected ? "드리프트보정" : "드리프트미보정",
-            scan.lidarProfile.productName
-        )
-        if controller.pastHoleMeasuredMeters > 0 {
-            return base + String(
-                format: " · 홀 뒤 %.0fcm/%.0fcm",
-                controller.pastHoleMeasuredMeters * 100,
-                PuttScanCorridor.pastHoleMargin * 100
-            )
-        }
-        return base
-    }
-
     private var speedCorridorSection: some View {
         OSDSpeedCorridorSection(
             corridorIndex: model.corridorIndex,
@@ -689,280 +420,27 @@ struct Gate55GuidanceView: View {
             onSelectIndex: { model.selectCorridorIndex($0) }
         )
     }
-
-    private func forwardCard(_ result: Gate55ForwardResult) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(String(format: "v0 %.2f · β %+.1f°", result.initialVelocity, result.directionDegrees))
-                .font(.headline)
-            Text(
-                String(
-                    format: "정지 (%.2f, %.2f) · 호장 %.2fm",
-                    result.stopPosition.x,
-                    result.stopPosition.y,
-                    result.arcLength
-                )
-            )
-            .font(.caption)
-            Text(
-                "홀인 \(result.ballHoleIf ? "Y" : "N") · "
-                    + "정지 \(result.ballStopIf ? "Y" : "N") · "
-                    + "통과 \(result.ballPassOverHoleIf ? "Y" : "N")"
-            )
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var fieldPuttSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("현장 퍼팅 기록")
-                .font(.subheadline.bold())
-
-            OSDDoneTextField(
-                text: $runID,
-                placeholder: "run_id (예: h3-putt1)",
-                keyboardType: .asciiCapable,
-                textAlignment: .natural,
-                onBeginEditing: scrollToFieldPuttInputs
-            )
-            .frame(height: 30)
-
-            Text("실측 cm 정수 (저장 시 m 변환). X=←·→, Y=↓·↑. β는 추천값 자동.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Text("X")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(OSDPalette.textSecondary)
-                        .frame(width: 10)
-
-                    Picker("X 부호", selection: $measuredXLateral) {
-                        ForEach(MeasuredXLateral.allCases) { lateral in
-                            Text(lateral.label).tag(lateral)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: measuredXLateral) { _, lateral in
-                        if lateral == .center {
-                            measuredStopXcm = ""
-                            if activeCmPad == .x { activeCmPad = nil }
-                        }
-                    }
-
-                    OSDCentimeterInput(
-                        digits: $measuredStopXcm,
-                        isEnabled: measuredXLateral != .center,
-                        isActive: activeCmPad == .x,
-                        onActivate: { activateCmPad(.x) }
-                    )
-                    .frame(width: 60, height: 32)
-                }
-                .frame(maxWidth: .infinity)
-
-                HStack(spacing: 4) {
-                    Text("Y")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(OSDPalette.textSecondary)
-                        .frame(width: 10)
-
-                    Picker("Y 부호", selection: $measuredYAlong) {
-                        ForEach(MeasuredYAlong.allCases) { along in
-                            Text(along.label).tag(along)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(fieldHoleIn)
-                    .onChange(of: measuredYAlong) { _, along in
-                        if along == .onLine {
-                            measuredStopYcm = ""
-                            if activeCmPad == .y { activeCmPad = nil }
-                        }
-                    }
-
-                    OSDCentimeterInput(
-                        digits: $measuredStopYcm,
-                        isEnabled: !fieldHoleIn && measuredYAlong != .onLine,
-                        isActive: activeCmPad == .y,
-                        onActivate: { activateCmPad(.y) }
-                    )
-                    .frame(width: 60, height: 32)
-                }
-                .frame(maxWidth: .infinity)
-            }
-
-            Picker("경로 일치", selection: $fieldPathMatch) {
-                ForEach(FieldPuttPathMatch.allCases) { match in
-                    Text(match.label).tag(match)
-                }
-            }
-            .pickerStyle(.segmented)
-            .tint(OSDPalette.accent)
-
-            HStack(spacing: 10) {
-                Spacer(minLength: 0)
-                Button {
-                    fieldHoleIn.toggle()
-                    if fieldHoleIn {
-                        measuredYAlong = .onLine
-                        measuredStopYcm = ""
-                        if activeCmPad == .y { activeCmPad = nil }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: fieldHoleIn ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("홀인")
-                            .font(.caption)
-                    }
-                    .foregroundStyle(fieldHoleIn ? OSDPalette.accent : OSDPalette.textSecondary)
-                }
-                .buttonStyle(.plain)
-                Button("퍼팅 1회 저장") {
-                    activeCmPad = nil
-                    dismissPuttKeyboard()
-                    saveFieldPutt()
-                }
-                    .buttonStyle(.borderedProminent)
-                    .font(.caption)
-                    .tint(OSDPalette.accent)
-            }
-        }
-        .id("fieldPutt")
-        .padding(.vertical, 4)
-    }
-
-    private func saveFieldPutt() {
-        guard let scan = controller.completedScan else { return }
-        guard let rec = model.recommendation, rec.primary != nil else {
-            recordMessage = "추천 결과가 없습니다. 그린스피드·스캔을 확인하세요."
-            return
-        }
-        guard fieldHoleIn || measuredYAlong == .onLine || parsedCentimeters(measuredStopYcm) != nil else {
-            recordMessage = "홀인이 아니면 ↓/↑ 와 cm를 입력하세요."
-            return
-        }
-
-        let mx = measuredXLateral.signedMagnitude(Double(parsedCentimeters(measuredStopXcm) ?? 0) / 100.0)
-        let my: Double
-        if fieldHoleIn {
-            my = scan.holeDistance
-        } else {
-            my = measuredYAlong.adjustedHoleDistance(
-                holeDistance: scan.holeDistance,
-                centimeters: parsedCentimeters(measuredStopYcm) ?? 0
-            )
-        }
-        let measured = PuttVector2(x: mx, y: my)
-
-        do {
-            try Gate55ExperimentRecorder.appendFieldPuttResult(
-                scanID: scan.id,
-                pathMode: scan.pathMode.rawValue,
-                surfaceSource: scan.surfaceSource,
-                holeDistanceM: scan.holeDistance,
-                greenSpeedM: model.greenSpeed,
-                corridorIndex: model.corridorIndex,
-                corridorCount: model.corridorCandidateCount,
-                runID: runID,
-                requestedV0: rec.initialVelocity,
-                requestedBeta: rec.directionDegrees,
-                predictedStop: rec.stopPosition,
-                recommendation: rec,
-                measuredStop: measured,
-                executedBeta: rec.directionDegrees,
-                holeIn: fieldHoleIn,
-                pathMatch: fieldPathMatch.rawValue,
-                trackingStateOK: controller.guidanceTrackingOK && !controller.trackingLimited,
-                notes: ""
-            )
-            runID = defaultRunID()
-            measuredXLateral = .center
-            measuredStopXcm = ""
-            measuredYAlong = .onLine
-            measuredStopYcm = ""
-            fieldHoleIn = false
-            activeCmPad = nil
-            dismissPuttKeyboard()
-            let dir = try Gate55ExperimentRecorder.experimentDirectory(for: scan.id)
-            recordMessage = "현장 퍼팅 저장: \(dir.path)/field_putt_results.csv"
-        } catch {
-            recordMessage = "기록 실패: \(error.localizedDescription)"
-        }
-    }
-
-    private func parsedCentimeters(_ text: String) -> Int? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let value = Int(trimmed), value >= 0 else { return nil }
-        return value
-    }
-
-    private func scrollToFieldPuttInputs() {
-        osdScrollAnchor = nil
-        DispatchQueue.main.async {
-            osdScrollAnchor = "fieldPutt"
-        }
-    }
-
-    private func activateCmPad(_ target: FieldCmPadTarget) {
-        dismissPuttKeyboard()
-        activeCmPad = target
-        scrollToFieldPuttInputs()
-    }
-
-    private func appendCmDigit(_ digit: String) {
-        switch activeCmPad {
-        case .x:
-            measuredStopXcm.append(contentsOf: digit.filter(\.isNumber))
-        case .y:
-            measuredStopYcm.append(contentsOf: digit.filter(\.isNumber))
-        case nil:
-            break
-        }
-    }
-
-    private func deleteCmDigit() {
-        switch activeCmPad {
-        case .x:
-            if !measuredStopXcm.isEmpty { measuredStopXcm.removeLast() }
-        case .y:
-            if !measuredStopYcm.isEmpty { measuredStopYcm.removeLast() }
-        case nil:
-            break
-        }
-    }
-
-    private func dismissPuttKeyboard() {
-        UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder),
-            to: nil,
-            from: nil,
-            for: nil
-        )
-    }
-
-    private func defaultRunID() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HHmmss"
-        return "run-\(formatter.string(from: Date()))"
-    }
 }
 
 // MARK: - Surface viz mode picker
 
 private struct GreenVizModePicker: View {
-    @Binding var selection: GreenSurfaceVizMode
+    @Binding var selection: GreenSurfaceVizMode?
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(GreenSurfaceVizMode.allCases) { mode in
                 let selected = selection == mode
                 Button {
-                    guard selection != mode else { return }
-                    selection = mode
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if selection == mode {
+                            selection = nil
+                        } else {
+                            selection = mode
+                        }
+                    }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 } label: {
                     HStack(spacing: 4) {
@@ -985,6 +463,7 @@ private struct GreenVizModePicker: View {
         .padding(3)
         .background(OSDPalette.glass, in: Capsule())
         .overlay(Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
+        .animation(nil, value: selection)
     }
 }
 
@@ -1120,7 +599,7 @@ struct Gate55ARAimView: UIViewRepresentable {
     let visible: Bool
     let revision: Int
     var trajectorySamples: [TrajectorySample] = []
-    var greenVizMode: GreenSurfaceVizMode = .contours
+    var greenVizMode: GreenSurfaceVizMode? = nil
     let floorAddressMode: Bool
     let floorUIModeBridge: FloorAddressUIModeBridge
 
@@ -1241,7 +720,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var hudSceneState: FloorHUDSceneState?
         private struct TerrainVizContext {
             var scan: CompletedScan
-            var mode: GreenSurfaceVizMode
+            var mode: GreenSurfaceVizMode?
             var wormWidth: Float
         }
         private struct CachedSceneParams {
@@ -1249,7 +728,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             var betaDegrees: Double
             var visible: Bool
             var trajectory: [TrajectorySample]
-            var greenVizMode: GreenSurfaceVizMode
+            var greenVizMode: GreenSurfaceVizMode?
         }
         private var terrainVizContext: TerrainVizContext?
         private var cachedSceneParams: CachedSceneParams?
@@ -1445,7 +924,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             betaDegrees: Double,
             visible: Bool,
             trajectory: [TrajectorySample] = [],
-            greenVizMode: GreenSurfaceVizMode = .contours
+            greenVizMode: GreenSurfaceVizMode? = nil
         ) {
             sceneARView = view
             guard let scan else {
@@ -1664,8 +1143,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 return
             }
 
-            if greenVizMode == .gridFlow, PerformanceSettings.wormAnimationEnabled {
-                startWormFlowAnimation()
+            if greenVizMode == .gridFlow {
+                stopWormFlowAnimation()
             }
 
             zeroLineEntity?.isEnabled = true
@@ -1947,8 +1426,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 resetFloorHUDSmoothing()
                 refreshFloorHUD(showLines: false)
                 applyFloorHUDOverlayVisibility(hidden: false)
-                if terrainVizContext?.mode == .gridFlow, PerformanceSettings.wormAnimationEnabled {
-                    startWormFlowAnimation()
+                if terrainVizContext?.mode == .gridFlow {
+                    stopWormFlowAnimation()
                 }
             } else {
                 refreshFloorHUD(showLines: smoothedFloorAddressHUD)
@@ -2431,6 +1910,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 ready = isContourVizReady(parent: overlays, scanID: ctx.scan.id, in: view)
             case .gridFlow:
                 ready = isGridVizReady(parent: overlays, scanID: ctx.scan.id, in: view)
+            case .none:
+                ready = true
             }
             guard !ready else { return }
             let now = CACurrentMediaTime()
@@ -2469,7 +1950,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         }
 
         private func updateTerrainViz(
-            mode: GreenSurfaceVizMode,
+            mode: GreenSurfaceVizMode?,
             for scan: CompletedScan,
             lift: Float,
             transform: ScanCoordinateTransform,
@@ -2505,6 +1986,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                     in: view,
                     ballWorld: ballWorld
                 )
+            case .none:
+                clearContours()
+                clearGridFlow()
             }
         }
 
@@ -2838,7 +2322,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         ) {
             // transform: 조준선용. 등고 배치는 scan.terrainTransform 사용.
             _ = transform
-            let density = PerformanceSettings.effectiveOverlayDensity
+            let density = OverlayDensity.standard
             let corridorMargins = PuttScanCorridor.margins(for: scan.fieldMode)
             let arFrameReady = view.session.currentFrame != nil
             if arFrameReady,
@@ -3058,9 +2542,9 @@ struct Gate55ARAimView: UIViewRepresentable {
             in view: ARView,
             ballWorld: SIMD3<Float>
         ) {
-            let density = PerformanceSettings.effectiveOverlayDensity
+            let density = OverlayDensity.standard
             let corridorMargins = PuttScanCorridor.margins(for: scan.fieldMode)
-            let wormsOn = PerformanceSettings.wormAnimationEnabled
+            let wormsOn = false
             let dashesPerEdge = PerformanceSettings.wormDashesPerEdge.rawValue
             let arFrameReady = view.session.currentFrame != nil
             if arFrameReady,
@@ -3073,8 +2557,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                gridFlowDensityApplied == density,
                gridFlowWormEnabledApplied == wormsOn,
                gridFlowDashesPerEdgeApplied == dashesPerEdge {
-                // 카메라 거리(픽셀폭) 변화로는 재생성하지 않음 — 야외 토글/발열 주요 원인
-                startWormFlowAnimation()
+                stopWormFlowAnimation()
                 return
             }
             clearGridFlow()
@@ -3125,11 +2608,6 @@ struct Gate55ARAimView: UIViewRepresentable {
                 ballWorld: ballWorld,
                 pixels: Self.gridLineWidthPixels
             )
-            let wormLiftExtra: Float = 0.0038
-            let thickWorm = max(wormWidth, gridWidth * 3.5)
-            let dashLength: Float = 0.048
-            let gapLength: Float = 0.028
-            let period = dashLength + gapLength
             var gridLines = 0
 
             struct GridSample {
@@ -3138,18 +2616,6 @@ struct Gate55ARAimView: UIViewRepresentable {
                 var height: Double
                 var world: SIMD3<Float>
             }
-
-            struct WormCandidate {
-                var p0: SIMD3<Float>
-                var p1: SIMD3<Float>
-                var totalLength: Float
-                var slopeMagnitude: Double
-                var color: UIColor
-            }
-
-            var wormCandidates: [WormCandidate] = []
-            let wormsWanted = PerformanceSettings.wormAnimationEnabled
-                && PerformanceSettings.effectiveWormFPS > 0
 
             func makeSample(localX: Double, localY: Double) -> GridSample? {
                 guard let h = sampleHeight(map, localX: localX, localY: localY) else { return nil }
@@ -3162,63 +2628,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 )
             }
 
-            /// 격자 한 변 — 경사 임계 통과 시 후보 등록.
-            func registerFlowEdge(
-                _ samples: [GridSample],
-                tangentX: Double,
-                tangentY: Double
-            ) {
-                guard wormsWanted, samples.count >= 2 else { return }
-                let first = samples.first!
-                let last = samples.last!
-                let edgeLen = max(
-                    hypot(last.localX - first.localX, last.localY - first.localY),
-                    1e-4
-                )
-                let heightSlope = abs(last.height - first.height) / edgeLen
-
-                let mid = samples[samples.count / 2]
-                var projected = 0.0
-                if let g = gridScaleGradient(
-                    map: map,
-                    localX: mid.localX,
-                    localY: mid.localY,
-                    sampleDelta: spacing
-                ) {
-                    projected = abs((-g.dx) * tangentX + (-g.dy) * tangentY)
-                }
-                let slopeMag = max(heightSlope, projected)
-                guard slopeMag >= Self.minWormSlope else { return }
-
-                let forward = last.height <= first.height
-                let ordered = forward ? samples : Array(samples.reversed())
-                let p0 = heightmapLocalPoint(
-                    localX: ordered.first!.localX,
-                    localY: ordered.first!.localY,
-                    lift: lift + Float(ordered.first!.height - minH) * undulationScale + wormLiftExtra,
-                    scan: scan
-                )
-                let p1 = heightmapLocalPoint(
-                    localX: ordered.last!.localX,
-                    localY: ordered.last!.localY,
-                    lift: lift + Float(ordered.last!.height - minH) * undulationScale + wormLiftExtra,
-                    scan: scan
-                )
-                let total = simd_distance(p0, p1)
-                guard total > 0.06 else { return }
-
-                wormCandidates.append(
-                    WormCandidate(
-                        p0: p0,
-                        p1: p1,
-                        totalLength: total,
-                        slopeMagnitude: slopeMag,
-                        color: Self.flowColor(slopeMagnitude: slopeMag)
-                    )
-                )
-            }
-
-            // 세로 격자 (x = const) — 선은 통짜, 지렁이는 셀 변마다
+            // 세로 격자 (x = const)
             x = -halfW
             while x <= halfW + 1e-9 {
                 var samples: [GridSample] = []
@@ -3231,19 +2641,6 @@ struct Gate55ARAimView: UIViewRepresentable {
                 }
                 if appendPolyline(samples.map(\.world), width: gridWidth, color: gridColor, to: root) {
                     gridLines += 1
-                }
-                if wormsWanted {
-                    var edgeY = yMin
-                    while edgeY + spacing * 0.25 < yMax {
-                        let edgeEnd = min(edgeY + spacing, yMax)
-                        var unique: [GridSample] = []
-                        if let a = makeSample(localX: x, localY: edgeY) { unique.append(a) }
-                        let midY = (edgeY + edgeEnd) * 0.5
-                        if let m = makeSample(localX: x, localY: midY) { unique.append(m) }
-                        if let b = makeSample(localX: x, localY: edgeEnd) { unique.append(b) }
-                        registerFlowEdge(unique, tangentX: 0, tangentY: 1)
-                        edgeY += spacing
-                    }
                 }
                 x += spacing
                 if gridLines > (thermal >= .serious ? 14 : 18) { break }
@@ -3264,72 +2661,26 @@ struct Gate55ARAimView: UIViewRepresentable {
                 if appendPolyline(samples.map(\.world), width: gridWidth, color: gridColor, to: root) {
                     horiz += 1
                 }
-                if wormsWanted {
-                    var edgeX = -halfW
-                    while edgeX + spacing * 0.25 < halfW {
-                        let edgeEnd = min(edgeX + spacing, halfW)
-                        var unique: [GridSample] = []
-                        if let a = makeSample(localX: edgeX, localY: y) { unique.append(a) }
-                        let midX = (edgeX + edgeEnd) * 0.5
-                        if let m = makeSample(localX: midX, localY: y) { unique.append(m) }
-                        if let b = makeSample(localX: edgeEnd, localY: y) { unique.append(b) }
-                        registerFlowEdge(unique, tangentX: 1, tangentY: 0)
-                        edgeX += spacing
-                    }
-                }
                 y += spacing
                 if horiz > (thermal >= .serious ? 12 : 16) { break }
             }
 
             guard gridLines + horiz > 0 else { return }
 
-            // 경사 임계 통과한 모든 변 — 변당 설정 개수 대시 (공유 메시)
-            var builtFlowLines: [WormFlowLine] = []
-            if wormsWanted, !wormCandidates.isEmpty {
-                let wormMesh = MeshResource.generateBox(
-                    size: [thickWorm, max(thickWorm * 0.4, 0.0012), dashLength],
-                    cornerRadius: min(thickWorm, max(thickWorm * 0.4, 0.0012)) * 0.35
-                )
-                builtFlowLines.reserveCapacity(wormCandidates.count)
-                for candidate in wormCandidates {
-                    var material = UnlitMaterial(color: candidate.color)
-                    material.blending = .opaque
-                    var dashes: [ModelEntity] = []
-                    dashes.reserveCapacity(dashesPerEdge)
-                    for _ in 0..<dashesPerEdge {
-                        let dash = ModelEntity(mesh: wormMesh, materials: [material])
-                        dashRoot.addChild(dash)
-                        dashes.append(dash)
-                    }
-                    builtFlowLines.append(
-                        WormFlowLine(
-                            p0: candidate.p0,
-                            p1: candidate.p1,
-                            totalLength: candidate.totalLength,
-                            slopeMagnitude: candidate.slopeMagnitude,
-                            dashLength: dashLength,
-                            period: period,
-                            dashes: dashes
-                        )
-                    )
-                }
-            }
-
             parent.addChild(root)
             gridFlowRoot = root
             wormDashRoot = dashRoot
-            wormFlowLines = builtFlowLines
+            wormFlowLines = []
             gridFlowScanID = scan.id
             gridFlowStyleVersionApplied = Self.gridFlowStyleVersion
             gridFlowWormWidthApplied = wormWidth
             gridFlowThermalApplied = thermal
             gridFlowDensityApplied = density
-            gridFlowWormEnabledApplied = PerformanceSettings.wormAnimationEnabled
+            gridFlowWormEnabledApplied = false
             gridFlowDashesPerEdgeApplied = dashesPerEdge
             flowTime = 0
             wormAnimCursor = 0
-            tickWormFlowDashes()
-            startWormFlowAnimation()
+            stopWormFlowAnimation()
         }
 
         /// 표시 격자 간격과 같은 스케일로 고도 차분 → 격자 기복과 일치하는 흐름.
@@ -3511,7 +2862,7 @@ struct Gate55GuidanceSceneBinder: UIViewRepresentable {
     let visible: Bool
     let revision: Int
     var trajectorySamples: [TrajectorySample] = []
-    var greenVizMode: GreenSurfaceVizMode = .contours
+    var greenVizMode: GreenSurfaceVizMode? = nil
     let floorAddressMode: Bool
     let floorUIModeBridge: FloorAddressUIModeBridge
 
@@ -3573,69 +2924,3 @@ struct Gate55GuidanceSceneBinder: UIViewRepresentable {
     }
 }
 
-// MARK: - Gate 1 diagnostics sheet (기존 요약 보존)
-
-private struct Gate1DiagnosticsSheet: View {
-    let scan: CompletedScan
-    let onDismiss: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("스캔 ID: \(scan.id)")
-                            .font(.caption)
-                        Text("기준 방식: \(scan.referenceMethod)")
-                        Text("경로: \(scan.pathMode.label) · 드리프트보정 \(scan.driftCorrected ? "Y" : "N")")
-                        Text("표면: \(scan.surfaceSource) · \(scan.surfaceVertexCount.formatted())점")
-                        Text(String(format: "홀 거리 %.2f m", scan.holeDistance))
-                        Text(String(format: "드리프트 %.2f mm", scan.result.driftMeters * 1_000))
-                        if !scan.driftCorrected {
-                            Text("볼홀지정계산 — 드리프트 미보정")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                        Text(String(format: "limited %.1f%%", scan.limitedTrackingRatio * 100))
-                        Text(String(format: "빈 셀 %.1f%%", scan.result.corrected.emptyCellRatio * 100))
-                        Text(
-                            String(
-                                format: "볼앵커 (%.2f, %.2f, %.2f) track=%@",
-                                scan.ballAnchor.worldX,
-                                scan.ballAnchor.worldY,
-                                scan.ballAnchor.worldZ,
-                                scan.ballPlacementTrackingOK ? "OK" : "limited"
-                            )
-                        )
-                        .font(.caption2)
-                        Text(
-                            String(
-                                format: "홀앵커 (%.2f, %.2f, %.2f) track=%@",
-                                scan.holeAnchor.worldX,
-                                scan.holeAnchor.worldY,
-                                scan.holeAnchor.worldZ,
-                                scan.holePlacementTrackingOK ? "OK" : "limited"
-                            )
-                        )
-                        .font(.caption2)
-                        Text(
-                            String(
-                                format: "카메라시작Y %.2f · 복귀Y %.2f",
-                                scan.cameraStartPose.worldY,
-                                scan.cameraReturnPose.worldY
-                            )
-                        )
-                        .font(.caption2)
-                    }
-                    .padding()
-                }
-
-                Button("닫기", action: onDismiss)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal)
-                    .padding(.vertical, 16)
-            }
-            .navigationTitle("게이트 1 진단")
-        }
-    }
-}

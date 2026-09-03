@@ -19,7 +19,6 @@
 		10000000000000000000000E /* ScanCoverageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* ScanCoverageTracker.swift */; };
 		10000000000000000000000F /* ThermalPerformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* ThermalPerformance.swift */; };
 		100000000000000000000012 /* OSDDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* OSDDesignSystem.swift */; };
-		100000000000000000000013 /* AppSettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AppSettingsSheet.swift */; };
 		100000000000000000000014 /* CameraTiltStabilizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* CameraTiltStabilizer.swift */; };
 		100000000000000000000015 /* ScanFieldSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* ScanFieldSettings.swift */; };
 		100000000000000000000016 /* LiDARTwistGuidanceOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */; };
@@ -51,7 +50,6 @@
 		20000000000000000000000E /* ScanCoverageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCoverageTracker.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* ThermalPerformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalPerformance.swift; sourceTree = "<group>"; };
 		200000000000000000000012 /* OSDDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSDDesignSystem.swift; sourceTree = "<group>"; };
-		200000000000000000000013 /* AppSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* CameraTiltStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraTiltStabilizer.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* ScanFieldSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanFieldSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiDARTwistGuidanceOverlay.swift; sourceTree = "<group>"; };
@@ -124,7 +122,6 @@
 				200000000000000000000014 /* CameraTiltStabilizer.swift */,
 				20000000000000000000000F /* ThermalPerformance.swift */,
 				200000000000000000000012 /* OSDDesignSystem.swift */,
-				200000000000000000000013 /* AppSettingsSheet.swift */,
 				200000000000000000000015 /* ScanFieldSettings.swift */,
 				200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */,
 				200000000000000000000017 /* BehindBallSweepOverlay.swift */,
@@ -321,7 +318,6 @@
 				100000000000000000000019 /* BallGroundRingOverlay.swift in Sources */,
 				10000000000000000000000F /* ThermalPerformance.swift in Sources */,
 				100000000000000000000012 /* OSDDesignSystem.swift in Sources */,
-				100000000000000000000013 /* AppSettingsSheet.swift in Sources */,
 				100000000000000000000011 /* GroundScanFilter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

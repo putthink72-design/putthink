@@ -6,7 +6,6 @@ import UIKit
 
 struct ScanFlowView: View {
     @StateObject private var controller = ARScanSessionController()
-    @StateObject private var guidancePlaceholder = Gate55GuidanceModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var regionCenterX = 0.5
     @State private var regionCenterY = 0.5
@@ -15,7 +14,6 @@ struct ScanFlowView: View {
     @State private var exportURL: URL?
     @State private var exportError: String?
     @State private var savedBrightness: CGFloat?
-    @State private var showSettings = false
     @State private var exportGeneration = 0
     /// 조준↔스캔 전환 시 ARView를 재생성하지 않기 위한 공유 카메라 뷰.
     @State private var sessionARView: ARView?
@@ -30,8 +28,7 @@ struct ScanFlowView: View {
                 Gate55GuidanceView(
                     controller: controller,
                     sessionARView: sessionARView,
-                    exportError: $exportError,
-                    onRequestClearHistory: clearScanHistory
+                    exportError: $exportError
                 )
             } else {
                 scanExperienceOverlays
@@ -65,20 +62,9 @@ struct ScanFlowView: View {
                 break
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: PerformanceSettings.didChangeNotification)) { _ in
-            applyBrightnessPolicy()
-        }
         .onChange(of: controller.completedScan?.id) { _, identifier in
             guard identifier != nil else { return }
             exportCurrentScan()
-        }
-        .sheet(isPresented: $showSettings) {
-            AppSettingsSheet(
-                mode: .scan,
-                controller: controller,
-                guidanceModel: guidancePlaceholder,
-                onRequestClearHistory: clearScanHistory
-            )
         }
     }
 
@@ -100,7 +86,7 @@ struct ScanFlowView: View {
                     .ignoresSafeArea()
             }
 
-            if controller.lidarTwistGuidance?.pitchInBand == true, showsTwistCards {
+            if controller.lidarTwistGuidance?.pitchInBand == true {
                 ScanPitchInBandWash()
             }
 
@@ -108,29 +94,6 @@ struct ScanFlowView: View {
                 scanTopChrome
                     .padding(.horizontal, OSDTopChromeMetrics.horizontalPadding)
                     .padding(.top, OSDTopChromeMetrics.topPadding)
-
-                if showsCoverageUI {
-                    coverageBanner
-                        .padding(.horizontal, 14)
-                        .padding(.top, 8)
-                }
-
-                if let twist = controller.lidarTwistGuidance, showsTwistCards {
-                    LiDARTwistGuidanceCards(guidance: twist)
-                        .padding(.horizontal, 14)
-                        .padding(.top, 8)
-                }
-
-                if let message = controller.placementMessage, showsPlacementBanner {
-                    Text(message)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.white)
-                        .padding(8)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                        .padding(.horizontal, 14)
-                        .padding(.top, 8)
-                }
 
                 Spacer(minLength: 0)
 
@@ -147,49 +110,15 @@ struct ScanFlowView: View {
         }
     }
 
-    /// 스캔 중 placement 배너는 걷기·홀 지정 단계에서 숨김.
-    private var showsPlacementBanner: Bool {
-        switch controller.flowState {
-        case .walkingToHole, .placingHole:
-            return false
-        default:
-            return true
-        }
-    }
-
-    private var showsTwistCards: Bool {
-        switch controller.flowState {
-        case .walkingToHole, .placingHole, .processing:
-            return true
-        case .complete:
-            return controller.needsBallReanchor
-        default:
-            return false
-        }
-    }
-
     private var scanTopChrome: some View {
         OSDHeaderBar {
-            if showsCoverageUI || controller.flowState != .idle {
-                OSDStatusPill(
-                    isHealthy: !controller.trackingLimited,
-                    title: trackingTitle,
-                    subtitle: "메시 \(controller.meshVertexCount.formatted())점"
-                )
+            if let twist = controller.lidarTwistGuidance {
+                ScanPitchGuidancePill(guidance: twist)
             } else {
                 Color.clear.frame(width: 1, height: 1)
             }
         } trailing: {
-            OSDGearButton { showSettings = true }
-        }
-    }
-
-    private var trackingTitle: String {
-        switch controller.flowState {
-        case .idle:
-            return "대기"
-        default:
-            return "트래킹 스캔 중"
+            Color.clear.frame(width: 1, height: 1)
         }
     }
 
@@ -199,7 +128,7 @@ struct ScanFlowView: View {
         case .placingBall:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 1 / 2",
+                    step: "STEP 1 / 3",
                     title: controller.pendingDetectedBall == nil ? "볼 위치 지정" : "볼 후보 확인",
                     body: ballPlacementBody,
                     button: ballPlacementButtonTitle,
@@ -223,34 +152,31 @@ struct ScanFlowView: View {
                                 .foregroundStyle(OSDPalette.textSecondary)
                         }
                     }
-                    referenceStatusCompact
                 }
             }
         case .walkingToHole:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 2 / 2",
+                    step: "STEP 2 / 3",
                     title: "홀까지 사선 스캔",
-                    body: "\(controller.lidarProfile.puttLineScreenHint) 홀이 가까우면 바로 지정해도 됩니다.",
+                    body: "그린을 약 40°(추천 30°–40°) 내외로 비추며 흰색매시가 생성되도록 걸으세요. 홀이 가까우면 바로 홀을 지정해도 됩니다.",
                     button: "홀 도착 · 홀 지정",
                     action: controller.beginHolePlacement,
                     enabled: true
                 ) {
-                    referenceStatusCompact
+                    EmptyView()
                 }
             }
         case .placingHole:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 2 / 2",
+                    step: "STEP 3 / 3",
                     title: "홀을 지정하세요",
-                    body: controller.pathMode.requiresBallReanchor
-                        ? "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산합니다. 볼로 돌아와 조준하면 흰 볼을 자동 정렬합니다."
-                        : "십자선을 홀컵 앞 잔디(컵 중심)에 맞춘 뒤 지정하세요. 지정 직후 경로를 계산·표시하고, 조준 중 흰 볼을 자동 정렬합니다.",
-                    button: "홀 지정 · 바로 계산",
+                    body: "화면 중앙의 홀컵 사이즈 원을 홀의 중심에 맞춘 뒤 지정하세요. 지정 직후 퍼팅경로가 계산됩니다.",
+                    button: "홀지정 · 퍼팅경로 계산",
                     action: controller.requestHolePlacement
                 ) {
-                    referenceStatusCompact
+                    EmptyView()
                 }
             }
         case .processing:
@@ -279,13 +205,13 @@ struct ScanFlowView: View {
 
     private var idleOnboardCard: some View {
         OSDOnboardCard {
-            Text("볼·홀 사이 그린을 스캔합니다.\n바닥을 약 40° 사선(허용 30–45°)으로 비추며 홀까지 걸으세요.")
+            Text("볼과 홀을 지정하고 그린을 스캔하면 홀인경로와 퍼팅방향을 안내합니다.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
             OSDPrimaryButton(
-                title: controller.scanPipelineReady ? "스캔 시작" : "LiDAR 준비 중…",
+                title: controller.scanPipelineReady ? "그린 스캔 시작" : "LiDAR 준비 중…",
                 enabled: controller.scanPipelineReady
             ) {
                 controller.startScan()
@@ -299,27 +225,12 @@ struct ScanFlowView: View {
     }
 
     private var ballPlacementBody: String {
-        switch controller.visualBallLockStatus {
-        case .candidate:
-            return "감지된 후보가 맞으면 확인하세요. 틀리거나 볼이 없으면 십자선을 원하는 지면에 두고 직접 지정하세요."
-        case .searching, .waitingForView:
-            if controller.ballDetectionPreview != nil {
-                return "볼을 찾는 중입니다. 십자선을 볼 중심에 맞추면 지면 링이 따라옵니다."
-            }
-            return "볼이 있으면 십자선을 중심에 맞추면 후보를 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
-        case .locked, .aligned:
-            return "볼이 지정되었습니다."
-        default:
-            return "볼이 있으면 십자선을 중심에 맞추면 후보를 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
-        }
+        "십자선 중심에 볼을 맞추면 자동으로 볼을 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
     }
 
     private var ballPlacementButtonTitle: String {
         guard controller.meshReady else { return "지면 준비 중…" }
-        if controller.pendingDetectedBall != nil {
-            return "감지 후보로 지정"
-        }
-        return "십자선 지면 지정"
+        return "볼 지정"
     }
 
     @ViewBuilder
@@ -345,108 +256,12 @@ struct ScanFlowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var referenceStatusCompact: some View {
-        if controller.ballAnchor != nil || controller.holeAnchor != nil {
-            VStack(alignment: .leading, spacing: 3) {
-                if let ball = controller.ballAnchor {
-                    Text(String(format: "볼 (%.2f, %.2f, %.2f)", ball.worldX, ball.worldY, ball.worldZ))
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(OSDPalette.textTertiary)
-                        .monospacedDigit()
-                }
-                if let hole = controller.holeAnchor {
-                    Text(String(format: "홀 (%.2f, %.2f, %.2f)", hole.worldX, hole.worldY, hole.worldZ))
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(OSDPalette.textTertiary)
-                        .monospacedDigit()
-                }
-                if let distance = controller.currentHoleDistance {
-                    Text(String(format: "볼→홀 %.2fm", distance))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(OSDPalette.textSecondary)
-                        .monospacedDigit()
-                }
-            }
-        }
-    }
-
     private var showsReticle: Bool {
         switch controller.flowState {
         case .placingBall, .placingHole:
             return true
         case .complete:
             return controller.needsBallReanchor
-        default:
-            return false
-        }
-    }
-
-    private var showsCoverageUI: Bool {
-        switch controller.flowState {
-        case .placingBall, .walkingToHole, .placingHole, .processing:
-            return true
-        case .complete:
-            return controller.needsBallReanchor
-        default:
-            return false
-        }
-    }
-
-    private var coverageBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !isCompactCoverage {
-                HStack(spacing: 10) {
-                    Label("파랑 격자=스캔 중", systemImage: "square.grid.3x3.fill")
-                        .foregroundStyle(Color.blue)
-                    Label("흰 격자=안정", systemImage: "checkmark.circle")
-                        .foregroundStyle(Color.white)
-                    Spacer()
-                }
-                .font(.caption2.weight(.semibold))
-            }
-
-            Text(controller.coverageSnapshot.statusLine)
-                .font(.caption.monospacedDigit().weight(.semibold))
-
-            if controller.holeAnchor != nil {
-                Text(
-                    String(
-                        format: "홀 뒤 측정 %.0fcm / %.0fcm (경로 계산 %.0fcm까지)",
-                        controller.pastHoleMeasuredMeters * 100,
-                        PuttScanCorridor.pastHoleMargin * 100,
-                        PuttScanCorridor.pastHoleMargin * 100
-                    )
-                )
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(OSDPalette.textSecondary)
-            }
-
-            ProgressView(value: controller.coverageSnapshot.stableRatio)
-                .tint(OSDPalette.accent)
-
-            if !isCompactCoverage {
-                Text(controller.coverageQualityMessage)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.9))
-
-                Text("지정 계산: \(controller.pathMode.label)")
-                    .font(.caption2)
-                    .foregroundStyle(OSDPalette.textTertiary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(OSDPalette.glassStrong, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
-    }
-
-    /// STEP 2/3에서는 안내 카드가 많아 커버리지를 한 줄로 줄임.
-    private var isCompactCoverage: Bool {
-        switch controller.flowState {
-        case .walkingToHole:
-            return true
         default:
             return false
         }
@@ -504,19 +319,6 @@ struct ScanFlowView: View {
                     exportError = "내보내기 실패: \(error.localizedDescription)"
                 }
             }
-        }
-    }
-
-    private func clearScanHistory() {
-        exportGeneration += 1
-        do {
-            try ScanExporter.clearHistory()
-            diagnostics = nil
-            exportURL = nil
-            exportError = nil
-            controller.reset()
-        } catch {
-            exportError = "기록 초기화 실패: \(error.localizedDescription)"
         }
     }
 

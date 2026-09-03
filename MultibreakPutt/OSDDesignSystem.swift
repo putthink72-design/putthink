@@ -850,6 +850,8 @@ struct OSDAimReadout: View {
 struct OSDAimCompass: View {
     let degrees: Double
 
+    private let size: CGFloat = 76
+
     var body: some View {
         ZStack {
             Circle()
@@ -858,21 +860,21 @@ struct OSDAimCompass: View {
                 .strokeBorder(OSDPalette.glassBorder, lineWidth: 1)
             Rectangle()
                 .fill(Color.white)
-                .frame(width: 2.4, height: 20)
-                .offset(y: -10)
+                .frame(width: 2.6, height: 26)
+                .offset(y: -11)
                 .rotationEffect(.degrees(degrees))
                 .shadow(color: Color.white.opacity(0.45), radius: 6)
             Text("H")
-                .font(.system(size: 7))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(OSDPalette.textSecondary)
-                .offset(y: -22)
+                .offset(y: -28)
             Text(String(format: "%+.1f°", degrees))
-                .font(.system(size: 10, weight: .heavy))
+                .font(.system(size: 11, weight: .heavy))
                 .foregroundStyle(OSDPalette.accent)
                 .monospacedDigit()
-                .offset(y: 18)
+                .offset(y: 20)
         }
-        .frame(width: 56, height: 56)
+        .frame(width: size, height: size)
     }
 }
 

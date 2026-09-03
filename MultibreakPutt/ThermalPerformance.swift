@@ -148,8 +148,8 @@ enum PerformanceSettings {
 
     static var recommendGrid: RecommendScanGrid {
         let raw = UserDefaults.standard.object(forKey: recommendGridKey) as? Int
-            ?? RecommendScanGrid.balanced.rawValue
-        return RecommendScanGrid(rawValue: raw) ?? .balanced
+            ?? RecommendScanGrid.light.rawValue
+        return RecommendScanGrid(rawValue: raw) ?? .light
     }
 
     static var wormFPS: WormAnimFPS {

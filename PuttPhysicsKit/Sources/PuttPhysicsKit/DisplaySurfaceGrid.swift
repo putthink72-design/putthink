@@ -5,7 +5,8 @@ import simd
 /// ARKit 불규칙 삼각형 대신 5cm 사각 격자로 바닥·벽 윤곽이 읽히게 한다.
 public enum DisplaySurfaceGrid {
     public static let cellSizeMeters: Float = 0.05
-    public static let maxCells = 12_000
+    /// 12m × 6m 복도 @ 5cm ≈ 28,800칸. 이보다 작으면 장거리 초반 칸이 잘린다.
+    public static let maxCells = 28_800
 
     public struct Cell: Sendable, Equatable {
         public var ix: Int32

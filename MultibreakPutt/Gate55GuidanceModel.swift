@@ -170,18 +170,29 @@ final class Gate55GuidanceModel: ObservableObject {
         let v0 = manualV0
         let beta = manualBeta
         let snapshot = context
-        let points = PerformanceSettings.effectiveRecommendPointCount
+        let coarsePoints = RecommendScanGrid.light.rawValue
+        let finePoints = RecommendScanGrid.balanced.rawValue
         let taskPriority: TaskPriority =
             thermalLevel >= .serious ? .utility : .userInitiated
         Task.detached(priority: taskPriority) {
             switch mode {
             case .recommend:
-                let result = Gate55Validation.recommend(
+                let coarse = Gate55Validation.recommend(
                     context: snapshot,
                     greenSpeed: greenSpeed,
-                    velocityPointCount: points,
-                    directionPointCount: points
+                    velocityPointCount: coarsePoints,
+                    directionPointCount: coarsePoints
                 )
+                let usedFine = coarse.primary == nil
+                let result = usedFine
+                    ? Gate55Validation.recommend(
+                        context: snapshot,
+                        greenSpeed: greenSpeed,
+                        velocityPointCount: finePoints,
+                        directionPointCount: finePoints
+                    )
+                    : coarse
+                let points = usedFine ? finePoints : coarsePoints
                 await MainActor.run {
                     guard generation == self.recomputeGeneration else { return }
                     self.recommendation = result
@@ -238,12 +249,19 @@ final class Gate55GuidanceModel: ObservableObject {
         let count = rec.corridorCandidates.count
         guard count >= 1 else { return }
         let clamped = min(max(index, 0), count - 1)
-        guard clamped != corridorIndex || abs(rec.initialVelocity - rec.corridorCandidates[clamped].candidate.initialVelocity) > 1e-9 else {
+        let ranked = rec.corridorCandidates[clamped]
+        // 평탄 노이즈 후보는 코리도에서 이미 걸러지지만, 선택 시에도 경로로 올리지 않는다.
+        if Gate55Validation.isLikelyFlatNoiseAim(
+            elevationDelta: rec.elevationDelta,
+            directionDegrees: ranked.candidate.directionDegrees
+        ) {
+            return
+        }
+        guard clamped != corridorIndex || abs(rec.initialVelocity - ranked.candidate.initialVelocity) > 1e-9 else {
             corridorIndex = clamped
             return
         }
         corridorIndex = clamped
-        let ranked = rec.corridorCandidates[clamped]
         isApplyingCorridor = true
         recomputeGeneration += 1
         let generation = recomputeGeneration
