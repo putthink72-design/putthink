@@ -127,6 +127,39 @@ final class CoverageDisplayLockTests: XCTestCase {
         XCTAssertEqual(reconstructed.y, worldCenter.y, accuracy: 1e-5)
     }
 
+    func testRigidWorldShiftDetectsOriginNotWalk() {
+        XCTAssertTrue(
+            CoverageDisplayLock.isRigidWorldShift(
+                cameraDelta: SIMD2(0.08, 0),
+                boardDelta: SIMD2(0.08, 0.01)
+            )
+        )
+        XCTAssertFalse(
+            CoverageDisplayLock.isRigidWorldShift(
+                cameraDelta: SIMD2(0.20, 0),
+                boardDelta: SIMD2(0.02, 0)
+            )
+        )
+        XCTAssertFalse(
+            CoverageDisplayLock.isRigidWorldShift(
+                cameraDelta: SIMD2(0.08, 0),
+                boardDelta: SIMD2(0, 0.08)
+            )
+        )
+    }
+
+    func testBallRelativeLocalKeysSurviveOriginShift() {
+        let ball = SIMD2<Float>(1.02, 0.40)
+        let cell = SIMD2<Float>(1.12, 0.45)
+        let shift = SIMD2<Float>(0.08, -0.03)
+        let before = CoverageDisplayLock.localCellKey(worldCenter: cell, relativeToBall: ball)
+        let after = CoverageDisplayLock.localCellKey(
+            worldCenter: cell + shift,
+            relativeToBall: ball + shift
+        )
+        XCTAssertEqual(before, after)
+    }
+
     func testGridAnchorKeySnapsToContainingCell() {
         let key = CoverageDisplayLock.gridAnchorKey(for: SIMD2(0.076, -0.011))
         let (ix, iz) = CoverageDisplayLock.unpack(key)

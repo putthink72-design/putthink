@@ -506,6 +506,10 @@ private struct PlacementARView: UIViewRepresentable {
             brightMesh.burstMode = controller?.meshCaptureBurstActive ?? true
             if let controller {
                 brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
+                if let ball = controller.ballAnchor {
+                    brightMesh.corridorBallXZ = SIMD2(ball.worldX, ball.worldZ)
+                    brightMesh.corridorBallY = Float(ball.worldY)
+                }
             }
             brightMesh.update(in: view)
             lastMeshTick = CACurrentMediaTime()

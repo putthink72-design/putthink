@@ -46,29 +46,16 @@ final class BrightMeshVisualizer {
     /// 표시 격자 높이. 매 프레임 중앙값을 쓰면 폰을 움직일 때 면이 떠다닌다.
     private var lockedCoveragePlaneY: Float?
     private var lastCoverageDisplaySignature: Int = 0
-    private static let planeLockCellCount = CoverageDisplayLock.minCellsToPlant
-    /// 볼 지정 전에도 원점 안정화 전에는 심지 않는다. 2칸 즉시 심으면 AR 원점 보정 때 격자가 흐른다.
-    private static let displayPlantCellCount = CoverageDisplayLock.minCellsToPlant
-    /// 칸은 ARAnchor에 고정. 스캔 직후 레이캐스트로 끌면 격자가 흐른다.
+    /// 한 번 심으면 카메라·감지 볼을 따라가지 않는다. 따라가면 격자 전체가 폰과 같이 움직인다.
     private var coverageStickEntity: AnchorEntity?
-    /// 스틱 로컬 격자 원점에 대응하는 월드 5cm 셀 키.
+    /// 심을 때 고정한 월드 5cm 셀 키. 이후 ingest·표시의 유일한 원점.
     private var coverageGridAnchorKey: Int64?
-    /// 볼 기준으로 심은 스틱이면 재심기 방지.
     private var coverageStickPlantBallXZ: SIMD2<Double>?
     private var frozenWorldKeys: Set<Int64> = []
     private var worldToLocalKey: [Int64: Int64] = [:]
     private var frozenLocalCells: [Int64: DisplaySurfaceGrid.Cell] = [:]
     private var frozenLocalStable: Set<Int64> = []
-    /// App Store 첫 실행·콜드 트래킹에서 원점이 밀릴 때까지 기다린다 (quickDisplay 금지).
     private var originSettle = CoverageOriginSettle()
-    private var lastIngestCameraXZ: SIMD2<Float>?
-    /// 원점 점프 직후 잠깐 새 월드 키만 막는다. 영구 잠금은 보행 중 AR 보정 한 번에 격자가 멈춘다.
-    private var newCellIngestSuppressedUntil: TimeInterval = 0
-    /// 한 틱에 이보다 크면 걸음이 아니라 원점 보정으로 본다. 0.06s·1.5m/s 보행은 약 9cm.
-    private static let ingestOriginJumpMeters: Float = 0.18
-    /// 원점 점프 후 보드를 비우고 다시 심기 전 억제.
-    private static let ingestJumpSuppressDuration: TimeInterval = 0.45
-    /// 리본 메시 적용 최소 간격 — 시그니처 폭주 때 물결 팝 방지.
     private static let minCoverageRebuildInterval: TimeInterval = 0.12
 
     /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
@@ -254,8 +241,7 @@ final class BrightMeshVisualizer {
         lockedCoveragePlaneY = nil
         lastCoverageDisplaySignature = 0
         coverageStickPlantBallXZ = nil
-        lastIngestCameraXZ = nil
-        newCellIngestSuppressedUntil = 0
+        originSettle = CoverageOriginSettle()
         clearFrozenCoverageCells()
     }
 
@@ -271,8 +257,6 @@ final class BrightMeshVisualizer {
         lockedCoveragePlaneY = nil
         lastCoverageDisplaySignature = 0
         coverageStickPlantBallXZ = nil
-        lastIngestCameraXZ = nil
-        newCellIngestSuppressedUntil = 0
         originSettle = CoverageOriginSettle()
         coverageBuilding = false
         coverageRebuildPending = false
@@ -280,18 +264,6 @@ final class BrightMeshVisualizer {
         if let view {
             detachCoverageStick(in: view)
         }
-    }
-
-    /// AR 월드 원점이 점프하면 옛 칸+새 칸이 겹쳐 격자가 흐른다. 보드를 비우고 안정화 후 다시 심는다.
-    private func resetCoverageBoardForOriginJump(in view: ARView) {
-        lockedCoveragePlaneY = nil
-        lastCoverageDisplaySignature = 0
-        coverageStickPlantBallXZ = nil
-        originSettle = CoverageOriginSettle()
-        coverageBuilding = false
-        coverageRebuildPending = false
-        clearFrozenCoverageCells()
-        detachCoverageStick(in: view)
     }
 
     func update(in view: ARView) {
@@ -326,11 +298,6 @@ final class BrightMeshVisualizer {
     }
 
     // MARK: - Coverage grid (5cm, ARKit 메시와 독립)
-
-    /// 표시 격자는 5cm 키의 정규 중심에 맞춘다. lastX/lastZ 평균은 칸 안 샘플 편향으로 앵커가 옆으로 밀릴 수 있다.
-    private static func coverageGridCenters(from snapshot: ScanCoverageSnapshot) -> [SIMD2<Float>] {
-        snapshot.cellCenters.keys.map { CoverageDisplayLock.cellCenterXZ($0) }
-    }
 
     private func updateCoverageGrid(now: TimeInterval, in view: ARView) {
         coverageFillEntity?.transform = Transform()
@@ -373,23 +340,13 @@ final class BrightMeshVisualizer {
         guard let stick = coverageStickEntity else { return }
 
         if snapshot.observedCellCount > 0 {
-            let gate = coverageIngestGate(in: view, now: now)
-            if gate.originJumped {
-                // 원점 보정으로 월드 키가 바뀌면 누적 칸을 비운다. 안 비우면 격자가 옆으로 흐른다.
-                resetCoverageBoardForOriginJump(in: view)
-                return
-            }
-            if !gate.skip {
-                ingestFrozenCells(
-                    snapshot: snapshot,
-                    ball: ball,
-                    hole: hole,
-                    pastHole: past,
-                    halfWidth: half,
-                    planeY: planeY,
-                    allowNewCells: gate.allowNewCells
-                )
-            }
+            ingestFrozenCells(
+                snapshot: snapshot,
+                ball: ball,
+                hole: hole,
+                pastHole: past,
+                halfWidth: half
+            )
         }
         rebuildCoverageMeshIfNeeded(
             now: now,
@@ -523,9 +480,7 @@ final class BrightMeshVisualizer {
         ball: SIMD2<Double>?,
         hole: SIMD2<Double>?,
         pastHole: Double,
-        halfWidth: Double,
-        planeY: Float,
-        allowNewCells: Bool
+        halfWidth: Double
     ) {
         guard let anchorKey = coverageGridAnchorKey else { return }
         let lift: Float = 0.004
@@ -542,51 +497,28 @@ final class BrightMeshVisualizer {
                 ) else { continue }
             }
             let isStable = snapshot.stableKeys.contains(key)
-            if let localKey = worldToLocalKey[key] {
+            if let existing = worldToLocalKey[key] {
                 if isStable {
-                    frozenLocalStable.insert(localKey)
+                    frozenLocalStable.insert(existing)
                 }
                 continue
             }
-            guard allowNewCells else { continue }
-            let resolved = CoverageDisplayLock.localCell(
-                worldKey: key,
-                anchorKey: anchorKey,
-                lift: lift,
-                existing: frozenLocalCells
-            )
+            // 심은 월드 원점 기준. 걷는 동안 새 월드 칸은 옆 로컬 칸으로 쌓인다.
+            let localKey = CoverageDisplayLock.localCellKey(worldKey: key, anchorKey: anchorKey)
+            worldToLocalKey[key] = localKey
             frozenWorldKeys.insert(key)
-            worldToLocalKey[key] = resolved.key
-            if resolved.created {
-                frozenLocalCells[resolved.key] = resolved.cell
+            if frozenLocalCells[localKey] == nil {
+                let (lix, liz) = CoverageDisplayLock.unpack(localKey)
+                frozenLocalCells[localKey] = DisplaySurfaceGrid.Cell(
+                    ix: lix,
+                    iz: liz,
+                    height: lift
+                )
             }
             if isStable {
-                frozenLocalStable.insert(resolved.key)
+                frozenLocalStable.insert(localKey)
             }
         }
-    }
-
-    private func rekeyFrozenCoverageCells(to newAnchorKey: Int64) {
-        guard let oldAnchorKey = coverageGridAnchorKey, oldAnchorKey != newAnchorKey else { return }
-        var newWorldToLocal: [Int64: Int64] = [:]
-        var newFrozenLocal: [Int64: DisplaySurfaceGrid.Cell] = [:]
-        var newFrozenStable: Set<Int64> = []
-        for worldKey in frozenWorldKeys {
-            let newLocalKey = CoverageDisplayLock.localCellKey(worldKey: worldKey, anchorKey: newAnchorKey)
-            let oldLocalKey = worldToLocalKey[worldKey]
-            let height = oldLocalKey.flatMap { frozenLocalCells[$0]?.height } ?? 0
-            let (lix, liz) = CoverageDisplayLock.unpack(newLocalKey)
-            newFrozenLocal[newLocalKey] = DisplaySurfaceGrid.Cell(ix: lix, iz: liz, height: height)
-            newWorldToLocal[worldKey] = newLocalKey
-            if let oldLocalKey, frozenLocalStable.contains(oldLocalKey) {
-                newFrozenStable.insert(newLocalKey)
-            }
-        }
-        worldToLocalKey = newWorldToLocal
-        frozenLocalCells = newFrozenLocal
-        frozenLocalStable = newFrozenStable
-        coverageGridAnchorKey = newAnchorKey
-        lastCoverageDisplaySignature = 0
     }
 
     private func ensureCoverageStickPlanted(
@@ -597,64 +529,28 @@ final class BrightMeshVisualizer {
         in view: ARView
     ) -> Bool {
         if coverageStickEntity != nil {
-            if let ball {
-                coverageStickPlantBallXZ = ball
-            }
             return true
         }
-
-        let readyCount = snapshot.observedCellCount >= Self.displayPlantCellCount
-            || (!frozenLocalCells.isEmpty && snapshot.observedCellCount >= Self.displayPlantCellCount)
-        guard readyCount else { return false }
-        let centers = Self.coverageGridCenters(from: snapshot)
-        let centroid = CoverageDisplayLock.centroidXZ(of: centers)
-        guard let anchorKey = Self.coverageAnchorKey(from: snapshot) else { return false }
-        // 볼 지정 전이라도 원점 안정화 전에는 심지 않는다.
-        // 2칸·즉시 심기는 콜드 트래킹에서 격자가 물결처럼 흐르는 직접 원인.
-        guard originSettle.observe(centroid, now: now) else { return false }
-        attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
+        let plantPoint: SIMD2<Float>
         if let ball {
+            plantPoint = SIMD2(Float(ball.x), Float(ball.y))
             coverageStickPlantBallXZ = ball
+        } else {
+            guard snapshot.observedCellCount >= CoverageDisplayLock.minCellsToPlant else { return false }
+            guard let centroid = CoverageDisplayLock.centroidXZ(
+                of: Self.coverageGridCenters(from: snapshot)
+            ) else { return false }
+            plantPoint = centroid
         }
-        return true
+        // 볼이 있어도 원점이 안 굳은 채 심지 않는다. 굳힌 뒤에만 바닥에 고정.
+        guard originSettle.observe(plantPoint, now: now) else { return false }
+        let anchorKey = CoverageDisplayLock.gridAnchorKey(for: plantPoint)
+        attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
+        return coverageStickEntity != nil
     }
 
-    /// AR 원점 점프 직후에만 새 칸을 잠깐 막는다. 서 있어도 LiDAR 스냅샷으로 구멍을 메운다.
-    private func coverageIngestGate(
-        in view: ARView,
-        now: TimeInterval
-    ) -> (allowNewCells: Bool, skip: Bool, originJumped: Bool) {
-        guard let frame = view.session.currentFrame else { return (false, true, false) }
-        let cam = frame.camera.transform.columns.3
-        let xz = SIMD2<Float>(cam.x, cam.z)
-        defer { lastIngestCameraXZ = xz }
-
-        let suppressionActive = now < newCellIngestSuppressedUntil
-        if case .limited = frame.camera.trackingState {
-            return (false, false, false)
-        }
-        guard let previous = lastIngestCameraXZ else { return (true, false, false) }
-        let moved = simd_distance(previous, xz)
-        if moved >= Self.ingestOriginJumpMeters {
-            newCellIngestSuppressedUntil = now + Self.ingestJumpSuppressDuration
-            // 스틱이 이미 심긴 뒤의 점프만 보드 리셋. 심기 전 점프는 settle이 처리.
-            let jumpedAfterPlant = coverageStickEntity != nil
-            return (false, false, jumpedAfterPlant)
-        }
-        return (!suppressionActive, false, false)
-    }
-
-    private static func coverageAnchorKey(forBall ball: SIMD2<Double>) -> Int64 {
-        CoverageDisplayLock.gridAnchorKey(
-            for: SIMD2(Float(ball.x), Float(ball.y))
-        )
-    }
-
-    private static func coverageAnchorKey(from snapshot: ScanCoverageSnapshot) -> Int64? {
-        guard let centroid = CoverageDisplayLock.centroidXZ(
-            of: coverageGridCenters(from: snapshot)
-        ) else { return nil }
-        return CoverageDisplayLock.gridAnchorKey(for: centroid)
+    private static func coverageGridCenters(from snapshot: ScanCoverageSnapshot) -> [SIMD2<Float>] {
+        snapshot.cellCenters.keys.map { CoverageDisplayLock.cellCenterXZ($0) }
     }
 
     private func attachCoverageStick(
@@ -856,11 +752,10 @@ final class BrightMeshVisualizer {
     private func lockedDisplayPlaneY(from snapshot: ScanCoverageSnapshot, ballY: Float?) -> Float {
         let heights = Array(snapshot.cellHeights.values)
         let median = Self.medianFloat(heights) ?? 0
-        let minCellsForPlane = Self.displayPlantCellCount
         if lockedCoveragePlaneY == nil {
             if let ballY {
                 lockedCoveragePlaneY = ballY
-            } else if snapshot.observedCellCount >= minCellsForPlane {
+            } else if snapshot.observedCellCount >= 4 {
                 lockedCoveragePlaneY = median
             }
             return lockedCoveragePlaneY ?? ballY ?? median

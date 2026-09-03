@@ -33,6 +33,18 @@ public enum CoverageDisplayLock {
         return packedKey(ix: ix, iz: iz)
     }
 
+    /// 월드 점 → 볼 기준 로컬 셀. 원점이 밀려도 볼과 칸이 같이 밀리면 키가 같다.
+    public static func localCellKey(
+        worldCenter: SIMD2<Float>,
+        relativeToBall ball: SIMD2<Float>,
+        cellSize: Float = cellSizeMeters
+    ) -> Int64 {
+        localCellKey(
+            worldKey: gridAnchorKey(for: worldCenter, cellSize: cellSize),
+            anchorKey: gridAnchorKey(for: ball, cellSize: cellSize)
+        )
+    }
+
     /// 월드 셀 → 앵커 기준 로컬 셀. stick 역변환 + floor 양자화는 최대 2.5cm 옆으로 밀린다.
     public static func localCellKey(worldKey: Int64, anchorKey: Int64) -> Int64 {
         let (wx, wz) = unpack(worldKey)
@@ -117,6 +129,26 @@ public enum CoverageDisplayLock {
         let (qix, qiz) = unpack(quantized)
         let cell = DisplaySurfaceGrid.Cell(ix: qix, iz: qiz, height: lift)
         return ResolvedCell(key: quantized, cell: cell, created: true)
+    }
+
+    /// 서 있는 동안 카메라와 격자 센트로이드가 같은 방향으로 같이 뛰면 AR 원점 보정.
+    /// 걷기면 카메라만 크게 움직이고 보드 센트로이드는 거의 안 움직인다.
+    public static func isRigidWorldShift(
+        cameraDelta: SIMD2<Float>,
+        boardDelta: SIMD2<Float>,
+        minMeters: Float = 0.05,
+        maxMeters: Float = 0.50,
+        maxLengthMismatch: Float = 0.05,
+        minDirectionDot: Float = 0.7
+    ) -> Bool {
+        let camMove = simd_length(cameraDelta)
+        let boardMove = simd_length(boardDelta)
+        guard camMove >= minMeters, boardMove >= minMeters else { return false }
+        guard camMove <= maxMeters, boardMove <= maxMeters else { return false }
+        guard abs(camMove - boardMove) <= maxLengthMismatch else { return false }
+        let camDir = cameraDelta / camMove
+        let boardDir = boardDelta / boardMove
+        return simd_dot(camDir, boardDir) >= minDirectionDot
     }
 }
 

@@ -1544,6 +1544,12 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             ballDetectionPreview = pose
             return
         }
+        let jump = hypot(previous.worldX - pose.worldX, previous.worldZ - pose.worldZ)
+        // 원점 보정이면 보간하지 않는다. 보간하면 링이 흐르는 격자를 따라간다.
+        if jump >= 0.06 {
+            ballDetectionPreview = pose
+            return
+        }
         let alpha = ballPreviewSmoothing
         ballDetectionPreview = ScanPose(
             worldX: previous.worldX * (1 - alpha) + pose.worldX * alpha,
@@ -1695,10 +1701,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         )
         if let previous = pendingDetectedBall {
             let jump = hypot(previous.worldX - pose.worldX, previous.worldZ - pose.worldZ)
-            guard jump < 0.12 else {
-                // 갑자기 다른 곳으로 튀면 오탐으로 보고 후보를 갱신하지 않는다.
-                return
-            }
+            // 25cm 이상은 다른 물체. 그 안은 같은 볼의 원점 보정으로 보고 스냅한다.
+            guard jump < 0.25 else { return }
         }
         pendingDetectedBall = pose
         ballDetectionPreview = pose
