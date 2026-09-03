@@ -90,16 +90,6 @@ struct ScanFlowView: View {
                     .allowsHitTesting(false)
             }
 
-            if !controller.holeGroundRingPoints.isEmpty {
-                HoleCupRingOverlay(points: controller.holeGroundRingPoints)
-                    .ignoresSafeArea()
-            }
-
-            if controller.flowState == .placingBall, !controller.ballGroundRingPoints.isEmpty {
-                BallGroundRingOverlay(points: controller.ballGroundRingPoints)
-                    .ignoresSafeArea()
-            }
-
             if controller.lidarTwistGuidance?.pitchInBand == true {
                 ScanPitchInBandWash()
             }
@@ -398,7 +388,7 @@ private struct PlacementARView: UIViewRepresentable {
             sessionARView = view
         }
         context.coordinator.attachDisplayLink(controller: controller)
-        // 머티리얼 셰이더를 미리 컴파일 — 첫 메시 표시 히칭 제거.
+        // 실제 커버리지 리본 MeshResource까지 사전 컴파일 — 첫 스캔 격자 물결 히칭 제거.
         context.coordinator.brightMesh.prewarmRenderPipelines(in: view)
         // ARView에 session이 붙은 직후 워밍업(onAppear보다 앞서 cold start 단축).
         controller.prewarmSession()
@@ -408,7 +398,10 @@ private struct PlacementARView: UIViewRepresentable {
     func updateUIView(_ uiView: ARView, context: Context) {
         context.coordinator.arView = uiView
         if sessionARView !== uiView {
-            sessionARView = uiView
+            // Binding publish during updateUIView triggers the same SwiftUI warning.
+            DispatchQueue.main.async {
+                sessionARView = uiView
+            }
         }
         context.coordinator.controller = controller
         context.coordinator.lineWidthPixels = 2
@@ -441,7 +434,7 @@ private struct PlacementARView: UIViewRepresentable {
                 hole: controller.holeAnchor
             )
         }
-        context.coordinator.refreshBallRing(controller: controller, in: uiView)
+        // Ring @Published updates run on DisplayLink only — never inside updateUIView.
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
@@ -475,6 +468,7 @@ private struct PlacementARView: UIViewRepresentable {
         private var burstRateApplied = false
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?
+        private weak var ringOverlay: PlacementRingOverlayView?
 
         func attachDisplayLink(controller: ARScanSessionController) {
             self.controller = controller
@@ -488,6 +482,17 @@ private struct PlacementARView: UIViewRepresentable {
         func detachDisplayLink() {
             displayLink?.invalidate()
             displayLink = nil
+            ringOverlay?.removeFromSuperview()
+            ringOverlay = nil
+        }
+
+        private func ensureRingOverlay(in view: ARView) -> PlacementRingOverlayView {
+            if let ringOverlay { return ringOverlay }
+            let overlay = PlacementRingOverlayView(frame: view.bounds)
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(overlay)
+            ringOverlay = overlay
+            return overlay
         }
 
         /// 스캔 시작 순간 — 워밍업된 지오메트리를 즉시 공개하고 첫 빌드도 바로 스케줄.
@@ -548,14 +553,13 @@ private struct PlacementARView: UIViewRepresentable {
         }
 
         func refreshPlacementRings(controller: ARScanSessionController, in view: ARView) {
+            let overlay = ensureRingOverlay(in: view)
+            overlay.frame = view.bounds
+            view.bringSubviewToFront(overlay)
             let frame = view.session.currentFrame
             let viewport = view.bounds.size
-            controller.refreshBallGroundRing(frame: frame, viewport: viewport)
-            controller.refreshHoleGroundRing(frame: frame, viewport: viewport)
-        }
-
-        func refreshBallRing(controller: ARScanSessionController, in view: ARView) {
-            refreshPlacementRings(controller: controller, in: view)
+            overlay.ballPoints = controller.projectedBallGroundRing(frame: frame, viewport: viewport)
+            overlay.holePoints = controller.projectedHoleGroundRing(frame: frame, viewport: viewport)
         }
 
         func syncMarkers(

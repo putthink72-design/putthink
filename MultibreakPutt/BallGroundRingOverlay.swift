@@ -1,6 +1,6 @@
 import ARKit
 import PuttPhysicsKit
-import SwiftUI
+import UIKit
 
 /// 바닥면 XZ 원을 카메라에 투영해 사선 시 타원으로 그린다.
 enum GroundCircleProjector {
@@ -57,64 +57,81 @@ enum BallGroundRingProjector {
     }
 }
 
-struct BallGroundRingOverlay: View {
-    let points: [CGPoint]
+/// Drawn on ARView from DisplayLink — avoids SwiftUI `@Published` during view updates.
+final class PlacementRingOverlayView: UIView {
+    private static let accentUIColor = UIColor(
+        red: 1.0,
+        green: 176 / 255,
+        blue: 32 / 255,
+        alpha: 1
+    )
 
-    var body: some View {
-        GroundCircleStrokeOverlay(
-            points: points,
-            color: .white,
-            lineWidth: 4
-        )
+    var ballPoints: [CGPoint] = [] {
+        didSet { if oldValue != ballPoints { setNeedsDisplay() } }
     }
-}
-
-/// 홀컵 지정·재지정 — 규격 108mm(Ø) 노란 링.
-struct HoleCupRingOverlay: View {
-    let points: [CGPoint]
-
-    var body: some View {
-        GroundCircleStrokeOverlay(
-            points: points,
-            color: OSDPalette.accent,
-            lineWidth: 3.5,
-            dashed: true
-        )
+    var holePoints: [CGPoint] = [] {
+        didSet { if oldValue != holePoints { setNeedsDisplay() } }
     }
-}
 
-private struct GroundCircleStrokeOverlay: View {
-    let points: [CGPoint]
-    let color: Color
-    var lineWidth: CGFloat = 3
-    var dashed: Bool = false
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        contentMode = .redraw
+    }
 
-    var body: some View {
-        Canvas { context, _ in
-            guard points.count >= 3 else { return }
-            var path = Path()
-            path.move(to: points[0])
-            for point in points.dropFirst() {
-                path.addLine(to: point)
-            }
-            path.closeSubpath()
-            var style = StrokeStyle(
-                lineWidth: lineWidth,
-                lineCap: .round,
-                lineJoin: .round
-            )
-            if dashed {
-                style.dash = [6, 5]
-            }
-            if dashed {
-                context.stroke(
-                    path,
-                    with: .color(.black.opacity(0.45)),
-                    style: StrokeStyle(lineWidth: lineWidth + 1.6, lineCap: .round, lineJoin: .round, dash: [6, 5])
-                )
-            }
-            context.stroke(path, with: .color(color), style: style)
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func clear() {
+        ballPoints = []
+        holePoints = []
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        stroke(ballPoints, color: .white, lineWidth: 4, dashed: false, in: ctx)
+        stroke(holePoints, color: Self.accentUIColor, lineWidth: 3.5, dashed: true, in: ctx)
+    }
+
+    private func stroke(
+        _ points: [CGPoint],
+        color: UIColor,
+        lineWidth: CGFloat,
+        dashed: Bool,
+        in ctx: CGContext
+    ) {
+        guard points.count >= 3 else { return }
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        let path = CGMutablePath()
+        path.move(to: points[0])
+        for point in points.dropFirst() {
+            path.addLine(to: point)
         }
-        .allowsHitTesting(false)
+        path.closeSubpath()
+        if dashed {
+            ctx.setStrokeColor(UIColor.black.withAlphaComponent(0.45).cgColor)
+            ctx.setLineWidth(lineWidth + 1.6)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.setLineDash(phase: 0, lengths: [6, 5])
+            ctx.addPath(path)
+            ctx.strokePath()
+        }
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(lineWidth)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        if dashed {
+            ctx.setLineDash(phase: 0, lengths: [6, 5])
+        } else {
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
+        ctx.addPath(path)
+        ctx.strokePath()
     }
 }

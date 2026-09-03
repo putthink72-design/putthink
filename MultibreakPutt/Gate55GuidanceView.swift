@@ -292,16 +292,6 @@ struct Gate55GuidanceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
-
-            if !controller.ballGroundRingPoints.isEmpty {
-                BallGroundRingOverlay(points: controller.ballGroundRingPoints)
-                    .ignoresSafeArea()
-            }
-
-            if !controller.holeGroundRingPoints.isEmpty, !floorAddressMode {
-                HoleCupRingOverlay(points: controller.holeGroundRingPoints)
-                    .ignoresSafeArea()
-            }
         }
     }
 

@@ -175,8 +175,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     /// 1프레임 미리보기(링). 확인 버튼은 `pendingDetectedBall` 합의 후에만.
     @Published private(set) var ballDetectionPreview: ScanPose?
     /// 지면 링 투영(디스플레이 링크 갱신).
-    @Published private(set) var ballGroundRingPoints: [CGPoint] = []
-    @Published private(set) var holeGroundRingPoints: [CGPoint] = []
+    /// When true, placement ring UI hides the hole cup (e.g. floor-address mode).
+    var hidesHoleCupRingOverlay = false
     /// 커버리지가 홀 뒤로 얼마나 들어왔는지(최대 1.0m).
     @Published private(set) var pastHoleMeasuredMeters = 0.0
     @Published var sigma = 1.5
@@ -695,7 +695,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         return centerGroundPose(frame: frame)
     }
 
-    /// 링(`ballGroundRingPoints`)과 동일한 월드 좌표. preview만 있을 때 raycast로 떨어지면 오차가 난다.
+    /// 링 오버레이와 동일한 월드 좌표. preview만 있을 때 raycast로 떨어지면 오차가 난다.
     private func resolvedManualBallPlacementPose() -> ScanPose? {
         if let pending = pendingDetectedBall { return pending }
         if (flowState == .placingBall || isVisualBallHunting), let preview = ballDetectionPreview {
@@ -1321,8 +1321,6 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         guard flowState == .placingBall else { return }
         ballAnchor = pose
         ballDetectionPreview = nil
-        ballGroundRingPoints = []
-        holeGroundRingPoints = []
         if let transform = session.currentFrame?.camera.transform {
             coverageTracker.captureTiltReference(from: transform)
         }
@@ -1480,8 +1478,6 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         pendingDetectedBall = nil
         ballDetectionPreview = nil
         guidanceLiveBallPose = nil
-        ballGroundRingPoints = []
-        holeGroundRingPoints = []
     }
 
     /// 볼 배치 단계에서 링에 쓸 월드 좌표(확정 > 후보 > 미리보기).
@@ -1503,14 +1499,15 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         return false
     }
 
-    func refreshBallGroundRing(frame: ARFrame?, viewport: CGSize) {
-        guard let pose = ballRingWorldPose, let frame else {
-            if !ballGroundRingPoints.isEmpty {
-                ballGroundRingPoints = []
-            }
-            return
-        }
-        let projected = BallGroundRingProjector.screenPoints(
+    private var showsHoleCupPlacementRing: Bool {
+        !hidesHoleCupRingOverlay
+            && (flowState == .placingHole || placementRequest == .reanchorHole)
+    }
+
+    /// Screen-space ball ring for UIKit overlay (no `@Published` — safe from DisplayLink).
+    func projectedBallGroundRing(frame: ARFrame?, viewport: CGSize) -> [CGPoint] {
+        guard let pose = ballRingWorldPose, let frame else { return [] }
+        return BallGroundRingProjector.screenPoints(
             worldX: pose.worldX,
             worldY: pose.worldY,
             worldZ: pose.worldZ,
@@ -1518,29 +1515,13 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             viewport: viewport,
             orientation: Self.interfaceOrientation()
         ) ?? []
-        if projected != ballGroundRingPoints {
-            ballGroundRingPoints = projected
-        }
     }
 
-    private var showsHoleCupPlacementRing: Bool {
-        flowState == .placingHole || placementRequest == .reanchorHole
-    }
-
-    func refreshHoleGroundRing(frame: ARFrame?, viewport: CGSize) {
-        guard showsHoleCupPlacementRing, let frame else {
-            if !holeGroundRingPoints.isEmpty {
-                holeGroundRingPoints = []
-            }
-            return
-        }
-        guard let pose = centerGroundPose(frame: frame) else {
-            if !holeGroundRingPoints.isEmpty {
-                holeGroundRingPoints = []
-            }
-            return
-        }
-        let projected = GroundCircleProjector.screenPoints(
+    /// Screen-space hole-cup ring for UIKit overlay (no `@Published` — safe from DisplayLink).
+    func projectedHoleGroundRing(frame: ARFrame?, viewport: CGSize) -> [CGPoint] {
+        guard showsHoleCupPlacementRing, let frame else { return [] }
+        guard let pose = centerGroundPose(frame: frame) else { return [] }
+        return GroundCircleProjector.screenPoints(
             worldX: pose.worldX,
             worldY: pose.worldY,
             worldZ: pose.worldZ,
@@ -1549,9 +1530,6 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             viewport: viewport,
             orientation: Self.interfaceOrientation()
         ) ?? []
-        if projected != holeGroundRingPoints {
-            holeGroundRingPoints = projected
-        }
     }
 
     private func updateBallDetectionPreview(_ contact: GolfBallWorldContact, timestamp: TimeInterval) {

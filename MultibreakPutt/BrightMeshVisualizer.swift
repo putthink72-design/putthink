@@ -47,8 +47,8 @@ final class BrightMeshVisualizer {
     private var lockedCoveragePlaneY: Float?
     private var lastCoverageDisplaySignature: Int = 0
     private static let planeLockCellCount = CoverageDisplayLock.minCellsToPlant
-    /// 볼 지정 전 바둑판을 빨리 띄우기 위한 표시 전용 임계(물리 minCellsToPlant와 분리).
-    private static let quickDisplayCellCount = 2
+    /// 볼 지정 전에도 원점 안정화 전에는 심지 않는다. 2칸 즉시 심으면 AR 원점 보정 때 격자가 흐른다.
+    private static let displayPlantCellCount = CoverageDisplayLock.minCellsToPlant
     /// 칸은 ARAnchor에 고정. 스캔 직후 레이캐스트로 끌면 격자가 흐른다.
     private var coverageStickEntity: AnchorEntity?
     /// 스틱 로컬 격자 원점에 대응하는 월드 5cm 셀 키.
@@ -59,14 +59,17 @@ final class BrightMeshVisualizer {
     private var worldToLocalKey: [Int64: Int64] = [:]
     private var frozenLocalCells: [Int64: DisplaySurfaceGrid.Cell] = [:]
     private var frozenLocalStable: Set<Int64> = []
-    private var originSettle = CoverageOriginSettle.quickDisplay
+    /// App Store 첫 실행·콜드 트래킹에서 원점이 밀릴 때까지 기다린다 (quickDisplay 금지).
+    private var originSettle = CoverageOriginSettle()
     private var lastIngestCameraXZ: SIMD2<Float>?
     /// 원점 점프 직후 잠깐 새 월드 키만 막는다. 영구 잠금은 보행 중 AR 보정 한 번에 격자가 멈춘다.
     private var newCellIngestSuppressedUntil: TimeInterval = 0
     /// 한 틱에 이보다 크면 걸음이 아니라 원점 보정으로 본다. 0.06s·1.5m/s 보행은 약 9cm.
-    private static let ingestOriginJumpMeters: Float = 0.25
-    /// 원점 점프 후 새 칸 억제 시간. 짧게 두면 보행 중 격자가 다시 쌓인다.
-    private static let ingestJumpSuppressDuration: TimeInterval = 0.35
+    private static let ingestOriginJumpMeters: Float = 0.18
+    /// 원점 점프 후 보드를 비우고 다시 심기 전 억제.
+    private static let ingestJumpSuppressDuration: TimeInterval = 0.45
+    /// 리본 메시 적용 최소 간격 — 시그니처 폭주 때 물결 팝 방지.
+    private static let minCoverageRebuildInterval: TimeInterval = 0.12
 
     /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
     /// 스캔 시작 시 false로 바꾸면 이미 빌드된 메시가 즉시 나타난다.
@@ -137,9 +140,10 @@ final class BrightMeshVisualizer {
         }
     }
 
-    /// Metal 파이프라인(머티리얼 셰이더) 사전 컴파일 — 첫 메시 표시 프레임의 히칭 제거.
-    /// 카메라 2m 전방 0.5mm 박스(서브픽셀)라 보이지 않지만 항상 프러스텀 안에 있어
-    /// 셰이더 컴파일이 확실히 일어난다. 월드 고정 위치는 프러스텀 컬링으로 컴파일이 안 될 수 있음.
+    /// Metal 파이프라인 사전 컴파일.
+    /// 박스만 데우면 첫 커버리지 리본(`MeshDescriptor` 삼각형) PSO가 콜드로 남아
+    /// 첫 그린 스캔에서 재빌드가 밀리며 흰 격자가 물결처럼 흐른다.
+    /// 실제 표시와 같은 리본 메시까지 미리 생성·장면에 올려 첫 스캔도 이후와 같게 한다.
     func prewarmRenderPipelines(in view: ARView) {
         guard pipelinePrewarmAnchor == nil else { return }
         let anchor = AnchorEntity(.camera)
@@ -154,8 +158,76 @@ final class BrightMeshVisualizer {
             entity.position = SIMD3<Float>(Float(index) * 0.002 - 0.003, 0, -2.0)
             anchor.addChild(entity)
         }
+
+        // Sync: 첫 스캔 전에 리본 MeshResource.generate PSO를 반드시 한 번 태운다.
+        let seed = Self.buildPrewarmCoverageMeshes(gridSide: 8)
+        Self.attachPrewarmCoverageMeshes(seed, to: anchor, yOffset: 0.012)
+
         view.scene.addAnchor(anchor)
         pipelinePrewarmAnchor = anchor
+
+        // Async: 실스캔에 가까운 청크 크기로 한 번 더 데운다.
+        buildQueue.async { [weak self] in
+            let larger = Self.buildPrewarmCoverageMeshes(gridSide: 18)
+            DispatchQueue.main.async {
+                guard let self, let anchor = self.pipelinePrewarmAnchor else { return }
+                Self.attachPrewarmCoverageMeshes(larger, to: anchor, yOffset: -0.012)
+            }
+        }
+    }
+
+    /// 표시용 커버리지 리본과 동일 토폴로지(노란/흰 선 청크)를 합성한다.
+    private static func buildPrewarmCoverageMeshes(gridSide: Int) -> (yellow: [MeshResource], white: [MeshResource]) {
+        let side = max(2, gridSide)
+        var cells: [DisplaySurfaceGrid.Cell] = []
+        cells.reserveCapacity(side * side)
+        var stableKeys = Set<Int64>()
+        var tentativeKeys = Set<Int64>()
+        stableKeys.reserveCapacity((side * side + 1) / 2)
+        tentativeKeys.reserveCapacity((side * side + 1) / 2)
+
+        for iz in 0..<side {
+            for ix in 0..<side {
+                let cell = DisplaySurfaceGrid.Cell(ix: Int32(ix), iz: Int32(iz), height: 0)
+                cells.append(cell)
+                if (ix + iz).isMultiple(of: 2) {
+                    stableKeys.insert(cell.key)
+                } else {
+                    tentativeKeys.insert(cell.key)
+                }
+            }
+        }
+
+        var coverage = ScanCoverageSnapshot.empty
+        coverage.observedCellCount = cells.count
+        coverage.stableCellCount = stableKeys.count
+        coverage.tentativeCellCount = tentativeKeys.count
+        coverage.stableKeys = stableKeys
+        coverage.tentativeKeys = tentativeKeys
+        return buildChunkedCoverageMeshes(cells: cells, coverage: coverage)
+    }
+
+    private static func attachPrewarmCoverageMeshes(
+        _ meshes: (yellow: [MeshResource], white: [MeshResource]),
+        to anchor: AnchorEntity,
+        yOffset: Float
+    ) {
+        let yellowMaterial = makeLineMaterial(color: tentativeColor)
+        let whiteMaterial = makeLineMaterial(color: stableColor)
+        // 카메라 전방·극소 스케일 — 프러스텀 안이라 PSO는 돌되 화면엔 안 보인다.
+        let scale = SIMD3<Float>(repeating: 0.0008)
+        for (index, mesh) in meshes.yellow.enumerated() {
+            let entity = ModelEntity(mesh: mesh, materials: [yellowMaterial])
+            entity.scale = scale
+            entity.position = SIMD3(Float(index) * 0.004 - 0.02, yOffset, -2.0)
+            anchor.addChild(entity)
+        }
+        for (index, mesh) in meshes.white.enumerated() {
+            let entity = ModelEntity(mesh: mesh, materials: [whiteMaterial])
+            entity.scale = scale
+            entity.position = SIMD3(Float(index) * 0.004 - 0.02, yOffset - 0.004, -2.0)
+            anchor.addChild(entity)
+        }
     }
 
     func teardown(in view: ARView) {
@@ -201,11 +273,25 @@ final class BrightMeshVisualizer {
         coverageStickPlantBallXZ = nil
         lastIngestCameraXZ = nil
         newCellIngestSuppressedUntil = 0
-        originSettle = CoverageOriginSettle.quickDisplay
+        originSettle = CoverageOriginSettle()
+        coverageBuilding = false
+        coverageRebuildPending = false
         clearFrozenCoverageCells()
         if let view {
             detachCoverageStick(in: view)
         }
+    }
+
+    /// AR 월드 원점이 점프하면 옛 칸+새 칸이 겹쳐 격자가 흐른다. 보드를 비우고 안정화 후 다시 심는다.
+    private func resetCoverageBoardForOriginJump(in view: ARView) {
+        lockedCoveragePlaneY = nil
+        lastCoverageDisplaySignature = 0
+        coverageStickPlantBallXZ = nil
+        originSettle = CoverageOriginSettle()
+        coverageBuilding = false
+        coverageRebuildPending = false
+        clearFrozenCoverageCells()
+        detachCoverageStick(in: view)
     }
 
     func update(in view: ARView) {
@@ -288,6 +374,11 @@ final class BrightMeshVisualizer {
 
         if snapshot.observedCellCount > 0 {
             let gate = coverageIngestGate(in: view, now: now)
+            if gate.originJumped {
+                // 원점 보정으로 월드 키가 바뀌면 누적 칸을 비운다. 안 비우면 격자가 옆으로 흐른다.
+                resetCoverageBoardForOriginJump(in: view)
+                return
+            }
             if !gate.skip {
                 ingestFrozenCells(
                     snapshot: snapshot,
@@ -352,6 +443,10 @@ final class BrightMeshVisualizer {
             coverageRebuildPending = true
             return
         }
+        if now - lastCoverageRebuildTime < Self.minCoverageRebuildInterval {
+            coverageRebuildPending = true
+            return
+        }
 
         coverageRebuildPending = false
         lastCoverageRebuildTime = now
@@ -380,23 +475,8 @@ final class BrightMeshVisualizer {
                     pastHole: pastHole,
                     halfWidth: halfWidth
                 )
-                guard buildSignature == latestSignature else {
-                    if let host = self.coverageHostView {
-                        self.rebuildCoverageMeshIfNeeded(
-                            now: now,
-                            in: host,
-                            snapshot: self.coverageSnapshot,
-                            stick: stick,
-                            ball: ball,
-                            hole: hole,
-                            pastHole: pastHole,
-                            halfWidth: halfWidth
-                        )
-                    } else {
-                        self.coverageRebuildPending = true
-                    }
-                    return
-                }
+                // 시그니처가 바뀌었어도 완성본을 버리지 않는다.
+                // 버리면 콜드 PSO에서 빈 화면→큰 덩어리 팝이 반복되며 격자가 물결처럼 흐른다.
                 if let fill = self.coverageFillEntity {
                     fill.isEnabled = false
                 }
@@ -413,15 +493,18 @@ final class BrightMeshVisualizer {
                     parent: stick
                 )
                 self.lastCoverageDisplaySignature = buildSignature
-                let afterSignature = self.currentCoverageDisplaySignature(
-                    ball: ball,
-                    hole: hole,
-                    pastHole: pastHole,
-                    halfWidth: halfWidth
-                )
-                if afterSignature != buildSignature, let host = self.coverageHostView {
+                let needsFollowUp = buildSignature != latestSignature
+                    || self.coverageRebuildPending
+                    || self.currentCoverageDisplaySignature(
+                        ball: ball,
+                        hole: hole,
+                        pastHole: pastHole,
+                        halfWidth: halfWidth
+                    ) != buildSignature
+                self.coverageRebuildPending = false
+                if needsFollowUp, let host = self.coverageHostView {
                     self.rebuildCoverageMeshIfNeeded(
-                        now: now,
+                        now: CACurrentMediaTime(),
                         in: host,
                         snapshot: self.coverageSnapshot,
                         stick: stick,
@@ -520,18 +603,14 @@ final class BrightMeshVisualizer {
             return true
         }
 
-        let preBallPlacement = ball == nil && coverageStickPlantBallXZ == nil
-        let minCells = preBallPlacement ? Self.quickDisplayCellCount : Self.planeLockCellCount
-        let readyCount = snapshot.observedCellCount >= minCells
-            || (!frozenLocalCells.isEmpty && snapshot.observedCellCount > 0)
+        let readyCount = snapshot.observedCellCount >= Self.displayPlantCellCount
+            || (!frozenLocalCells.isEmpty && snapshot.observedCellCount >= Self.displayPlantCellCount)
         guard readyCount else { return false }
         let centers = Self.coverageGridCenters(from: snapshot)
         let centroid = CoverageDisplayLock.centroidXZ(of: centers)
         guard let anchorKey = Self.coverageAnchorKey(from: snapshot) else { return false }
-        if preBallPlacement {
-            attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
-            return true
-        }
+        // 볼 지정 전이라도 원점 안정화 전에는 심지 않는다.
+        // 2칸·즉시 심기는 콜드 트래킹에서 격자가 물결처럼 흐르는 직접 원인.
         guard originSettle.observe(centroid, now: now) else { return false }
         attachCoverageStick(planeY: planeY, anchorKey: anchorKey, in: view)
         if let ball {
@@ -541,23 +620,28 @@ final class BrightMeshVisualizer {
     }
 
     /// AR 원점 점프 직후에만 새 칸을 잠깐 막는다. 서 있어도 LiDAR 스냅샷으로 구멍을 메운다.
-    private func coverageIngestGate(in view: ARView, now: TimeInterval) -> (allowNewCells: Bool, skip: Bool) {
-        guard let frame = view.session.currentFrame else { return (false, true) }
+    private func coverageIngestGate(
+        in view: ARView,
+        now: TimeInterval
+    ) -> (allowNewCells: Bool, skip: Bool, originJumped: Bool) {
+        guard let frame = view.session.currentFrame else { return (false, true, false) }
         let cam = frame.camera.transform.columns.3
         let xz = SIMD2<Float>(cam.x, cam.z)
         defer { lastIngestCameraXZ = xz }
 
         let suppressionActive = now < newCellIngestSuppressedUntil
         if case .limited = frame.camera.trackingState {
-            return (false, false)
+            return (false, false, false)
         }
-        guard let previous = lastIngestCameraXZ else { return (true, false) }
+        guard let previous = lastIngestCameraXZ else { return (true, false, false) }
         let moved = simd_distance(previous, xz)
         if moved >= Self.ingestOriginJumpMeters {
             newCellIngestSuppressedUntil = now + Self.ingestJumpSuppressDuration
-            return (false, false)
+            // 스틱이 이미 심긴 뒤의 점프만 보드 리셋. 심기 전 점프는 settle이 처리.
+            let jumpedAfterPlant = coverageStickEntity != nil
+            return (false, false, jumpedAfterPlant)
         }
-        return (!suppressionActive, false)
+        return (!suppressionActive, false, false)
     }
 
     private static func coverageAnchorKey(forBall ball: SIMD2<Double>) -> Int64 {
@@ -772,9 +856,7 @@ final class BrightMeshVisualizer {
     private func lockedDisplayPlaneY(from snapshot: ScanCoverageSnapshot, ballY: Float?) -> Float {
         let heights = Array(snapshot.cellHeights.values)
         let median = Self.medianFloat(heights) ?? 0
-        let minCellsForPlane = corridorBallXZ == nil
-            ? Self.quickDisplayCellCount
-            : Self.planeLockCellCount
+        let minCellsForPlane = Self.displayPlantCellCount
         if lockedCoveragePlaneY == nil {
             if let ballY {
                 lockedCoveragePlaneY = ballY
