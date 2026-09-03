@@ -1,14 +1,52 @@
 import Foundation
 import PuttPhysicsKit
 
+private final class L10nLocaleBox: @unchecked Sendable {
+    var locale: Locale = .autoupdatingCurrent
+}
+
+private let l10nLocaleBox = L10nLocaleBox()
+
 /// App UI copy. English is the catalog source / fallback for ambiguous locales.
 enum L10n {
-    private static func s(_ key: String.LocalizationValue) -> String {
-        String(localized: key)
+    /// Updated live when the user changes language in Settings.
+    static var locale: Locale {
+        get { l10nLocaleBox.locale }
+        set { l10nLocaleBox.locale = newValue }
     }
 
-    private static func f(_ key: String.LocalizationValue, _ args: CVarArg...) -> String {
-        String(format: String(localized: key), locale: .current, arguments: args)
+    private static func localizationBundle(for locale: Locale) -> Bundle {
+        var candidates: [String] = []
+        if let code = locale.language.languageCode?.identifier {
+            candidates.append(code)
+        }
+        candidates.append(locale.identifier)
+        if let preferred = Locale.preferredLanguages.first {
+            candidates.append(preferred)
+            let short = preferred.split(separator: "-").first.map(String.init)
+            if let short { candidates.append(short) }
+        }
+        candidates.append("en")
+
+        var seen = Set<String>()
+        for raw in candidates {
+            let code = raw.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? raw
+            guard seen.insert(code).inserted else { continue }
+            if let path = Bundle.main.path(forResource: code, ofType: "lproj"),
+               let bundle = Bundle(path: path) {
+                return bundle
+            }
+        }
+        return .main
+    }
+
+    private static func s(_ key: String) -> String {
+        let bundle = localizationBundle(for: locale)
+        return bundle.localizedString(forKey: key, value: key, table: "Localizable")
+    }
+
+    private static func f(_ key: String, _ args: CVarArg...) -> String {
+        String(format: s(key), locale: locale, arguments: args)
     }
 
     // MARK: - Scan idle / steps
@@ -229,10 +267,6 @@ enum L10n {
     static var settingsLanguageKorean: String { s("settings.language.ko") }
     static var settingsLanguageJapanese: String { s("settings.language.ja") }
     static var settingsLanguageFooter: String { s("settings.language.footer") }
-    static var settingsLanguageReloadTitle: String { s("settings.language.reload.title") }
-    static var settingsLanguageReloadBody: String { s("settings.language.reload.body") }
-    static var settingsLanguageReloadLater: String { s("settings.language.reload.later") }
-    static var settingsLanguageReloadNow: String { s("settings.language.reload.now") }
     static var settingsSubscribe: String { s("settings.subscribe") }
     static var settingsSubscribeBody: String { s("settings.subscribe.body") }
     static var settingsSubscribeActive: String { s("settings.subscribe.active") }
@@ -251,6 +285,7 @@ enum L10n {
     static var settingsEULA: String { s("settings.eula") }
     static var settingsCancelTitle: String { s("settings.cancel.title") }
     static var settingsNeedsSubscription: String { s("settings.needs_subscription") }
+    static var settingsFreeScanAvailable: String { s("settings.free_scan_available") }
     static var planMonth: String { s("plan.month") }
     static var planQuarter: String { s("plan.quarter") }
     static var planSixMonth: String { s("plan.six_month") }

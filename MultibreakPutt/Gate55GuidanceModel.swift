@@ -66,7 +66,7 @@ final class Gate55GuidanceModel: ObservableObject {
         corridorCandidateCount >= 2
     }
 
-    private var thermalObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var thermalObserver: NSObjectProtocol?
     private var recomputeGeneration = 0
     private var boundPhysicsScanID: String?
     private var boundPhysicsBall: ScanPose?

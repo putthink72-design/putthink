@@ -117,7 +117,7 @@ final class ScanCoverageTracker: @unchecked Sendable {
         ball: ScanPose? = nil,
         ballY: Double? = nil,
         ballXZ: SIMD2<Double>? = nil,
-        completion: @escaping (ScanCoverageSnapshot) -> Void
+        completion: @escaping @Sendable (ScanCoverageSnapshot) -> Void
     ) {
         let now = frame.timestamp
         guard now - lastProcessTime >= Self.processInterval else { return }

@@ -2087,19 +2087,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "System language is the default. After you change this, reopen ScanPar to apply it."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "初期値はシステム言語です。変更後はScanParを開き直すと反映されます。"
+            "value": "System language is the default. Changes apply immediately."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "기본은 시스템 언어입니다. 바꾸면 ScanPar를 다시 열어야 적용됩니다."
+            "value": "기본은 시스템 언어입니다. 바꾸면 바로 적용됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "初期値はシステム言語です。変更はすぐに反映されます。"
           }
         }
       }
@@ -2307,6 +2307,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "구독 관리"
+          }
+        }
+      }
+    },
+    "settings.free_scan_available": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your first green scan is free. Subscribe to ScanPar Pro for more scans."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最初のグリーンスキャンは無料です。続きはScanPar Proの購読が必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "첫 그린 스캔은 무료입니다. 이후 스캔은 ScanPar Pro 구독이 필요합니다."
           }
         }
       }

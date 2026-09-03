@@ -6,7 +6,6 @@ struct AppSettingsSheet: View {
     @EnvironmentObject private var language: AppLanguageStore
     @EnvironmentObject private var subscriptions: SubscriptionStore
     @State private var selectedProductID: String?
-    @State private var showLanguageReloadAlert = false
     @State private var showCancelGuide = false
     @State private var legalKind: LegalKind?
 
@@ -28,6 +27,7 @@ struct AppSettingsSheet: View {
         }
         .background(settingsBackground)
         .preferredColorScheme(.dark)
+        .environment(\.locale, language.locale)
         .animation(.easeInOut(duration: 0.28), value: legalKind?.id)
         .task {
             await subscriptions.refresh()
@@ -35,14 +35,6 @@ struct AppSettingsSheet: View {
                 selectedProductID = subscriptions.products.first?.id
                     ?? DisplayPlan.fallbackPlans.first?.id
             }
-        }
-        .alert(L10n.settingsLanguageReloadTitle, isPresented: $showLanguageReloadAlert) {
-            Button(L10n.settingsLanguageReloadLater, role: .cancel) {}
-            Button(L10n.settingsLanguageReloadNow, role: .destructive) {
-                exit(0)
-            }
-        } message: {
-            Text(L10n.settingsLanguageReloadBody)
         }
     }
 
@@ -90,9 +82,7 @@ struct AppSettingsSheet: View {
     private func languageChip(_ option: AppLanguageOption) -> some View {
         let selected = language.option == option
         return Button {
-            guard option != language.option else { return }
             language.select(option)
-            showLanguageReloadAlert = true
         } label: {
             Text(option.settingsLabel)
                 .font(.system(size: 12, weight: .semibold))

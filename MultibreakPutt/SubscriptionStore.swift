@@ -11,17 +11,38 @@ final class SubscriptionStore: ObservableObject {
         "com.scanpar.scanpar.pro.yearly",
     ]
 
+    /// Flip to `false` before App Store review. While `true`, green scan start is not gated.
+    static let temporarilyUnlockScanStart = true
+
+    private static let complimentaryScanUsedKey = "scanpar.complimentaryGreenScanUsed"
+
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false
+    @Published private(set) var hasUsedComplimentaryScan = false
     @Published private(set) var introEligibleProductIDs: Set<String> = []
     @Published var statusMessage: String?
     @Published var isBusy = false
 
+    var hasComplimentaryScanRemaining: Bool { !hasUsedComplimentaryScan }
+
+    var canStartGreenScan: Bool {
+        if Self.temporarilyUnlockScanStart { return true }
+        return isSubscribed || hasComplimentaryScanRemaining
+    }
+
     private var transactionListener: Task<Void, Never>?
 
     init() {
+        hasUsedComplimentaryScan = UserDefaults.standard.bool(forKey: Self.complimentaryScanUsedKey)
         transactionListener = Task { await listenForTransactions() }
         Task { await refresh() }
+    }
+
+    func consumeComplimentaryScanIfNeeded() {
+        guard !Self.temporarilyUnlockScanStart else { return }
+        guard !isSubscribed, !hasUsedComplimentaryScan else { return }
+        hasUsedComplimentaryScan = true
+        UserDefaults.standard.set(true, forKey: Self.complimentaryScanUsedKey)
     }
 
     func refresh() async {

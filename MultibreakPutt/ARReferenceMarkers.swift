@@ -1,6 +1,6 @@
 import ARKit
 import PuttPhysicsKit
-import RealityKit
+@preconcurrency import RealityKit
 import UIKit
 import simd
 

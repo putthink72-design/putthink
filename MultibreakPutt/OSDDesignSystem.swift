@@ -233,6 +233,7 @@ struct OSDFloatingScrollCard<Content: View>: View {
 
 // MARK: - Keyboard inset (하단 OSD가 키패드에 가리지 않도록)
 
+@MainActor
 private enum OSDKeyboardMetrics {
     static var bottomSafeArea: CGFloat {
         UIApplication.shared.connectedScenes

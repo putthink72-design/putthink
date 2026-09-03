@@ -15,6 +15,7 @@ struct MultibreakPuttApp: App {
             ScanFlowView()
                 .environmentObject(language)
                 .environmentObject(subscriptions)
+                .environment(\.locale, language.locale)
         }
     }
 }

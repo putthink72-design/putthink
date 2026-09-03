@@ -1,7 +1,7 @@
 import ARKit
 import Foundation
 import PuttPhysicsKit
-import RealityKit
+@preconcurrency import RealityKit
 import simd
 import UIKit
 

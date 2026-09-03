@@ -1,6 +1,6 @@
 import ARKit
 import PuttPhysicsKit
-import RealityKit
+@preconcurrency import RealityKit
 import SwiftUI
 import UIKit
 
@@ -36,7 +36,7 @@ enum GreenSurfaceVizMode: String, CaseIterable, Identifiable {
 }
 
 /// 바닥 조준 UI 전환 — AR `updateUIView`와 분리해 SwiftUI 재구성·`updateScene` 재호출을 막는다.
-final class FloorAddressUIModeBridge {
+final class FloorAddressUIModeBridge: @unchecked Sendable {
     var onModeChanged: ((Bool) -> Void)?
 
     func report(_ isFloor: Bool) {

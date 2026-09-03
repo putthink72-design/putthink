@@ -1,6 +1,6 @@
 import ARKit
 import PuttPhysicsKit
-import RealityKit
+@preconcurrency import RealityKit
 import SwiftUI
 import UIKit
 
@@ -77,6 +77,7 @@ struct ScanFlowView: View {
         }
         .onChange(of: controller.completedScan?.id) { _, identifier in
             guard identifier != nil else { return }
+            subscriptions.consumeComplimentaryScanIfNeeded()
             exportCurrentScan()
         }
     }
@@ -226,8 +227,8 @@ struct ScanFlowView: View {
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            if !subscriptions.isSubscribed {
-                Text(L10n.settingsNeedsSubscription)
+            if let accessNote = scanAccessNote {
+                Text(accessNote)
                     .font(.system(size: 12))
                     .foregroundStyle(OSDPalette.textSecondary)
                     .multilineTextAlignment(.center)
@@ -236,7 +237,7 @@ struct ScanFlowView: View {
                 title: controller.scanPipelineReady ? L10n.scanStart : L10n.lidarPreparing,
                 enabled: controller.scanPipelineReady
             ) {
-                if subscriptions.isSubscribed {
+                if subscriptions.canStartGreenScan {
                     controller.startScan()
                 } else {
                     showSettings = true
@@ -248,6 +249,15 @@ struct ScanFlowView: View {
                     .foregroundStyle(.red)
             }
         }
+    }
+
+    private var scanAccessNote: String? {
+        if SubscriptionStore.temporarilyUnlockScanStart { return nil }
+        if subscriptions.isSubscribed { return nil }
+        if subscriptions.hasComplimentaryScanRemaining {
+            return L10n.settingsFreeScanAvailable
+        }
+        return L10n.settingsNeedsSubscription
     }
 
     private var ballPlacementBody: String { L10n.step1Body }
@@ -452,6 +462,7 @@ private struct PlacementARView: UIViewRepresentable {
         Coordinator()
     }
 
+    @MainActor
     final class Coordinator {
         let brightMesh = BrightMeshVisualizer()
         weak var arView: ARView?

@@ -1,13 +1,15 @@
 import Foundation
 
 enum LegalCopy {
-    private static var isKorean: Bool {
-        Locale.current.language.languageCode?.identifier == "ko"
+    private static var languageCode: String {
+        L10n.locale.language.languageCode?.identifier
+            ?? Locale.current.language.languageCode?.identifier
+            ?? "en"
     }
 
-    private static var isJapanese: Bool {
-        Locale.current.language.languageCode?.identifier == "ja"
-    }
+    private static var isKorean: Bool { languageCode == "ko" }
+
+    private static var isJapanese: Bool { languageCode == "ja" }
 
     static var privacyPolicy: String {
         if isKorean { return privacyKO }

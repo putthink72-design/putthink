@@ -2,7 +2,7 @@ import ARKit
 import Combine
 import Foundation
 import PuttPhysicsKit
-import RealityKit
+@preconcurrency import RealityKit
 import simd
 import UIKit
 
@@ -142,7 +142,7 @@ struct CompletedScan {
     var returnPose: ScanPose { cameraReturnPose }
 }
 
-final class ARScanSessionController: NSObject, ObservableObject {
+final class ARScanSessionController: NSObject, ObservableObject, @unchecked Sendable {
     static let referenceMethod = "ar_raycast"
     static let minimumHoleDistance = 0.05
 
@@ -220,7 +220,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var guidancePhaseActive = false
     private let coverageTracker = ScanCoverageTracker()
     private var lastCoverageHapticStableCount = 0
-    private let coverageHaptic = UIImpactFeedbackGenerator(style: .light)
+    private let coverageHaptic: UIImpactFeedbackGenerator
     /// ARMeshAnchor 정점 복사·필터 전용 직렬 큐 — 메인에서 하면 버튼 탭·스캔 중 히칭.
     private let meshExtractionQueue = DispatchQueue(label: "scanpar.mesh-extract", qos: .userInitiated)
     private let visualLockQueue = DispatchQueue(label: "scanpar.ball-lock", qos: .userInitiated)
@@ -252,6 +252,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
     }
 
     override init() {
+        coverageHaptic = UIImpactFeedbackGenerator(style: .light)
         super.init()
         session.delegate = self
         applyPathModeForFieldMode()
