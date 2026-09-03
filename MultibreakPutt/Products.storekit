@@ -1,0 +1,132 @@
+{
+  "identifier" : "T8E8F8A1",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21481001",
+      "localizations" : [
+        {
+          "description" : "Green scanning and putting aim guidance",
+          "displayName" : "ScanPar Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "ScanPar Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "9.99",
+          "familyShareable" : false,
+          "groupNumber" : 4,
+          "internalID" : "21481011",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "21481091",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "ScanPar Pro for 1 month. First-time subscribers in this group may get a 3-day free trial.",
+              "displayName" : "1 Month",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.scanpar.scanpar.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Pro Monthly",
+          "subscriptionGroupID" : "21481001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "24.99",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "21481012",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "21481092",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "ScanPar Pro for 3 months. First-time subscribers in this group may get a 3-day free trial.",
+              "displayName" : "3 Months",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.scanpar.scanpar.pro.quarterly",
+          "recurringSubscriptionPeriod" : "P3M",
+          "referenceName" : "Pro 3 Months",
+          "subscriptionGroupID" : "21481001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "44.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "21481013",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "21481093",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "ScanPar Pro for 6 months. First-time subscribers in this group may get a 3-day free trial.",
+              "displayName" : "6 Months",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.scanpar.scanpar.pro.semiannual",
+          "recurringSubscriptionPeriod" : "P6M",
+          "referenceName" : "Pro 6 Months",
+          "subscriptionGroupID" : "21481001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "74.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21481014",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "21481094",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "ScanPar Pro for 1 year. First-time subscribers in this group may get a 3-day free trial.",
+              "displayName" : "1 Year",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.scanpar.scanpar.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Pro Yearly",
+          "subscriptionGroupID" : "21481001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

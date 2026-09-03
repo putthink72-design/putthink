@@ -1,0 +1,53 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "ScanPar"
+          }
+        }
+      }
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "MultibreakPutt"
+          }
+        }
+      }
+    },
+    "NSCameraUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボールとホールの間のグリーンをスキャンし、2点を指定し、LiDARでパッティング用の高さマップを作るためにカメラが必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "볼과 홀 사이 그린을 스캔하고 두 지점을 지정하며, LiDAR로 퍼팅 높이맵을 만들기 위해 카메라가 필요합니다."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

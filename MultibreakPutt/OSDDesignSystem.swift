@@ -80,7 +80,7 @@ struct OSDGearButton: View {
         .buttonStyle(.plain)
         .frame(minWidth: 44, minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel("설정")
+                .accessibilityLabel(L10n.settingsTitle)
     }
 }
 
@@ -781,7 +781,7 @@ struct OSDAimReadout: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(String(format: "%.1fm 볼·홀 실거리", horizontalDistance))
+                    Text(L10n.actualDistance(horizontalDistance))
                         .font(.system(size: 12.5))
                         .foregroundStyle(OSDPalette.textSecondary)
                         .monospacedDigit()
@@ -791,7 +791,7 @@ struct OSDAimReadout: View {
                             .foregroundStyle(OSDPalette.accent)
                             .monospacedDigit()
                             .shadow(color: OSDPalette.accentMid, radius: 11)
-                        Text("m")
+                        Text(L10n.unitMeters)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(OSDPalette.textSecondary)
                     }
@@ -833,17 +833,11 @@ struct OSDAimReadout: View {
     }
 
     private var adjustmentText: String {
-        let direction = distanceAdjustment >= 0 ? "오르막 보정" : "내리막 보정"
-        return String(format: "%+.1fm %@", distanceAdjustment, direction)
+        L10n.adjustment(meters: distanceAdjustment)
     }
 
     private var elevationText: String {
-        if abs(elevationDelta) < 0.005 {
-            return "볼과 홀이 같은 높이"
-        }
-        return elevationDelta > 0
-            ? String(format: "홀이 볼보다 %.2fm 높음", elevationDelta)
-            : String(format: "홀이 볼보다 %.2fm 낮음", abs(elevationDelta))
+        L10n.elevation(elevationDelta)
     }
 }
 
@@ -890,17 +884,16 @@ struct OSDSpeedCorridorSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("스피드 코리도")
+                Text(L10n.speedCorridor)
                     .font(.system(size: 13.5, weight: .heavy))
                     .foregroundStyle(OSDPalette.textPrimary)
                 Spacer()
                 if corridorCount >= 1, let overrunDistance {
                     Text(
-                        String(
-                            format: "오버런 %.2fm · %d/%d",
-                            overrunDistance,
-                            min(corridorIndex + 1, corridorCount),
-                            corridorCount
+                        L10n.overrun(
+                            meters: overrunDistance,
+                            index: min(corridorIndex + 1, corridorCount),
+                            count: corridorCount
                         )
                     )
                     .font(.system(size: 10.5))
@@ -910,7 +903,7 @@ struct OSDSpeedCorridorSection: View {
             }
 
             HStack(spacing: 8) {
-                Text("안전")
+                Text(L10n.corridorSafe)
                     .font(.system(size: 10.5))
                     .foregroundStyle(OSDPalette.textSecondary)
                 if corridorCount <= 1 {
@@ -930,13 +923,13 @@ struct OSDSpeedCorridorSection: View {
                     .tint(OSDPalette.accent)
                     .disabled(isComputing || isApplying)
                 }
-                Text("공격적")
+                Text(L10n.corridorAggressive)
                     .font(.system(size: 10.5))
                     .foregroundStyle(OSDPalette.textSecondary)
             }
 
             if corridorCount <= 1 {
-                Text(corridorCount == 0 ? "후보 없음" : "이 그린은 후보가 1개뿐")
+                Text(corridorCount == 0 ? L10n.corridorNone : L10n.corridorOne)
                     .font(.system(size: 10.5))
                     .foregroundStyle(OSDPalette.accent.opacity(0.85))
             }

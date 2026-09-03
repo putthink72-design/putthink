@@ -13,8 +13,8 @@ enum GreenSurfaceVizMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .contours: return "등고선"
-        case .gridFlow: return "격자흐름"
+        case .contours: return L10n.contours
+        case .gridFlow: return L10n.gridFlow
         }
     }
 
@@ -55,6 +55,7 @@ struct Gate55GuidanceView: View {
     /// 스캔 화면과 공유하는 ARView. 있으면 카메라 뷰를 재생성하지 않는다.
     var sessionARView: ARView? = nil
     @Binding var exportError: String?
+    @Binding var showSettings: Bool
     @StateObject private var model = Gate55GuidanceModel()
     @State private var aimRevision = 0
     @State private var greenVizMode: GreenSurfaceVizMode? = nil
@@ -152,6 +153,10 @@ struct Gate55GuidanceView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
+                HStack {
+                    Spacer(minLength: 0)
+                    OSDGearButton { showSettings = true }
+                }
                 if let exportError {
                     Text(exportError)
                         .font(.caption)
@@ -213,7 +218,7 @@ struct Gate55GuidanceView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 14, weight: .bold))
-                        Text("새 스캔")
+                        Text(L10n.newScan)
                             .font(.system(size: 15, weight: .heavy))
                     }
                     .foregroundStyle(OSDPalette.accentInk)
@@ -314,7 +319,7 @@ struct Gate55GuidanceView: View {
         OSDOnboardCard {
             VStack(alignment: .leading, spacing: 14) {
                 if model.isComputing {
-                    ProgressView("계산 중…")
+                    ProgressView(L10n.computing)
                         .tint(OSDPalette.accent)
                 } else {
                     recommendationSection
@@ -327,17 +332,21 @@ struct Gate55GuidanceView: View {
 
     private var miniBallLockLabel: String {
         if controller.placementRequest == .reanchorBall {
-            return "십자선 확정"
+            return L10n.confirmCrosshair
         }
         switch controller.visualBallLockStatus {
         case .waitingForView:
-            return "실볼 대기"
+            return L10n.lockWaiting
         case .searching:
-            return "실볼 감지"
+            return L10n.lockSearching
         case .candidate:
-            return "후보 확인"
+            return L10n.lockCandidate
         default:
-            return controller.visualBallLockStatus.shortLabel ?? "실볼"
+            switch controller.visualBallLockStatus {
+            case .aligned: return L10n.lockMatched
+            case .locked: return L10n.lockAligned
+            default: return L10n.lockBall
+            }
         }
     }
 
@@ -376,25 +385,28 @@ struct Gate55GuidanceView: View {
                 distanceAdjustment: rec.distanceAdjustment,
                 elevationDelta: rec.elevationDelta,
                 directionDegrees: rec.directionDegrees,
-                strokeGuidance: rec.strokeGuidance
+                strokeGuidance: L10n.strokeGuidance(
+                    tier: rec.searchTier,
+                    flatEquivalentDistance: rec.flatEquivalentDistance
+                )
             )
 
             if !rec.searchTier.isHoleInVerified {
-                Text(rec.searchTier.statusLabel)
+                Text(L10n.tierLabel(rec.searchTier))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.orange)
             }
         } else if !model.isComputing, model.recommendation?.searchTier == .noPath
             || (model.recommendation != nil && model.recommendation?.primary == nil) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("홀인 경로를 찾지 못했습니다.")
+                Text(L10n.noPathTitle)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OSDPalette.accent)
-                Text("스캔을 다시 하면 더 정확한 지형으로 안내할 수 있습니다. 추정 직선은 표시하지 않습니다.")
+                Text(L10n.noPathBody)
                     .font(.system(size: 11))
                     .foregroundStyle(OSDPalette.textSecondary)
                 Button(action: beginNewScan) {
-                    Text("스캔 다시하기")
+                    Text(L10n.rescan)
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -403,7 +415,7 @@ struct Gate55GuidanceView: View {
                 .tint(OSDPalette.accent)
             }
         } else {
-            Text("추천 계산 중이거나 스캔·그린스피드를 확인하세요.")
+            Text(L10n.aimWaiting)
                 .font(.system(size: 13))
                 .foregroundStyle(OSDPalette.accent)
         }
@@ -653,6 +665,7 @@ struct Gate55ARAimView: UIViewRepresentable {
         Coordinator()
     }
 
+    @MainActor
     final class Coordinator: NSObject {
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?

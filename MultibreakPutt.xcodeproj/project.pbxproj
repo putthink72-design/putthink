@@ -19,6 +19,9 @@
 		10000000000000000000000E /* ScanCoverageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* ScanCoverageTracker.swift */; };
 		10000000000000000000000F /* ThermalPerformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* ThermalPerformance.swift */; };
 		100000000000000000000012 /* OSDDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* OSDDesignSystem.swift */; };
+		10000000000000000000001A /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* L10n.swift */; };
+		10000000000000000000001B /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001B /* Localizable.xcstrings */; };
+		10000000000000000000001C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001C /* InfoPlist.xcstrings */; };
 		100000000000000000000014 /* CameraTiltStabilizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* CameraTiltStabilizer.swift */; };
 		100000000000000000000015 /* ScanFieldSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* ScanFieldSettings.swift */; };
 		100000000000000000000016 /* LiDARTwistGuidanceOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */; };
@@ -26,6 +29,11 @@
 		100000000000000000000018 /* GolfBallVisualLockSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* GolfBallVisualLockSession.swift */; };
 		100000000000000000000019 /* BallGroundRingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* BallGroundRingOverlay.swift */; };
 		100000000000000000000011 /* GroundScanFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* GroundScanFilter.swift */; };
+		100000000000000000000020 /* AppSettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* AppSettingsSheet.swift */; };
+		100000000000000000000021 /* SubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* SubscriptionStore.swift */; };
+		100000000000000000000022 /* AppLanguageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* AppLanguageStore.swift */; };
+		100000000000000000000023 /* LegalCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* LegalCopy.swift */; };
+		100000000000000000000024 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* PrivacyInfo.xcprivacy */; };
 		100000000000000000000005 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* PuttPhysicsKit */; };
 		100000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* Assets.xcassets */; };
 		B10000000000000000000001 /* Gate3BenchmarkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* Gate3BenchmarkApp.swift */; };
@@ -50,6 +58,9 @@
 		20000000000000000000000E /* ScanCoverageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCoverageTracker.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* ThermalPerformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalPerformance.swift; sourceTree = "<group>"; };
 		200000000000000000000012 /* OSDDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSDDesignSystem.swift; sourceTree = "<group>"; };
+		20000000000000000000001A /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
+		20000000000000000000001B /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		20000000000000000000001C /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		200000000000000000000014 /* CameraTiltStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraTiltStabilizer.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* ScanFieldSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanFieldSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiDARTwistGuidanceOverlay.swift; sourceTree = "<group>"; };
@@ -57,6 +68,12 @@
 		200000000000000000000018 /* GolfBallVisualLockSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfBallVisualLockSession.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* BallGroundRingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BallGroundRingOverlay.swift; sourceTree = "<group>"; };
 		200000000000000000000011 /* GroundScanFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundScanFilter.swift; sourceTree = "<group>"; };
+		200000000000000000000020 /* AppSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSheet.swift; sourceTree = "<group>"; };
+		200000000000000000000021 /* SubscriptionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionStore.swift; sourceTree = "<group>"; };
+		200000000000000000000022 /* AppLanguageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLanguageStore.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* LegalCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalCopy.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		200000000000000000000025 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Products.storekit; sourceTree = "<group>"; };
 		200000000000000000000005 /* MultibreakPutt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MultibreakPutt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B20000000000000000000001 /* Gate3BenchmarkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate3BenchmarkApp.swift; sourceTree = "<group>"; };
@@ -110,6 +127,12 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000001 /* MultibreakPuttApp.swift */,
+				200000000000000000000020 /* AppSettingsSheet.swift */,
+				200000000000000000000021 /* SubscriptionStore.swift */,
+				200000000000000000000022 /* AppLanguageStore.swift */,
+				200000000000000000000023 /* LegalCopy.swift */,
+				200000000000000000000024 /* PrivacyInfo.xcprivacy */,
+				200000000000000000000025 /* Products.storekit */,
 				200000000000000000000002 /* ARScanSessionController.swift */,
 				200000000000000000000003 /* ScanFlowView.swift */,
 				200000000000000000000004 /* ScanExporter.swift */,
@@ -122,6 +145,9 @@
 				200000000000000000000014 /* CameraTiltStabilizer.swift */,
 				20000000000000000000000F /* ThermalPerformance.swift */,
 				200000000000000000000012 /* OSDDesignSystem.swift */,
+				20000000000000000000001A /* L10n.swift */,
+				20000000000000000000001B /* Localizable.xcstrings */,
+				20000000000000000000001C /* InfoPlist.xcstrings */,
 				200000000000000000000015 /* ScanFieldSettings.swift */,
 				200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */,
 				200000000000000000000017 /* BehindBallSweepOverlay.swift */,
@@ -255,10 +281,12 @@
 			};
 			buildConfigurationList = 600000000000000000000002 /* Build configuration list for PBXProject "MultibreakPutt" */;
 			compatibilityVersion = "Xcode 14.0";
-			developmentRegion = ko;
+			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				en,
 				ko,
+				ja,
 				Base,
 			);
 			mainGroup = 400000000000000000000001;
@@ -282,6 +310,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000006 /* Assets.xcassets in Resources */,
+				100000000000000000000024 /* PrivacyInfo.xcprivacy in Resources */,
+				10000000000000000000001B /* Localizable.xcstrings in Resources */,
+				10000000000000000000001C /* InfoPlist.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -301,6 +332,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000001 /* MultibreakPuttApp.swift in Sources */,
+				100000000000000000000020 /* AppSettingsSheet.swift in Sources */,
+				100000000000000000000021 /* SubscriptionStore.swift in Sources */,
+				100000000000000000000022 /* AppLanguageStore.swift in Sources */,
+				100000000000000000000023 /* LegalCopy.swift in Sources */,
 				100000000000000000000002 /* ARScanSessionController.swift in Sources */,
 				100000000000000000000003 /* ScanFlowView.swift in Sources */,
 				100000000000000000000004 /* ScanExporter.swift in Sources */,
@@ -318,6 +353,7 @@
 				100000000000000000000019 /* BallGroundRingOverlay.swift in Sources */,
 				10000000000000000000000F /* ThermalPerformance.swift in Sources */,
 				100000000000000000000012 /* OSDDesignSystem.swift in Sources */,
+				10000000000000000000001A /* L10n.swift in Sources */,
 				100000000000000000000011 /* GroundScanFilter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -396,8 +432,9 @@
 				DEVELOPMENT_TEAM = AM2W4Z8KRW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = MultibreakPutt;
-				INFOPLIST_KEY_NSCameraUsageDescription = "그린의 LiDAR 메시와 깊이 정보를 스캔하여 퍼팅 높이맵을 생성합니다.";
+				INFOPLIST_KEY_CFBundleDisplayName = ScanPar;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -409,7 +446,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.MultibreakPutt;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.scanpar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -429,8 +466,9 @@
 				DEVELOPMENT_TEAM = AM2W4Z8KRW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = MultibreakPutt;
-				INFOPLIST_KEY_NSCameraUsageDescription = "그린의 LiDAR 메시와 깊이 정보를 스캔하여 퍼팅 높이맵을 생성합니다.";
+				INFOPLIST_KEY_CFBundleDisplayName = ScanPar;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -442,7 +480,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.MultibreakPutt;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.scanpar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -468,7 +506,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.Gate3Benchmark;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.Gate3Benchmark;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -493,7 +531,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.Gate3Benchmark;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.Gate3Benchmark;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -518,7 +556,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.GreenSimulator;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.GreenSimulator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -543,7 +581,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.trueputt.GreenSimulator;
+				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.GreenSimulator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;

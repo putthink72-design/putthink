@@ -30,7 +30,7 @@ final class Gate55GuidanceModel: ObservableObject {
     @Published var manualV0: Double = 2.0
     @Published var manualBeta: Double = 0
     @Published var isComputing = false
-    @Published var statusMessage = "추천 계산 대기"
+    @Published var statusMessage = L10n.statusWaiting
     @Published var recommendation: Gate55Recommendation?
     @Published var forwardResult: Gate55ForwardResult?
     @Published var context: Gate55TerrainContext?
@@ -107,10 +107,7 @@ final class Gate55GuidanceModel: ObservableObject {
 
     /// 홀 재앵커 등 — 물리 지형은 그대로, 표시용 상태만 갱신.
     func refreshDisplay(for scan: CompletedScan) {
-        statusMessage = String(
-            format: "홀까지 %.2fm",
-            scan.holeDistance
-        )
+        statusMessage = L10n.holeDistance(scan.holeDistance)
     }
 
     private func applyScanContext(
@@ -128,8 +125,7 @@ final class Gate55GuidanceModel: ObservableObject {
             boundPhysicsBall = physicsBall
             boundPhysicsHole = physicsHole
             thermalLevel = ThermalPerformance.level
-            statusMessage = String(
-                format: "홀까지 %.2fm · 추천 계산 중…",
+            statusMessage = L10n.computingForHole(
                 hypot(
                     physicsHole.worldX - physicsBall.worldX,
                     physicsHole.worldZ - physicsBall.worldZ
@@ -140,7 +136,7 @@ final class Gate55GuidanceModel: ObservableObject {
             boundPhysicsScanID = nil
             boundPhysicsBall = nil
             boundPhysicsHole = nil
-            statusMessage = "지형 컨텍스트 실패: \(error.localizedDescription)"
+            statusMessage = L10n.contextFailed(error.localizedDescription)
         }
     }
 
@@ -200,26 +196,12 @@ final class Gate55GuidanceModel: ObservableObject {
                     self.corridorIndex = result.defaultCorridorIndex
                     self.isComputing = false
                     let gridNote = "\(points)×\(points)"
-                    switch result.searchTier {
-                    case .verified:
-                        self.statusMessage =
-                            "후보 \(result.candidateCount)개 · 코리도 \(result.corridorCandidates.count)단계 (\(gridNote))"
-                    case .relaxedCapture:
-                        self.statusMessage =
-                            "반경 완화 · 후보 \(result.candidateCount)개 (\(gridNote))"
-                    case .expandedSearch:
-                        self.statusMessage =
-                            "확장 탐색 · 후보 \(result.candidateCount)개 (\(gridNote))"
-                    case .proximityEstimate:
-                        self.statusMessage =
-                            "추정 경로 · 홀인 미검증 (\(gridNote))"
-                    case .flatHeuristic:
-                        self.statusMessage =
-                            "거리 추정 · 브레이크 미반영 (\(gridNote))"
-                    case .noPath:
-                        self.statusMessage =
-                            "홀인 경로 없음 · 스캔을 다시 하세요"
-                    }
+                    self.statusMessage = L10n.status(
+                        tier: result.searchTier,
+                        candidateCount: result.candidateCount,
+                        corridorCount: result.corridorCandidates.count,
+                        gridNote: gridNote
+                    )
                 }
             case .forward:
                 let result = Gate55Validation.runForward(

@@ -6,7 +6,10 @@ import UIKit
 
 struct ScanFlowView: View {
     @StateObject private var controller = ARScanSessionController()
+    @EnvironmentObject private var subscriptions: SubscriptionStore
+    @EnvironmentObject private var language: AppLanguageStore
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showSettings = false
     @State private var regionCenterX = 0.5
     @State private var regionCenterY = 0.5
     @State private var regionSize = 0.4
@@ -28,13 +31,23 @@ struct ScanFlowView: View {
                 Gate55GuidanceView(
                     controller: controller,
                     sessionARView: sessionARView,
-                    exportError: $exportError
+                    exportError: $exportError,
+                    showSettings: $showSettings
                 )
             } else {
                 scanExperienceOverlays
             }
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showSettings) {
+            AppSettingsSheet()
+                .environmentObject(subscriptions)
+                .environmentObject(language)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(22)
+                .presentationContentInteraction(.scrolls)
+        }
         .onAppear {
             applyBrightnessPolicy()
             UIApplication.shared.isIdleTimerDisabled = true
@@ -118,7 +131,7 @@ struct ScanFlowView: View {
                 Color.clear.frame(width: 1, height: 1)
             }
         } trailing: {
-            Color.clear.frame(width: 1, height: 1)
+            OSDGearButton { showSettings = true }
         }
     }
 
@@ -128,14 +141,14 @@ struct ScanFlowView: View {
         case .placingBall:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 1 / 3",
-                    title: controller.pendingDetectedBall == nil ? "볼 위치 지정" : "볼 후보 확인",
+                    step: L10n.step1Label,
+                    title: controller.pendingDetectedBall == nil ? L10n.step1Title : L10n.step1TitleConfirm,
                     body: ballPlacementBody,
                     button: ballPlacementButtonTitle,
                     action: controller.requestBallPlacement,
                     enabled: controller.meshReady
                 ) {
-                    if let lock = controller.visualBallLockStatus.shortLabel {
+                    if let lock = localizedBallLockLabel {
                         Text(lock)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(OSDPalette.accent)
@@ -145,8 +158,11 @@ struct ScanFlowView: View {
                             ProgressView().tint(OSDPalette.accent)
                             Text(
                                 controller.sceneDepthReady
-                                    ? "깊이 준비됨 · 메시 \(controller.meshVertexCount.formatted())점"
-                                    : "메시 \(controller.meshVertexCount.formatted()) / \(ARScanSessionController.meshReadyVertexThreshold)점"
+                                    ? L10n.depthReady(meshPoints: controller.meshVertexCount)
+                                    : L10n.meshProgress(
+                                        current: controller.meshVertexCount,
+                                        threshold: ARScanSessionController.meshReadyVertexThreshold
+                                    )
                             )
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(OSDPalette.textSecondary)
@@ -157,10 +173,10 @@ struct ScanFlowView: View {
         case .walkingToHole:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 2 / 3",
-                    title: "홀까지 사선 스캔",
-                    body: "그린을 약 40°(추천 30°–40°) 내외로 비추며 흰색매시가 생성되도록 걸으세요. 홀이 가까우면 바로 홀을 지정해도 됩니다.",
-                    button: "홀 도착 · 홀 지정",
+                    step: L10n.step2Label,
+                    title: L10n.step2Title,
+                    body: L10n.step2Body,
+                    button: L10n.arriveMarkHole,
                     action: controller.beginHolePlacement,
                     enabled: true
                 ) {
@@ -170,10 +186,10 @@ struct ScanFlowView: View {
         case .placingHole:
             OSDOnboardCard {
                 stepPanel(
-                    step: "STEP 3 / 3",
-                    title: "홀을 지정하세요",
-                    body: "화면 중앙의 홀컵 사이즈 원을 홀의 중심에 맞춘 뒤 지정하세요. 지정 직후 퍼팅경로가 계산됩니다.",
-                    button: "홀지정 · 퍼팅경로 계산",
+                    step: L10n.step3Label,
+                    title: L10n.step3Title,
+                    body: L10n.step3Body,
+                    button: L10n.markHoleCalculate,
                     action: controller.requestHolePlacement
                 ) {
                     EmptyView()
@@ -181,7 +197,7 @@ struct ScanFlowView: View {
             }
         case .processing:
             OSDOnboardCard {
-                ProgressView("5cm 높이맵 처리 중…")
+                ProgressView(L10n.processingHeightMap)
                     .font(.system(size: 12))
                     .foregroundStyle(OSDPalette.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -190,9 +206,9 @@ struct ScanFlowView: View {
             OSDOnboardCard {
                 stepPanel(
                     step: nil,
-                    title: "스캔 실패",
-                    body: message,
-                    button: "처음부터 다시",
+                    title: L10n.scanFailed,
+                    body: L10n.localizedFailure(message),
+                    button: L10n.startOver,
                     action: resetScanSession
                 ) {
                     EmptyView()
@@ -205,16 +221,26 @@ struct ScanFlowView: View {
 
     private var idleOnboardCard: some View {
         OSDOnboardCard {
-            Text("볼과 홀을 지정하고 그린을 스캔하면 홀인경로와 퍼팅방향을 안내합니다.")
+            Text(L10n.scanIdleHint)
                 .font(.system(size: 12.5))
                 .foregroundStyle(OSDPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
+            if !subscriptions.isSubscribed {
+                Text(L10n.settingsNeedsSubscription)
+                    .font(.system(size: 12))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
             OSDPrimaryButton(
-                title: controller.scanPipelineReady ? "그린 스캔 시작" : "LiDAR 준비 중…",
+                title: controller.scanPipelineReady ? L10n.scanStart : L10n.lidarPreparing,
                 enabled: controller.scanPipelineReady
             ) {
-                controller.startScan()
+                if subscriptions.isSubscribed {
+                    controller.startScan()
+                } else {
+                    showSettings = true
+                }
             }
             if let exportError {
                 Text(exportError)
@@ -224,13 +250,28 @@ struct ScanFlowView: View {
         }
     }
 
-    private var ballPlacementBody: String {
-        "십자선 중심에 볼을 맞추면 자동으로 볼을 찾습니다. 볼 없이도 십자선 지면을 직접 지정할 수 있습니다."
-    }
+    private var ballPlacementBody: String { L10n.step1Body }
 
     private var ballPlacementButtonTitle: String {
-        guard controller.meshReady else { return "지면 준비 중…" }
-        return "볼 지정"
+        guard controller.meshReady else { return L10n.groundPreparing }
+        return L10n.placeBall
+    }
+
+    private var localizedBallLockLabel: String? {
+        switch controller.visualBallLockStatus {
+        case .idle:
+            return nil
+        case .waitingForView:
+            return L10n.lockOnScreen
+        case .searching:
+            return L10n.lockDetecting
+        case .candidate:
+            return L10n.lockNeedsConfirm
+        case .aligned:
+            return L10n.lockMatched
+        case .locked:
+            return L10n.lockAligned
+        }
     }
 
     @ViewBuilder
@@ -248,7 +289,7 @@ struct ScanFlowView: View {
             extra()
             OSDPrimaryButton(title: buttonTitle, enabled: enabled, action: action)
             if controller.trackingLimited {
-                Text("천천히 움직이고 잔디의 특징이 보이도록 카메라 방향을 조정하세요.")
+                Text(L10n.trackingTip)
                     .font(.system(size: 10.5))
                     .foregroundStyle(OSDPalette.accent)
             }
@@ -316,7 +357,7 @@ struct ScanFlowView: View {
             } catch {
                 await MainActor.run {
                     guard generation == self.exportGeneration else { return }
-                    exportError = "내보내기 실패: \(error.localizedDescription)"
+                    exportError = L10n.exportFailed(error.localizedDescription)
                 }
             }
         }

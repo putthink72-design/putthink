@@ -16,14 +16,14 @@ enum ScanPhonePitchGuidance {
     }
 
     static func actionHint(degrees: Double?) -> String {
-        guard let degrees else { return "폰을 \(targetLabel)로 들어 바닥을 비추세요" }
+        guard let degrees else { return L10n.pitchHintNone }
         if degrees < bandMinDegrees {
-            return "폰 끝을 조금 더 들어 \(targetLabel)로 (허용 \(bandLabel))"
+            return L10n.pitchHintLow
         }
         if degrees > bandMaxDegrees {
-            return "폰을 조금 더 숙여 \(targetLabel)로"
+            return L10n.pitchHintHigh
         }
-        return "\(Int(degrees.rounded()))° · OK (\(bandLabel))"
+        return L10n.pitchHintOK(degrees: Int(degrees.rounded()))
     }
 }
 

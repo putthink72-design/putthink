@@ -222,8 +222,8 @@ final class ARScanSessionController: NSObject, ObservableObject {
     private var lastCoverageHapticStableCount = 0
     private let coverageHaptic = UIImpactFeedbackGenerator(style: .light)
     /// ARMeshAnchor 정점 복사·필터 전용 직렬 큐 — 메인에서 하면 버튼 탭·스캔 중 히칭.
-    private let meshExtractionQueue = DispatchQueue(label: "trueputt.mesh-extract", qos: .userInitiated)
-    private let visualLockQueue = DispatchQueue(label: "trueputt.ball-lock", qos: .userInitiated)
+    private let meshExtractionQueue = DispatchQueue(label: "scanpar.mesh-extract", qos: .userInitiated)
+    private let visualLockQueue = DispatchQueue(label: "scanpar.ball-lock", qos: .userInitiated)
     private var visualLockConsensus = GolfBallLockConsensus()
     private let ballPreviewSmoothing = 0.58
     private var visualLockProcessing = false
@@ -492,11 +492,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
         placementMessage = "시뮬레이터: 볼 (0, 0) · 홀 (0, 3m) 데모 기준을 사용합니다."
 #else
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else {
-            fail("이 기기는 LiDAR 메시 재구성을 지원하지 않습니다.")
+            fail(L10n.failNoLiDAR)
             return
         }
         guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else {
-            fail("이 기기는 sceneDepth를 지원하지 않습니다.")
+            fail(L10n.failNoDepth)
             return
         }
 
@@ -881,7 +881,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
                     self.resetCoverageState()
-                    self.fail(error.localizedDescription)
+                    if let terrainError = error as? TerrainPipelineError {
+                        self.fail(L10n.terrainError(terrainError))
+                    } else {
+                        self.fail(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -889,7 +893,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
         let returnCamera: ScanPose
         if requireReturnToBall {
             guard let pose = currentCameraPose() else {
-                fail("볼 복귀 위치를 기록하지 못했습니다.")
+                fail(L10n.failNoReturnPose)
                 return
             }
             returnCamera = pose
@@ -1025,7 +1029,11 @@ final class ARScanSessionController: NSObject, ObservableObject {
                     guard generation == self.processingGeneration else { return }
                     self.stopLiDARReconstructionKeepingWorld()
                     self.resetCoverageState()
-                    self.fail(error.localizedDescription)
+                    if let terrainError = error as? TerrainPipelineError {
+                        self.fail(L10n.terrainError(terrainError))
+                    } else {
+                        self.fail(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -1347,7 +1355,7 @@ final class ARScanSessionController: NSObject, ObservableObject {
             distance
         )
         guard let cameraStartPose else {
-            fail("볼 지정 시 카메라 pose가 없습니다.")
+            fail(L10n.failNoCameraPose)
             return
         }
         // 볼홀·볼홀볼 모두 홀 지정 직후 경로 계산. 볼홀볼만 이후 실볼 재지정.

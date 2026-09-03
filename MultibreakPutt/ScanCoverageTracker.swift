@@ -12,7 +12,7 @@ final class ScanCoverageTracker: @unchecked Sendable {
 
     private let coverage = ScanCoverage()
     private let surfaceFusion = TemporalSurfaceFusion(cellSize: 0.02)
-    private let queue = DispatchQueue(label: "trueputt.scan-coverage", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "scanpar.scan-coverage", qos: .userInitiated)
     private var lastProcessTime: TimeInterval = 0
     private var processing = false
     private(set) var latestSnapshot = ScanCoverageSnapshot.empty

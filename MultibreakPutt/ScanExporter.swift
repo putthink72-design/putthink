@@ -125,7 +125,7 @@ enum ScanExporter {
             appropriateFor: nil,
             create: true
         )
-        let root = documents.appendingPathComponent("MultibreakPuttScans", isDirectory: true)
+        let root = documents.appendingPathComponent("scanparScans", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
