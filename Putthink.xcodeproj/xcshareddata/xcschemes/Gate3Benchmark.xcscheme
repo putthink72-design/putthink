@@ -17,7 +17,7 @@
                BlueprintIdentifier = "B50000000000000000000001"
                BuildableName = "Gate3Benchmark.app"
                BlueprintName = "Gate3Benchmark"
-               ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+               ReferencedContainer = "container:Putthink.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,7 +44,7 @@
             BlueprintIdentifier = "B50000000000000000000001"
             BuildableName = "Gate3Benchmark.app"
             BlueprintName = "Gate3Benchmark"
-            ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+            ReferencedContainer = "container:Putthink.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -60,7 +60,7 @@
             BlueprintIdentifier = "B50000000000000000000001"
             BuildableName = "Gate3Benchmark.app"
             BlueprintName = "Gate3Benchmark"
-            ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+            ReferencedContainer = "container:Putthink.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

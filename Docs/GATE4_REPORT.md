@@ -37,7 +37,7 @@
 
 - 게이트 4 테스트 7개 통과
 - 전체 패키지 테스트(게이트 1~4) 통과
-- 기존 `MultibreakPutt` iPhoneOS Release 빌드 성공
+- 기존 `Putthink` iPhoneOS Release 빌드 성공
 
 ### 경계 통과 시각화
 

@@ -634,7 +634,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar uses the camera and LiDAR to scan the green and build a putting height map."
+            "value": "Putthink uses the camera and LiDAR to scan the green and build a putting height map."
           }
         },
         "ja": {
@@ -2156,19 +2156,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar needs to reopen to show the new language."
+            "value": "Putthink needs to reopen to show the new language."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しい言語を表示するにはScanParを開き直してください。"
+            "value": "新しい言語を表示するにはPutthinkを開き直してください。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새 언어를 표시하려면 ScanPar를 다시 열어야 합니다."
+            "value": "새 언어를 표시하려면 펏띵을 다시 열어야 합니다."
           }
         }
       }
@@ -2202,19 +2202,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quit ScanPar"
+            "value": "Quit Putthink"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanParを終了"
+            "value": "Putthinkを終了"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar 종료"
+            "value": "펏띵 종료"
           }
         }
       }
@@ -2317,19 +2317,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Your first green scan is free. Subscribe to ScanPar Pro for more scans."
+            "value": "Your first green scan is free. Subscribe to Putthink Pro for more scans."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "最初のグリーンスキャンは無料です。続きはScanPar Proの購読が必要です。"
+            "value": "最初のグリーンスキャンは無料です。続きはPutthink Proの購読が必要です。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "첫 그린 스캔은 무료입니다. 이후 스캔은 ScanPar Pro 구독이 필요합니다."
+            "value": "첫 그린 스캔은 무료입니다. 이후 스캔은 펏띵 Pro 구독이 필요합니다."
           }
         }
       }
@@ -2340,19 +2340,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar Pro is required to start a green scan."
+            "value": "Putthink Pro is required to start a green scan."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "グリーンスキャンを開始するにはScanPar Proの購読が必要です。"
+            "value": "グリーンスキャンを開始するにはPutthink Proの購読が必要です。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "그린 스캔을 시작하려면 ScanPar Pro 구독이 필요합니다."
+            "value": "그린 스캔을 시작하려면 펏띵 Pro 구독이 필요합니다."
           }
         }
       }
@@ -2409,19 +2409,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No active ScanPar Pro subscription was found for this Apple ID."
+            "value": "No active Putthink Pro subscription was found for this Apple ID."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このApple IDに有効なScanPar Proサブスクリプションはありません。"
+            "value": "このApple IDに有効なPutthink Proサブスクリプションはありません。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 Apple ID에 활성 ScanPar Pro 구독이 없습니다."
+            "value": "이 Apple ID에 활성 펏띵 Pro 구독이 없습니다."
           }
         }
       }
@@ -2455,19 +2455,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The App Store is not available yet. Create the ScanPar Pro products in App Store Connect, or run with the StoreKit configuration file in Xcode."
+            "value": "The App Store is not available yet. Create the Putthink Pro products in App Store Connect, or run with the StoreKit configuration file in Xcode."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "App Storeの商品をまだ読み込めません。App Store ConnectでScanPar Pro商品を作成するか、XcodeのStoreKit構成ファイルで実行してください。"
+            "value": "App Storeの商品をまだ読み込めません。App Store ConnectでPutthink Pro商品を作成するか、XcodeのStoreKit構成ファイルで実行してください。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "App Store 상품을 아직 불러올 수 없습니다. App Store Connect에 ScanPar Pro 상품을 만들거나, Xcode에서 StoreKit 구성 파일로 실행하세요."
+            "value": "App Store 상품을 아직 불러올 수 없습니다. App Store Connect에 펏띵 Pro 상품을 만들거나, Xcode에서 StoreKit 구성 파일로 실행하세요."
           }
         }
       }
@@ -2478,19 +2478,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar Pro"
+            "value": "Putthink Pro"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar Pro"
+            "value": "Putthink Pro"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "ScanPar Pro"
+            "value": "펏띵 Pro"
           }
         }
       }

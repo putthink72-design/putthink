@@ -1,8 +1,8 @@
-# MultibreakPutt 알고리즘 기술 명세
+# Putthink 알고리즘 기술 명세
 
-**문서 성격:** iOS 앱 *MultibreakPutt*의 스캔·지형·물리·추천·검증·앱 플로우를 **이 파일 하나**로 기술 이전하기 위한 독립형 명세서이다. 다른 Markdown 문서를 열 필요 없이 전체 알고리즘과 Gate 1–5.5 검증 절차를 파악할 수 있다.  
+**문서 성격:** iOS 앱 *Putthink*의 스캔·지형·물리·추천·검증·앱 플로우를 **이 파일 하나**로 기술 이전하기 위한 독립형 명세서이다. 다른 Markdown 문서를 열 필요 없이 전체 알고리즘과 Gate 1–5.5 검증 절차를 파악할 수 있다.  
 **독자:** AR/LiDAR 지형, 수치 적분, 골프 퍼팅 물리, 모바일 실시간 연산에 익숙한 엔지니어·연구자.  
-**정본 기준:** 저장소 실행 코드(MultibreakPutt + PuttPhysicsKit). Mathematica `trajectory01[]`은 계보·회귀 맥락에서만 인용.
+**정본 기준:** 저장소 실행 코드(Putthink + PuttPhysicsKit). Mathematica `trajectory01[]`은 계보·회귀 맥락에서만 인용.
 
 ---
 
@@ -491,7 +491,7 @@ Gate 1은 LiDAR 스캔이 **재현 가능한 5 cm 높이맵**을 만드는지 �
 각 스캔마다 σ **0.75 / 1.50 / 2.25** 셀에 대해 detrend 후 높이 표준편차 자동 산출.  
 앱 σ 슬라이더는 **최종 스무딩·∇H**에 적용할 값(기본 1.5).
 
-#### II.6.5 내보내기 (`Documents/MultibreakPuttScans/scan-날짜-시간/`)
+#### II.6.5 내보내기 (`Documents/PutthinkScans/scan-날짜-시간/`)
 
 | 파일 | 내용 |
 |------|------|
@@ -889,4 +889,4 @@ flowchart LR
 
 ---
 
-*문서 버전: 2026-08-04 (rev.3 · 단일 자급형) · MultibreakPutt 저장소 구현 기준*
+*문서 버전: 2026-08-04 (rev.3 · 단일 자급형) · Putthink 저장소 구현 기준*

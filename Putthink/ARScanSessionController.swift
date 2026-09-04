@@ -222,8 +222,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     private var lastCoverageHapticStableCount = 0
     private let coverageHaptic: UIImpactFeedbackGenerator
     /// ARMeshAnchor 정점 복사·필터 전용 직렬 큐 — 메인에서 하면 버튼 탭·스캔 중 히칭.
-    private let meshExtractionQueue = DispatchQueue(label: "scanpar.mesh-extract", qos: .userInitiated)
-    private let visualLockQueue = DispatchQueue(label: "scanpar.ball-lock", qos: .userInitiated)
+    private let meshExtractionQueue = DispatchQueue(label: "putthink.mesh-extract", qos: .userInitiated)
+    private let visualLockQueue = DispatchQueue(label: "putthink.ball-lock", qos: .userInitiated)
     private var visualLockConsensus = GolfBallLockConsensus()
     private let ballPreviewSmoothing = 0.58
     private var visualLockProcessing = false

@@ -5,16 +5,16 @@ import UIKit
 @MainActor
 final class SubscriptionStore: ObservableObject {
     nonisolated static let productIDs: [String] = [
-        "com.scanpar.scanpar.pro.monthly",
-        "com.scanpar.scanpar.pro.quarterly",
-        "com.scanpar.scanpar.pro.semiannual",
-        "com.scanpar.scanpar.pro.yearly",
+        "com.putthink.putthink.pro.monthly",
+        "com.putthink.putthink.pro.quarterly",
+        "com.putthink.putthink.pro.semiannual",
+        "com.putthink.putthink.pro.yearly",
     ]
 
     /// Flip to `false` before App Store review. While `true`, green scan start is not gated.
     static let temporarilyUnlockScanStart = true
 
-    private static let complimentaryScanUsedKey = "scanpar.complimentaryGreenScanUsed"
+    private static let complimentaryScanUsedKey = "putthink.complimentaryGreenScanUsed"
 
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false

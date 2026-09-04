@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		100000000000000000000001 /* MultibreakPuttApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* MultibreakPuttApp.swift */; };
+		100000000000000000000001 /* PutthinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* PutthinkApp.swift */; };
 		100000000000000000000002 /* ARScanSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* ARScanSessionController.swift */; };
 		100000000000000000000003 /* ScanFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* ScanFlowView.swift */; };
 		100000000000000000000004 /* ScanExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* ScanExporter.swift */; };
@@ -46,7 +46,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		200000000000000000000001 /* MultibreakPuttApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultibreakPuttApp.swift; sourceTree = "<group>"; };
+		200000000000000000000001 /* PutthinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PutthinkApp.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* ARScanSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARScanSessionController.swift; sourceTree = "<group>"; };
 		200000000000000000000003 /* ScanFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanFlowView.swift; sourceTree = "<group>"; };
 		200000000000000000000004 /* ScanExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanExporter.swift; sourceTree = "<group>"; };
@@ -74,7 +74,7 @@
 		200000000000000000000023 /* LegalCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalCopy.swift; sourceTree = "<group>"; };
 		200000000000000000000024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		200000000000000000000025 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Products.storekit; sourceTree = "<group>"; };
-		200000000000000000000005 /* MultibreakPutt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MultibreakPutt.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000005 /* Putthink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Putthink.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B20000000000000000000001 /* Gate3BenchmarkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate3BenchmarkApp.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* Gate3Benchmark.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gate3Benchmark.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -116,17 +116,17 @@
 		400000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				400000000000000000000002 /* MultibreakPutt */,
+				400000000000000000000002 /* Putthink */,
 				B40000000000000000000001 /* Gate3Benchmark */,
 				C40000000000000000000001 /* GreenSimulator */,
 				400000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		400000000000000000000002 /* MultibreakPutt */ = {
+		400000000000000000000002 /* Putthink */ = {
 			isa = PBXGroup;
 			children = (
-				200000000000000000000001 /* MultibreakPuttApp.swift */,
+				200000000000000000000001 /* PutthinkApp.swift */,
 				200000000000000000000020 /* AppSettingsSheet.swift */,
 				200000000000000000000021 /* SubscriptionStore.swift */,
 				200000000000000000000022 /* AppLanguageStore.swift */,
@@ -156,7 +156,7 @@
 				200000000000000000000011 /* GroundScanFilter.swift */,
 				200000000000000000000006 /* Assets.xcassets */,
 			);
-			path = MultibreakPutt;
+			path = Putthink;
 			sourceTree = "<group>";
 		};
 		B40000000000000000000001 /* Gate3Benchmark */ = {
@@ -189,7 +189,7 @@
 		400000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				200000000000000000000005 /* MultibreakPutt.app */,
+				200000000000000000000005 /* Putthink.app */,
 				B20000000000000000000002 /* Gate3Benchmark.app */,
 				C20000000000000000000003 /* GreenSimulator.app */,
 			);
@@ -199,9 +199,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		500000000000000000000001 /* MultibreakPutt */ = {
+		500000000000000000000001 /* Putthink */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 600000000000000000000001 /* Build configuration list for PBXNativeTarget "MultibreakPutt" */;
+			buildConfigurationList = 600000000000000000000001 /* Build configuration list for PBXNativeTarget "Putthink" */;
 			buildPhases = (
 				700000000000000000000001 /* Sources */,
 				300000000000000000000001 /* Frameworks */,
@@ -211,12 +211,12 @@
 			);
 			dependencies = (
 			);
-			name = MultibreakPutt;
+			name = Putthink;
 			packageProductDependencies = (
 				A00000000000000000000002 /* PuttPhysicsKit */,
 			);
-			productName = MultibreakPutt;
-			productReference = 200000000000000000000005 /* MultibreakPutt.app */;
+			productName = Putthink;
+			productReference = 200000000000000000000005 /* Putthink.app */;
 			productType = "com.apple.product-type.application";
 		};
 		B50000000000000000000001 /* Gate3Benchmark */ = {
@@ -279,7 +279,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 600000000000000000000002 /* Build configuration list for PBXProject "MultibreakPutt" */;
+			buildConfigurationList = 600000000000000000000002 /* Build configuration list for PBXProject "Putthink" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -297,7 +297,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				500000000000000000000001 /* MultibreakPutt */,
+				500000000000000000000001 /* Putthink */,
 				B50000000000000000000001 /* Gate3Benchmark */,
 				C50000000000000000000001 /* GreenSimulator */,
 			);
@@ -331,7 +331,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				100000000000000000000001 /* MultibreakPuttApp.swift in Sources */,
+				100000000000000000000001 /* PutthinkApp.swift in Sources */,
 				100000000000000000000020 /* AppSettingsSheet.swift in Sources */,
 				100000000000000000000021 /* SubscriptionStore.swift in Sources */,
 				100000000000000000000022 /* AppLanguageStore.swift in Sources */,
@@ -432,9 +432,9 @@
 				DEVELOPMENT_TEAM = AM2W4Z8KRW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = ScanPar;
+				INFOPLIST_KEY_CFBundleDisplayName = Putthink;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSCameraUsageDescription = "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Putthink needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -446,7 +446,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.scanpar;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.putthink;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -467,9 +467,9 @@
 				DEVELOPMENT_TEAM = AM2W4Z8KRW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = ScanPar;
+				INFOPLIST_KEY_CFBundleDisplayName = Putthink;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSCameraUsageDescription = "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Putthink needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -481,7 +481,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.scanpar;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.putthink;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -508,7 +508,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.Gate3Benchmark;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.Gate3Benchmark;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -533,7 +533,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.Gate3Benchmark;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.Gate3Benchmark;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -558,7 +558,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.GreenSimulator;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.GreenSimulator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -583,7 +583,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.scanpar.GreenSimulator;
+				PRODUCT_BUNDLE_IDENTIFIER = com.putthink.GreenSimulator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -595,7 +595,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		600000000000000000000001 /* Build configuration list for PBXNativeTarget "MultibreakPutt" */ = {
+		600000000000000000000001 /* Build configuration list for PBXNativeTarget "Putthink" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				900000000000000000000003 /* Debug */,
@@ -604,7 +604,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		600000000000000000000002 /* Build configuration list for PBXProject "MultibreakPutt" */ = {
+		600000000000000000000002 /* Build configuration list for PBXProject "Putthink" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				900000000000000000000001 /* Debug */,

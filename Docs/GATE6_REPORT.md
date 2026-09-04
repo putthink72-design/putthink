@@ -48,7 +48,7 @@
 
 ## CSV 위치
 
-`Documents/MultibreakPuttScans/<gate6-session-id>/gate6/`
+`Documents/PutthinkScans/<gate6-session-id>/gate6/`
 
 - `ball_attempts.csv` / `hole_attempts.csv`
 - `summary.json` (`mode: shadow`)

@@ -90,7 +90,7 @@ final class BrightMeshVisualizer {
     private static let depthMinMeters: Float = 0.12
     private static let depthMaxMeters: Float = 4.5
 
-    private let buildQueue = DispatchQueue(label: "scanpar.mesh-build", qos: .userInitiated)
+    private let buildQueue = DispatchQueue(label: "putthink.mesh-build", qos: .userInitiated)
 
     var lineWidthPixels: Float = 2
     var coverageSnapshot: ScanCoverageSnapshot = .empty
@@ -118,7 +118,7 @@ final class BrightMeshVisualizer {
             // 세션 identity ARAnchor는 트래킹 보정 때 흔들린다.
             // RealityKit 월드 고정 — 격자 정점은 ARKit 월드 좌표 그대로 둔다.
             let root = AnchorEntity(.world(transform: matrix_identity_float4x4))
-            root.name = "scanpar.viz-origin"
+            root.name = "putthink.viz-origin"
             applyContentVisibility()
             view.scene.addAnchor(root)
             rootAnchor = root
@@ -573,7 +573,7 @@ final class BrightMeshVisualizer {
 
         // ARAnchor는 트래킹 보정 때 위치가 갱신되어 격자가 흐른다. 월드 고정만 사용.
         let stick = AnchorEntity(.world(transform: transform))
-        stick.name = "scanpar.coverage-stick"
+        stick.name = "putthink.coverage-stick"
         stick.isEnabled = !contentHidden
         view.scene.addAnchor(stick)
         coverageStickEntity = stick

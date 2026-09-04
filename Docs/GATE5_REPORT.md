@@ -29,7 +29,7 @@
 | X=0.108/0.35/0.43 민감도 | 통과 — 1순위 변경 4건 (`x-sensitivity.csv`) |
 | 기울기 경계 연속성 10곳+ | 통과 (`128_001_1_01_3`, 실제 격자 경계 12곳×X/Y) |
 | 파서 vs Python 참조 | 통과 — `128_001_1_01_3`: nx=138, ny=133, 결측 0% |
-| 전체 테스트 / 앱 Release | 28개 통과, `MultibreakPutt` iPhoneOS Release 성공 |
+| 전체 테스트 / 앱 Release | 28개 통과, `Putthink` iPhoneOS Release 성공 |
 
 ### 경계 연속성 재검증
 

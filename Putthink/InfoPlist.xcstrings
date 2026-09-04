@@ -3,12 +3,24 @@
   "strings" : {
     "CFBundleDisplayName" : {
       "comment" : "Bundle display name",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "ScanPar"
+            "state" : "translated",
+            "value" : "Putthink"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Putthink"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "펏띵"
           }
         }
       }
@@ -20,7 +32,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "MultibreakPutt"
+            "value" : "Putthink"
           }
         }
       }
@@ -31,7 +43,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ScanPar needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed."
+            "value" : "Putthink needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed."
           }
         },
         "ja" : {

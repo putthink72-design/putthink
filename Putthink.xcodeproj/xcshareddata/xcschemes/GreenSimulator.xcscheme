@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "2660"
-   version = "1.3">
+   version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
@@ -10,14 +10,14 @@
             buildForTesting = "YES"
             buildForRunning = "YES"
             buildForProfiling = "YES"
-            buildForArchiving = "YES"
+            buildForArchiving = "NO"
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "500000000000000000000001"
-               BuildableName = "MultibreakPutt.app"
-               BlueprintName = "MultibreakPutt"
-               ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+               BlueprintIdentifier = "C50000000000000000000001"
+               BuildableName = "GreenSimulator.app"
+               BlueprintName = "GreenSimulator"
+               ReferencedContainer = "container:Putthink.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -27,11 +27,9 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
-      <Testables>
-      </Testables>
    </TestAction>
    <LaunchAction
-      buildConfiguration = "Release"
+      buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
@@ -39,18 +37,14 @@
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES">
-      <StoreKitConfigurationFileReference
-         identifier = "../../MultibreakPutt/Products.storekit">
-      </StoreKitConfigurationFileReference>
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
+      allowLocationSimulation = "NO">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "500000000000000000000001"
-            BuildableName = "MultibreakPutt.app"
-            BlueprintName = "MultibreakPutt"
-            ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+            BlueprintIdentifier = "C50000000000000000000001"
+            BuildableName = "GreenSimulator.app"
+            BlueprintName = "GreenSimulator"
+            ReferencedContainer = "container:Putthink.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -60,22 +54,20 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "500000000000000000000001"
-            BuildableName = "MultibreakPutt.app"
-            BlueprintName = "MultibreakPutt"
-            ReferencedContainer = "container:MultibreakPutt.xcodeproj">
+            BlueprintIdentifier = "C50000000000000000000001"
+            BuildableName = "GreenSimulator.app"
+            BlueprintName = "GreenSimulator"
+            ReferencedContainer = "container:Putthink.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
-   <AnalyzeAction
-      buildConfiguration = "Debug">
+   <AnalyzeAction buildConfiguration = "Debug">
    </AnalyzeAction>
    <ArchiveAction
       buildConfiguration = "Release"
-      revealArchiveInOrganizer = "YES">
+      revealArchiveInOrganizer = "NO">
    </ArchiveAction>
 </Scheme>

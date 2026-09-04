@@ -12,7 +12,7 @@
 
 ## 단일 왕복 스캔
 
-1. `MultibreakPutt.xcodeproj`를 열고 LiDAR 실기기를 실행 대상으로 선택합니다.
+1. `Putthink.xcodeproj`를 열고 LiDAR 실기기를 실행 대상으로 선택합니다.
 2. 앱을 실행하고 카메라 권한을 허용합니다.
 3. 휴대폰을 시작 마커의 정해진 높이에 두고 `스캔 시작`을 누릅니다.
 4. 트래킹 상태가 `정상`인지 확인하면서 홀까지 천천히 걷습니다.
@@ -34,7 +34,7 @@
 
 ## 내보내기 파일
 
-앱 Documents의 `MultibreakPuttScans/scan-날짜-시간/`에 다음 파일이 생성됩니다.
+앱 Documents의 `PutthinkScans/scan-날짜-시간/`에 다음 파일이 생성됩니다.
 
 - 드리프트 보정 전·후 및 스무딩 높이맵 JSON/CSV
 - 기울기 필드 JSON/CSV

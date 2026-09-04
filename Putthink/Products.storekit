@@ -12,11 +12,11 @@
       "localizations" : [
         {
           "description" : "Green scanning and putting aim guidance",
-          "displayName" : "ScanPar Pro",
+          "displayName" : "Putthink Pro",
           "locale" : "en_US"
         }
       ],
-      "name" : "ScanPar Pro",
+      "name" : "Putthink Pro",
       "subscriptions" : [
         {
           "adHocOffers" : [],
@@ -33,12 +33,12 @@
           },
           "localizations" : [
             {
-              "description" : "ScanPar Pro for 1 month. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 1 month. First-time subscribers in this group may get a 3-day free trial.",
               "displayName" : "1 Month",
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.scanpar.scanpar.pro.monthly",
+          "productID" : "com.putthink.putthink.pro.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Pro Monthly",
           "subscriptionGroupID" : "21481001",
@@ -59,12 +59,12 @@
           },
           "localizations" : [
             {
-              "description" : "ScanPar Pro for 3 months. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 3 months. First-time subscribers in this group may get a 3-day free trial.",
               "displayName" : "3 Months",
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.scanpar.scanpar.pro.quarterly",
+          "productID" : "com.putthink.putthink.pro.quarterly",
           "recurringSubscriptionPeriod" : "P3M",
           "referenceName" : "Pro 3 Months",
           "subscriptionGroupID" : "21481001",
@@ -85,12 +85,12 @@
           },
           "localizations" : [
             {
-              "description" : "ScanPar Pro for 6 months. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 6 months. First-time subscribers in this group may get a 3-day free trial.",
               "displayName" : "6 Months",
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.scanpar.scanpar.pro.semiannual",
+          "productID" : "com.putthink.putthink.pro.semiannual",
           "recurringSubscriptionPeriod" : "P6M",
           "referenceName" : "Pro 6 Months",
           "subscriptionGroupID" : "21481001",
@@ -111,12 +111,12 @@
           },
           "localizations" : [
             {
-              "description" : "ScanPar Pro for 1 year. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 1 year. First-time subscribers in this group may get a 3-day free trial.",
               "displayName" : "1 Year",
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.scanpar.scanpar.pro.yearly",
+          "productID" : "com.putthink.putthink.pro.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Pro Yearly",
           "subscriptionGroupID" : "21481001",

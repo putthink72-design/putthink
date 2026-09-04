@@ -5,7 +5,7 @@
 
 ## 구현 요약
 
-기존 `MultibreakPutt` LiDAR 스캔 앱에 게이트 5.5 조준·기록 기능을 통합했다.  
+기존 `Putthink` LiDAR 스캔 앱에 게이트 5.5 조준·기록 기능을 통합했다.  
 **볼·홀 기준은 카메라 위치가 아니라 화면 중앙 raycast로 지정한 지면 좌표**다.
 
 | 항목 | 내용 |
@@ -19,7 +19,7 @@
 | detrend 진단 | 선택 영역 최소자승 평면 fit → 기울기(%)·잔차 표준편차(mm) 산출. `surface-detrend.csv`로 노이즈/미세 언듈레이션 분리 기록 |
 | 추천 탐색 | 기본 **130×130** 격자(각도 0.46° ≈ 5m에서 홀 위치 4cm < 홀 반지름 → 홀인 창 누락 방지). 지형 격자 탐색·후보별 오버런 시뮬레이션을 **속도 행 병렬**(`scanExactGridParallel`)로 실행 — 직렬과 후보·순서 동일(회귀 테스트). Release 기준 실그린 추천 1회 ≈ 0.2초(Mac), 필드 테스트는 **Release 빌드 필수**(Debug는 물리 루프 비최적화로 수십 배 느림) |
 | 조준 UI | 상단 50% AR: **흰 등고선(1cm)** + 흰 조준(β) + **녹색 퍼팅경로** + 회색 0° 참고 + 볼/홀 마커. PuttView형 그린 읽기 오버레이 |
-| 기록 | `Documents/MultibreakPuttScans/<scan-id>/` 및 `gate55/` CSV |
+| 기록 | `Documents/PutthinkScans/<scan-id>/` 및 `gate55/` CSV |
 
 ## 화면 워크플로우 (기준점 고도화 후)
 
@@ -60,7 +60,7 @@
 - `ScanCoverageTests` 9개: **통과** (셀 전환·confidence·품질·unproject·격리·프레임 독립)
 - `TemporalSurfaceFusionTests` 7개: **통과** (프레임 독립성·MAD 이상치·경사 보존·벽/ROI 제외·다중 시점 강제)
 - `PuttPhysicsKit` 전체 64개 테스트: **통과** (지형 병렬 탐색 = 직렬 결과 동일성 포함, 2026-07-22)
-- `MultibreakPutt` iOS Simulator **Debug: BUILD SUCCEEDED** (2026-07-22, 추천 탐색 130×130·병렬화 포함)
+- `Putthink` iOS Simulator **Debug: BUILD SUCCEEDED** (2026-07-22, 추천 탐색 130×130·병렬화 포함)
 
 ### 알려진 수정: β AR↔나침반 좌우 불일치 (2026-07-20)
 

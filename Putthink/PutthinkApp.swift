@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct MultibreakPuttApp: App {
+struct PutthinkApp: App {
     @StateObject private var language = AppLanguageStore()
     @StateObject private var subscriptions = SubscriptionStore()
 

@@ -30,7 +30,7 @@ enum AppLanguageOption: String, CaseIterable, Identifiable {
 
 @MainActor
 final class AppLanguageStore: ObservableObject {
-    static let preferenceKey = "scanpar.appLanguage"
+    static let preferenceKey = "putthink.appLanguage"
 
     @Published private(set) var option: AppLanguageOption
 

@@ -49,6 +49,6 @@
   - 기존 게이트 2: 5개
   - 게이트 3: 4개
 - 정확한 30×30 및 130×130 직렬/병렬 결과 완전 일치
-- 기존 `MultibreakPutt` iPhoneOS Release 빌드 성공
+- 기존 `Putthink` iPhoneOS Release 빌드 성공
 - 신규 `Gate3Benchmark` Simulator/iPhoneOS Release 빌드 성공
 - iPhone 12 Pro 서명·설치·자동 실측 성공
