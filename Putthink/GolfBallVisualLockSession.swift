@@ -16,8 +16,8 @@ enum GolfBallVisualLockSession {
     static let placingPatchPixels = 280
     /// 십자선 주변 탐색 창(m). 스캔 시작·십자선 정렬용.
     static let reticleWindowMeters = 0.55
-    /// 월드 볼 앵커 투영 주변 탐색 창(m). 조준 복귀·하안 근접용.
-    static let worldBallWindowMeters = 0.32
+    /// 월드 볼 앵커 투영 주변 탐색 창(m). 4–5m+ 왕복 드리프트 여유.
+    static let worldBallWindowMeters = 0.45
 
     struct CopiedDepth {
         var width: Int
@@ -429,6 +429,7 @@ enum GolfBallVisualLockSession {
         let uvPtr = uvBase.assumingMemoryBound(to: UInt8.self)
         var luma = [UInt8](repeating: 0, count: width * height)
         var sat = [UInt8](repeating: 0, count: width * height)
+        var hue = [UInt8](repeating: 0, count: width * height)
         for y in 0..<height {
             let sy = originY + y
             let yRow = yPtr.advanced(by: sy * yStride)
@@ -446,9 +447,10 @@ enum GolfBallVisualLockSession {
                 let cr = Int(uvRow[uvx + 1])
                 let chroma = hypot(Double(cb - 128), Double(cr - 128))
                 sat[outRow + x] = UInt8(min(255, chroma * 1.6))
+                hue[outRow + x] = GolfBallColorPalette.hueByte(luma: yv, cb: cb, cr: cr)
             }
         }
-        return GolfBallImageBuffer(width: width, height: height, luma: luma, saturation: sat)
+        return GolfBallImageBuffer(width: width, height: height, luma: luma, saturation: sat, hue: hue)
     }
 
     private static func extractPatchBGRA(
@@ -463,6 +465,7 @@ enum GolfBallVisualLockSession {
         let ptr = base.assumingMemoryBound(to: UInt8.self)
         var luma = [UInt8](repeating: 0, count: width * height)
         var sat = [UInt8](repeating: 0, count: width * height)
+        var hue = [UInt8](repeating: 0, count: width * height)
         for y in 0..<height {
             let row = ptr.advanced(by: (originY + y) * stride)
             let outRow = y * width
@@ -477,9 +480,10 @@ enum GolfBallVisualLockSession {
                 let minC = min(r, min(g, b))
                 let s = maxC <= 1 ? 0 : (maxC - minC) / maxC * 255
                 sat[outRow + x] = UInt8(min(255, s))
+                hue[outRow + x] = GolfBallColorPalette.hueByte(r: r, g: g, b: b)
             }
         }
-        return GolfBallImageBuffer(width: width, height: height, luma: luma, saturation: sat)
+        return GolfBallImageBuffer(width: width, height: height, luma: luma, saturation: sat, hue: hue)
     }
 
     private static func downsampleCapturedImage(
@@ -539,6 +543,7 @@ enum GolfBallVisualLockSession {
         let uvStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
         var luma = [UInt8](repeating: 0, count: outW * outH)
         var sat = [UInt8](repeating: 0, count: outW * outH)
+        var hue = [UInt8](repeating: 0, count: outW * outH)
         let yPtr = yBase.assumingMemoryBound(to: UInt8.self)
         let uvPtr = uvBase.assumingMemoryBound(to: UInt8.self)
         for oy in 0..<outH {
@@ -572,9 +577,10 @@ enum GolfBallVisualLockSession {
                 let cr = Int(uvRow[uvx + 1])
                 let chroma = hypot(Double(cb - 128), Double(cr - 128))
                 sat[outRow + ox] = UInt8(min(255, chroma * 1.6))
+                hue[outRow + ox] = GolfBallColorPalette.hueByte(luma: bestY, cb: cb, cr: cr)
             }
         }
-        return GolfBallImageBuffer(width: outW, height: outH, luma: luma, saturation: sat)
+        return GolfBallImageBuffer(width: outW, height: outH, luma: luma, saturation: sat, hue: hue)
     }
 
     private static func downsampleBGRA(
@@ -589,6 +595,7 @@ enum GolfBallVisualLockSession {
         let ptr = base.assumingMemoryBound(to: UInt8.self)
         var luma = [UInt8](repeating: 0, count: outW * outH)
         var sat = [UInt8](repeating: 0, count: outW * outH)
+        var hue = [UInt8](repeating: 0, count: outW * outH)
         for oy in 0..<outH {
             let y0 = oy * srcH / outH
             let y1 = min(srcH, max(y0 + 1, (oy + 1) * srcH / outH))
@@ -621,9 +628,10 @@ enum GolfBallVisualLockSession {
                 let minC = min(bestR, min(bestG, bestB))
                 let s = maxC <= 1 ? 0 : (maxC - minC) / maxC * 255
                 sat[outRow + ox] = UInt8(min(255, s))
+                hue[outRow + ox] = GolfBallColorPalette.hueByte(r: bestR, g: bestG, b: bestB)
             }
         }
-        return GolfBallImageBuffer(width: outW, height: outH, luma: luma, saturation: sat)
+        return GolfBallImageBuffer(width: outW, height: outH, luma: luma, saturation: sat, hue: hue)
     }
 
     private static func copyDepthPatch(

@@ -34,9 +34,9 @@ enum ScanPathMode: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .oneWay:
-            return "홀 지정 직후 경로를 계산·표시합니다. 조준하는 동안 RGB·LiDAR로 흰 볼을 감지해 AR 볼을 맞춥니다."
+            return "홀 지정 직후 경로를 계산·표시합니다. 조준하는 동안 RGB·LiDAR로 실볼을 감지해 AR 볼을 맞춥니다."
         case .roundTrip:
-            return "홀 지정 직후 경로를 계산합니다. 볼로 돌아와 조준하면 흰 볼을 자동 정렬합니다. 실패 시에만 재지정하세요."
+            return "홀 지정 직후 경로를 계산합니다. 볼로 돌아와 조준하면 실볼을 자동 정렬합니다. 실패 시에만 재지정하세요."
         }
     }
 
@@ -166,7 +166,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     @Published var placementRequest: PlacementKind?
     /// 볼홀볼지정계산: 조준 전 실볼 재지정. 높이맵은 다시 계산하지 않는다.
     @Published private(set) var needsBallReanchor = false
-    /// 조준 중 RGB·LiDAR 흰 볼 자동 정렬.
+    /// 조준 중 RGB·LiDAR 실볼(시판 색) 자동 정렬.
     @Published private(set) var visualBallLockStatus: VisualBallLockStatus = .idle
     /// 하안 근접 백그라운드 보정. OSD/상태를 바꾸지 않는다.
     private(set) var guidanceLiveBallPose: ScanPose?
@@ -871,7 +871,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                     self.guidanceTrackingEvents.removeAll()
                     self.guidanceTrackingOK = !self.trackingLimited
                     self.placementMessage = String(
-                        format: "경로 계산 완료 · %.2fm · %@ · 흰 볼을 비추면 자동 정렬",
+                        format: "경로 계산 완료 · %.2fm · %@ · 실볼을 비추면 AR를 맞춤",
                         holeDistance,
                         pathMode.label
                     )
@@ -1019,7 +1019,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                     self.guidanceTrackingEvents.removeAll()
                     self.guidanceTrackingOK = !self.trackingLimited
                     self.placementMessage = String(
-                        format: "경로 계산 완료 · %.2fm · %@ · 흰 볼을 비추면 자동 정렬",
+                        format: "경로 계산 완료 · %.2fm · %@ · 실볼을 비추면 AR를 맞춤",
                         holeDistance,
                         pathMode.label
                     )
@@ -1480,22 +1480,24 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         guidanceLiveBallPose = nil
     }
 
-    /// 볼 배치 단계에서 링에 쓸 월드 좌표(확정 > 후보 > 미리보기).
+    /// 볼 배치·조준 감지 링. 확정되면 nil → UI 사라짐.
     var ballRingWorldPose: ScanPose? {
         if flowState == .placingBall {
             return pendingDetectedBall ?? ballDetectionPreview
         }
+        // 조준: 감지 링만 표시(AR 볼 위치 폴백 없음). 안정 합의 후 settled → nil.
         if flowState == .complete, guidancePhaseActive, !visualBallLockStatus.isSettled {
-            return pendingDetectedBall
-                ?? ballDetectionPreview
-                ?? completedScan?.ballAnchor
+            return pendingDetectedBall ?? ballDetectionPreview
         }
         return nil
     }
 
     private var isVisualBallHunting: Bool {
         if flowState == .placingBall { return true }
-        if flowState == .complete, guidancePhaseActive, !visualBallLockStatus.isSettled { return true }
+        // 조준: 링이 몇 프레임 안정 → AR 이동 후 settled 되면 종료.
+        if flowState == .complete, guidancePhaseActive, !visualBallLockStatus.isSettled {
+            return true
+        }
         return false
     }
 
@@ -1584,10 +1586,13 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         return
 #else
         let now = frame.timestamp
-        guard now - lastVisualLockTime >= GolfBallVisualLockSession.placingProcessInterval else { return }
+        let interval = guiding
+            ? GolfBallVisualLockSession.guidanceProcessInterval
+            : GolfBallVisualLockSession.placingProcessInterval
+        guard now - lastVisualLockTime >= interval else { return }
         guard !visualLockProcessing else { return }
 
-        // 스캔 시작: 십자선. 조준·볼 복귀: 스캔 때 확정한 월드 볼 투영 주변.
+        // 스캔 시작: 십자선. 조준 복귀: 월드 볼 앵커 투영 주변만 탐색.
         let currentBall: ScanPose? = guiding
             ? (completedScan?.ballAnchor)
             : nil
@@ -1658,26 +1663,37 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                     currentBallZ: stillGuiding ? self.completedScan?.ballAnchor.worldZ : nil,
                     physicsBallX: stillGuiding ? self.completedScan?.physicsStartPose.worldX : nil,
                     physicsBallZ: stillGuiding ? self.completedScan?.physicsStartPose.worldZ : nil,
-                    minAgree: 2
+                    // 조준: 링이 같은 자리에 몇 프레임 → 그때 AR 이동.
+                    minAgree: stillGuiding ? 4 : 2
                 )
                 switch action {
                 case .none:
-                    if stillHunting,
-                       !self.visualBallLockStatus.isSettled,
-                       self.visualBallLockStatus != .searching,
-                       self.visualBallLockStatus != .candidate {
-                        self.visualBallLockStatus = .searching
+                    if stillHunting, !self.visualBallLockStatus.isSettled {
+                        // 링이 같은 부근에 모이면 후보 UI(확정 전).
+                        if self.visualLockConsensus.recent.count >= 2 {
+                            self.visualBallLockStatus = .candidate
+                        } else if self.visualBallLockStatus != .searching,
+                                  self.visualBallLockStatus != .candidate {
+                            self.visualBallLockStatus = .searching
+                        }
                     }
                 case .confirmAligned:
                     self.needsBallReanchor = false
                     if stillHunting, !self.visualBallLockStatus.isSettled {
                         self.visualBallLockStatus = .aligned
+                        self.ballDetectionPreview = nil
+                        self.pendingDetectedBall = nil
+                        if stillGuiding {
+                            self.placementMessage = "실볼 확인 · AR·실볼 일치"
+                        }
                     }
                     self.freezeGuidanceWorldAnchor()
                 case .apply(let fix):
                     if stillPlacing {
                         self.offerDetectedBallCandidate(fix, timestamp: now)
-                    } else if stillHunting, fix.confidence >= 0.62, let live = self.completedScan {
+                    } else if stillGuiding, stillHunting,
+                              fix.confidence >= 0.62, let live = self.completedScan {
+                        // 안정 링 → AR 볼 이동 1회 → 감지 UI 종료.
                         self.applyVisualBallLock(fix, scan: live, timestamp: now)
                     }
                 }
@@ -1711,6 +1727,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         coverageHaptic.impactOccurred()
     }
 
+    /// 조준 복귀: AR 표시 볼을 실볼 감지 링에 맞춤. 물리 원점(terrain)은 유지. 1회 후 감지 종료.
     private func applyVisualBallLock(
         _ contact: GolfBallWorldContact,
         scan: CompletedScan,
@@ -1732,10 +1749,6 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             let offset = hypot(
                 pose.worldX - scan.ballAnchor.worldX,
                 pose.worldZ - scan.ballAnchor.worldZ
-            )
-            let physicsOffset = hypot(
-                pose.worldX - scan.physicsStartPose.worldX,
-                pose.worldZ - scan.physicsStartPose.worldZ
             )
             completedScan = CompletedScan(
                 id: scan.id,
@@ -1766,18 +1779,17 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             ballAnchor = pose
             needsBallReanchor = false
             visualBallLockStatus = .locked(offsetMeters: offset)
+            ballDetectionPreview = nil
+            pendingDetectedBall = nil
+            markVisualLock(at: pose)
             freezeGuidanceWorldAnchor()
-            if physicsOffset >= 0.20 {
-                placementMessage = String(
-                    format: "실볼 자동 정렬 · AR %.0fcm · 볼이 많이 옮겨졌으면 재스캔",
-                    offset * 100
-                )
-            } else {
-                placementMessage = String(format: "실볼 자동 정렬 · %.0fcm", offset * 100)
-            }
+            placementMessage = String(
+                format: "AR 볼 → 실볼 정렬 · %.0fmm",
+                offset * 1000
+            )
             coverageHaptic.impactOccurred()
         } catch {
-            placementMessage = "실볼 자동 정렬 실패"
+            placementMessage = "실볼 정렬 실패"
         }
     }
 

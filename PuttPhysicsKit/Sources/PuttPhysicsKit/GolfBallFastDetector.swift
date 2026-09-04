@@ -163,10 +163,21 @@ public enum GolfBallFastDetector {
         let diskMean = disk.lumaSum / Double(disk.count)
         let ringMean = ring.lumaSum / Double(ring.count)
         let satMean = disk.satSum / Double(disk.count)
-        guard diskMean >= 128, satMean <= 105 else { return nil }
+        let meanHue = GolfBallColorPalette.hueByte(
+            fromDegrees: atan2(disk.hueSin / Double(disk.count), disk.hueCos / Double(disk.count)) * 180 / .pi
+        )
+        let matched = GolfBallColorPalette.matches(
+            luma: Int(diskMean.rounded()),
+            saturation: Int(satMean.rounded()),
+            hueByte: meanHue
+        )
+        let whiteFallback = matched == nil && diskMean >= 128 && satMean <= 105
+        guard matched != nil || whiteFallback else { return nil }
 
-        let contrast = (diskMean - ringMean) / 90
-        guard contrast >= 0.18 else { return nil }
+        let absolute = GolfBallColorPalette.prefersAbsoluteRingContrast(color: matched) || matched == .black
+        let rawContrast = absolute ? abs(diskMean - ringMean) : (diskMean - ringMean)
+        let contrast = (rawContrast - (absolute ? 10.0 : 0.0)) / 90
+        guard contrast >= (matched == nil || matched == .white ? 0.18 : 0.08) else { return nil }
 
         let sizeFit: Double = {
             let ratio = radius / max(hint.expectedRadiusPixels, 3.5)
@@ -177,12 +188,20 @@ public enum GolfBallFastDetector {
 
         let dist = hypot(Double(cx) - hint.expectedCenterX, Double(cy) - hint.expectedCenterY)
         let proximity = 1 - min(1, dist / max(hint.searchRadiusPixels, 6))
-        let satPenalty = min(0.35, max(0, (satMean - 55) / 140))
+        // 유색 볼은 채도 페널티를 주지 않는다.
+        let satPenalty = matched == nil || matched == .white
+            ? min(0.35, max(0, (satMean - 55) / 140))
+            : 0
+
+        let brightnessTerm: Double = {
+            if matched == .black { return min(1, (80 - diskMean) / 60) }
+            return min(1, (diskMean - 80) / 120)
+        }()
 
         return 0.42 * min(1, contrast)
             + 0.28 * sizeFit
             + 0.22 * proximity
-            + 0.08 * min(1, (diskMean - 120) / 90)
+            + 0.08 * max(0, brightnessTerm)
             - satPenalty
     }
 
@@ -190,6 +209,8 @@ public enum GolfBallFastDetector {
         var count: Int
         var lumaSum: Double
         var satSum: Double
+        var hueSin: Double
+        var hueCos: Double
     }
 
     private static func annulusPixelStats(
@@ -211,6 +232,8 @@ public enum GolfBallFastDetector {
         var count = 0
         var lumaSum = 0.0
         var satSum = 0.0
+        var hueSin = 0.0
+        var hueCos = 0.0
         let inner2 = inner * inner
         let outer2 = outer * outer
         for y in iy0...iy1 {
@@ -224,9 +247,12 @@ public enum GolfBallFastDetector {
                 count += 1
                 lumaSum += Double(image.luma[i])
                 satSum += Double(image.saturation[i])
+                let hueDeg = Double(Int(image.hueByte(at: i)) * 2) * .pi / 180
+                hueSin += sin(hueDeg)
+                hueCos += cos(hueDeg)
             }
         }
-        return PixelStats(count: count, lumaSum: lumaSum, satSum: satSum)
+        return PixelStats(count: count, lumaSum: lumaSum, satSum: satSum, hueSin: hueSin, hueCos: hueCos)
     }
 
     private static func refineCenter(
@@ -249,8 +275,24 @@ public enum GolfBallFastDetector {
                 let dx = Double(x) - cx
                 let dy = Double(y) - cy
                 guard dx * dx + dy * dy <= r2 else { continue }
-                let luma = Double(image.luma[row + x])
-                let w = max(0, luma - 110)
+                let i = row + x
+                let luma = Double(image.luma[i])
+                let sat = Double(image.saturation[i])
+                let hue = image.hueByte(at: i)
+                let matched = GolfBallColorPalette.matches(
+                    luma: Int(luma),
+                    saturation: Int(sat),
+                    hueByte: hue
+                )
+                // 흰 공은 밝기, 유색·흑은 팔레트 일치 가중.
+                let w: Double
+                if matched == .black {
+                    w = max(0, 70 - luma)
+                } else if matched != nil, matched != .white {
+                    w = max(0, sat)
+                } else {
+                    w = max(0, luma - 110)
+                }
                 sumX += Double(x) * w
                 sumY += Double(y) * w
                 sumW += w

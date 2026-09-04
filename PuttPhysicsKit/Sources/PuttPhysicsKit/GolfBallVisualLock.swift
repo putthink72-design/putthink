@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// 조준 중 RGB에서 흰 골프공을 찾고, LiDAR 지면 높이로 월드 좌표를 붙인다.
+/// 조준 중 RGB에서 시판 색 골프공을 찾고, LiDAR 지면 높이로 월드 좌표를 붙인다.
 ///
 /// 제3자 제약:
 /// - LiDAR 픽셀은 공보다 커서 공 중심 깊이는 잔디 뒤로 뚫린다. 공 픽셀 depth는 쓰지 않는다.
@@ -10,14 +10,14 @@ import simd
 public enum GolfBallVisualLock {
     public static let diameterMeters = 0.04267
     public static let radiusMeters = diameterMeters * 0.5
-    /// AR 볼과 이보다 가까우면 이미 일치로 본다.
-    public static let alignSlopMeters = 0.018
-    /// 잠긴 뒤 이보다 덜 움직이면 조준선을 다시 안 옮긴다.
-    public static let relockDeadzoneMeters = 0.025
-    /// 현재 AR 볼에서 이보다 먼 후보는 다른 흰 물체로 본다.
-    public static let maxOffsetFromARBallMeters = 0.42
+    /// AR 볼과 이하면 이미 실볼에 맞음 → 앵커를 옮기지 않음.
+    public static let alignSlopMeters = 0.012
+    /// 잠긴 뒤 이보다 덜 움직이면 재적용 안 함.
+    public static let relockDeadzoneMeters = 0.020
+    /// 현재 AR 볼에서 이보다 먼 후보는 다른 물체로 본다.
+    public static let maxOffsetFromARBallMeters = 0.50
     /// 스캔 당시 볼(물리 원점)에서 이보다 멀면 오탐/다른 볼.
-    public static let maxOffsetFromPhysicsMeters = 0.55
+    public static let maxOffsetFromPhysicsMeters = 0.60
 }
 
 public struct GolfBallImageBuffer: Sendable, Equatable {
@@ -25,14 +25,22 @@ public struct GolfBallImageBuffer: Sendable, Equatable {
     public var height: Int
     /// row-major, 0...255
     public var luma: [UInt8]
-    /// chroma magnitude proxy, 0...255. 흰색은 낮고 잔디는 높다.
+    /// chroma magnitude proxy, 0...255. 흰색은 낮고 유색·잔디는 높다.
     public var saturation: [UInt8]
+    /// 0…179 (degree/2). 비어 있거나 길이가 다르면 흰 공 경로만 허용.
+    public var hue: [UInt8]
 
-    public init(width: Int, height: Int, luma: [UInt8], saturation: [UInt8]) {
+    public init(width: Int, height: Int, luma: [UInt8], saturation: [UInt8], hue: [UInt8] = []) {
         self.width = width
         self.height = height
         self.luma = luma
         self.saturation = saturation
+        self.hue = hue
+    }
+
+    public func hueByte(at index: Int) -> UInt8 {
+        guard hue.count == luma.count, index >= 0, index < hue.count else { return 0 }
+        return hue[index]
     }
 }
 
@@ -200,7 +208,7 @@ public enum GolfBallLockAction: Sendable, Equatable {
     case apply(GolfBallWorldContact)
 }
 
-/// 흰 원형 + 어두운(잔디) 고리.
+/// 시판 색 원형 + 잔디 고리 대비.
 public enum GolfBallRGBDetector {
     public static let minLuma: UInt8 = 148
     public static let maxSaturation: UInt8 = 84
@@ -214,11 +222,12 @@ public enum GolfBallRGBDetector {
             return GolfBallFastDetector.detect(image: image, hint: hint)
                 ?? detectAdaptive(image: image, hint: hint)
         }
-        return detect(image: image, hint: hint, lumaFloor: 165, satCeil: 68)
+        return detectPalette(image: image, hint: hint)
+            ?? detect(image: image, hint: hint, lumaFloor: 165, satCeil: 68)
             ?? detect(image: image, hint: hint, lumaFloor: Int(minLuma), satCeil: Int(maxSaturation))
     }
 
-    /// 십자선 창: 주변 그린보다 밝은 덩어리를 공으로 본다. 채도 흰색만 쓰면 실외 공이 탈락한다.
+    /// 십자선 창: 주변 그린과 다른 시판 색 덩어리를 공으로 본다.
     private static func detectAdaptive(
         image: GolfBallImageBuffer,
         hint: GolfBallDetectionHint
@@ -247,13 +256,13 @@ public enum GolfBallRGBDetector {
         guard samples.count >= 16 else { return nil }
         samples.sort()
         let grass = Int(samples[samples.count * 2 / 5])
-        let floor = min(190, max(135, grass + 36))
+        let brightFloor = min(190, max(135, grass + 36))
 
         let roiW = x1 - x0 + 1
         let roiH = y1 - y0 + 1
         let roiPixels = roiW * roiH
         var mask = [UInt8](repeating: 0, count: roiPixels)
-        var whiteCount = 0
+        var hitCount = 0
         for y in y0...y1 {
             let srcRow = y * width
             let maskRow = (y - y0) * roiW
@@ -261,57 +270,66 @@ public enum GolfBallRGBDetector {
                 let i = srcRow + x
                 let yv = Int(image.luma[i])
                 let sat = image.saturation.indices.contains(i) ? Int(image.saturation[i]) : 0
-                // 잔디 반사(채도 높음)는 제외. 진짜 흰 공만.
-                if yv >= floor, sat <= 110 {
+                let hue = image.hueByte(at: i)
+                let paletteHit = GolfBallColorPalette.isBallPixel(luma: yv, saturation: sat, hueByte: hue)
+                // hue 없을 때: 밝은 저채도(흰) 폴백.
+                let whiteFallback = image.hue.count != image.luma.count && yv >= brightFloor && sat <= 110
+                if paletteHit || whiteFallback {
                     mask[maskRow + (x - x0)] = 1
-                    whiteCount += 1
+                    hitCount += 1
                 }
             }
         }
-        if whiteCount < 12 || whiteCount > roiPixels * 2 / 5 {
+        if hitCount < 12 || hitCount > roiPixels * 2 / 5 {
             return nil
         }
 
-        var visited = [UInt8](repeating: 0, count: roiPixels)
-        var best: GolfBallBlob?
-        var stack = [Int]()
-        stack.reserveCapacity(64)
-        for seed in 0..<roiPixels where mask[seed] == 1 && visited[seed] == 0 {
-            stack.removeAll(keepingCapacity: true)
-            stack.append(seed)
-            visited[seed] = 1
-            var pixels: [Int] = [seed]
-            pixels.reserveCapacity(32)
-            var head = 0
-            while head < stack.count {
-                let idx = stack[head]
-                head += 1
-                let lx = idx % roiW
-                let ly = idx / roiW
-                for (nx, ny) in [(lx - 1, ly), (lx + 1, ly), (lx, ly - 1), (lx, ly + 1)] {
-                    guard nx >= 0, ny >= 0, nx < roiW, ny < roiH else { continue }
-                    let nidx = ny * roiW + nx
-                    if mask[nidx] == 1, visited[nidx] == 0 {
-                        visited[nidx] = 1
-                        stack.append(nidx)
-                        pixels.append(nidx)
-                    }
+        return bestBlob(in: mask, roiW: roiW, roiH: roiH, originX: x0, originY: y0, image: image, hint: hint)
+    }
+
+    private static func detectPalette(
+        image: GolfBallImageBuffer,
+        hint: GolfBallDetectionHint
+    ) -> GolfBallBlob? {
+        let width = image.width
+        let height = image.height
+        guard width >= 16, height >= 16,
+              image.luma.count >= width * height,
+              image.saturation.count >= width * height,
+              image.hue.count == image.luma.count
+        else { return nil }
+
+        let searchR = max(hint.searchRadiusPixels, hint.expectedRadiusPixels * 2.5)
+        let x0 = max(0, Int(floor(hint.expectedCenterX - searchR)))
+        let x1 = min(width - 1, Int(ceil(hint.expectedCenterX + searchR)))
+        let y0 = max(0, Int(floor(hint.expectedCenterY - searchR)))
+        let y1 = min(height - 1, Int(ceil(hint.expectedCenterY + searchR)))
+        guard x1 > x0 + 2, y1 > y0 + 2 else { return nil }
+
+        let roiW = x1 - x0 + 1
+        let roiH = y1 - y0 + 1
+        let roiPixels = roiW * roiH
+        var mask = [UInt8](repeating: 0, count: roiPixels)
+        var hitCount = 0
+        for y in y0...y1 {
+            let srcRow = y * width
+            let maskRow = (y - y0) * roiW
+            for x in x0...x1 {
+                let i = srcRow + x
+                if GolfBallColorPalette.isBallPixel(
+                    luma: Int(image.luma[i]),
+                    saturation: Int(image.saturation[i]),
+                    hueByte: image.hue[i]
+                ) {
+                    mask[maskRow + (x - x0)] = 1
+                    hitCount += 1
                 }
             }
-            guard let blob = scoreBlob(
-                pixels: pixels,
-                roiW: roiW,
-                originX: x0,
-                originY: y0,
-                image: image,
-                hint: hint
-            ) else { continue }
-            if blob.score > (best?.score ?? 0) {
-                best = blob
-            }
         }
-        guard let best, best.score >= minScore else { return nil }
-        return best
+        if hitCount < 8 || hitCount > roiPixels * 4 / 5 {
+            return nil
+        }
+        return bestBlob(in: mask, roiW: roiW, roiH: roiH, originX: x0, originY: y0, image: image, hint: hint)
     }
 
     private static func detect(
@@ -346,18 +364,30 @@ public enum GolfBallRGBDetector {
                 let i = srcRow + x
                 let yv = Int(image.luma[i])
                 let sat = Int(image.saturation[i])
-                // 채도가 높은 픽셀은 잔디. 로컬 대비만 쓰면 그린 전체가 마스크가 된다.
-                if yv >= lumaFloor, sat <= satCeil {
+                let hue = image.hueByte(at: i)
+                let paletteHit = GolfBallColorPalette.isBallPixel(luma: yv, saturation: sat, hueByte: hue)
+                if paletteHit || (yv >= lumaFloor && sat <= satCeil) {
                     mask[maskRow + (x - x0)] = 1
                     whiteCount += 1
                 }
             }
         }
-        // 과노출만 포기. 그린 텍스처 때문에 중간 밀도로 버리지 않는다.
         if whiteCount < 8 || whiteCount > roiPixels * 4 / 5 {
             return nil
         }
+        return bestBlob(in: mask, roiW: roiW, roiH: roiH, originX: x0, originY: y0, image: image, hint: hint)
+    }
 
+    private static func bestBlob(
+        in mask: [UInt8],
+        roiW: Int,
+        roiH: Int,
+        originX: Int,
+        originY: Int,
+        image: GolfBallImageBuffer,
+        hint: GolfBallDetectionHint
+    ) -> GolfBallBlob? {
+        let roiPixels = roiW * roiH
         var visited = [UInt8](repeating: 0, count: roiPixels)
         var best: GolfBallBlob?
         var stack = [Int]()
@@ -375,10 +405,7 @@ public enum GolfBallRGBDetector {
                 head += 1
                 let lx = idx % roiW
                 let ly = idx / roiW
-                let neighbors = [
-                    (lx - 1, ly), (lx + 1, ly), (lx, ly - 1), (lx, ly + 1)
-                ]
-                for (nx, ny) in neighbors {
+                for (nx, ny) in [(lx - 1, ly), (lx + 1, ly), (lx, ly - 1), (lx, ly + 1)] {
                     guard nx >= 0, ny >= 0, nx < roiW, ny < roiH else { continue }
                     let nidx = ny * roiW + nx
                     if mask[nidx] == 1, visited[nidx] == 0 {
@@ -391,8 +418,8 @@ public enum GolfBallRGBDetector {
             guard let blob = scoreBlob(
                 pixels: pixels,
                 roiW: roiW,
-                originX: x0,
-                originY: y0,
+                originX: originX,
+                originY: originY,
                 image: image,
                 hint: hint
             ) else { continue }
@@ -425,6 +452,9 @@ public enum GolfBallRGBDetector {
         var minY = Int.max
         var maxY = Int.min
         var lumaSum = 0
+        var satSum = 0
+        var hueSin = 0.0
+        var hueCos = 0.0
         for idx in pixels {
             let lx = idx % roiW
             let ly = idx / roiW
@@ -436,7 +466,12 @@ public enum GolfBallRGBDetector {
             maxX = max(maxX, x)
             minY = min(minY, y)
             maxY = max(maxY, y)
-            lumaSum += Int(image.luma[y * image.width + x])
+            let i = y * image.width + x
+            lumaSum += Int(image.luma[i])
+            satSum += image.saturation.indices.contains(i) ? Int(image.saturation[i]) : 0
+            let hueDeg = Double(Int(image.hueByte(at: i)) * 2) * .pi / 180
+            hueSin += sin(hueDeg)
+            hueCos += cos(hueDeg)
         }
         let cx = sumX / Double(count)
         let cy = sumY / Double(count)
@@ -465,7 +500,19 @@ public enum GolfBallRGBDetector {
         }
 
         let blobLuma = Double(lumaSum) / Double(count)
-        guard blobLuma >= (hint.rejectSkyBand ? 150 : 132) else { return nil }
+        let blobSat = Double(satSum) / Double(count)
+        let meanHueByte = GolfBallColorPalette.hueByte(
+            fromDegrees: atan2(hueSin / Double(count), hueCos / Double(count)) * 180 / .pi
+        )
+        let matched = GolfBallColorPalette.matches(
+            luma: Int(blobLuma.rounded()),
+            saturation: Int(blobSat.rounded()),
+            hueByte: meanHueByte
+        )
+        // hue 버퍼 없으면 밝은 저채도 흰 공만.
+        if matched == nil {
+            guard blobLuma >= (hint.rejectSkyBand ? 150 : 132), blobSat <= 110 else { return nil }
+        }
 
         let areaFit = {
             let expectedArea = Double.pi * radiusMean * radiusMean
@@ -488,6 +535,8 @@ public enum GolfBallRGBDetector {
         let dist = hypot(cx - hint.expectedCenterX, cy - hint.expectedCenterY)
         let proximity = 1 - min(1, dist / max(hint.searchRadiusPixels, 8))
 
+        let absolute = GolfBallColorPalette.prefersAbsoluteRingContrast(color: matched)
+            || matched == .black
         let contrast = ringContrast(
             cx: cx,
             cy: cy,
@@ -495,18 +544,30 @@ public enum GolfBallRGBDetector {
             blobLuma: blobLuma,
             image: image,
             ringScale: hint.rejectSkyBand ? 1.85 : 2.55,
-            deltaFloor: hint.rejectSkyBand ? 28 : 12
+            deltaFloor: absolute ? 10 : (hint.rejectSkyBand ? 28 : 12),
+            absolute: absolute
         )
-        guard contrast >= (hint.rejectSkyBand ? (hint.looseSize ? 0.24 : 0.32) : 0.22) else { return nil }
+        let minContrast: Double = {
+            if matched == nil || matched == .white {
+                return hint.rejectSkyBand ? (hint.looseSize ? 0.24 : 0.32) : 0.22
+            }
+            // 유색·흑은 잔디와 luma 차이가 작아도 hue로 구분한다.
+            return hint.rejectSkyBand ? 0.10 : 0.08
+        }()
+        guard contrast >= minContrast else { return nil }
 
         let proxW = hint.rejectSkyBand ? 0.08 : 0.24
         let contrastW = hint.rejectSkyBand ? 0.32 : 0.20
         let circW = hint.rejectSkyBand ? 0.30 : 0.26
-        let score = circW * circularity
+        var score = circW * circularity
             + 0.12 * areaFit
             + 0.18 * sizeFit
             + proxW * proximity
             + contrastW * contrast
+        // 시판 유색 팔레트 일치 가산점
+        if matched != nil, matched != .white {
+            score += 0.08
+        }
         return GolfBallBlob(
             centerX: cx,
             centerY: cy,
@@ -516,7 +577,7 @@ public enum GolfBallRGBDetector {
         )
     }
 
-    /// 공 주변이 공보다 어두워야 한다(그린). 하늘·흰 신발은 고리도 밝다.
+    /// 공 주변이 공과 밝기 대비가 있어야 한다(그린). 암색 볼은 절대 대비.
     private static func ringContrast(
         cx: Double,
         cy: Double,
@@ -524,7 +585,8 @@ public enum GolfBallRGBDetector {
         blobLuma: Double,
         image: GolfBallImageBuffer,
         ringScale: Double,
-        deltaFloor: Double
+        deltaFloor: Double,
+        absolute: Bool
     ) -> Double {
         let ringR = max(radius * ringScale, 6.0)
         var ringSum = 0.0
@@ -540,7 +602,7 @@ public enum GolfBallRGBDetector {
         }
         guard ringN >= 8 else { return 0 }
         let ringMean = ringSum / Double(ringN)
-        let delta = blobLuma - ringMean
+        let delta = absolute ? abs(blobLuma - ringMean) : (blobLuma - ringMean)
         return min(1, max(0, (delta - deltaFloor) / 90))
     }
 }
@@ -743,6 +805,11 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
         if !locked {
             if let currentBallX, let currentBallZ {
                 let clusterFromAR = hypot(cluster.x - currentBallX, cluster.z - currentBallZ)
+                guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
+                    return .none
+                }
+                // 이미 실볼에 거의 겹치면 확인만. 2–4cm 어긋나면 AR를 감지 링(실볼)으로 옮긴다.
+                // 실볼은 움직이지 않는다(경기 규칙).
                 if clusterFromAR <= GolfBallVisualLock.alignSlopMeters {
                     locked = true
                     alignedWithoutMove = true
@@ -750,6 +817,11 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
                     lastAppliedZ = currentBallZ
                     return .confirmAligned
                 }
+                locked = true
+                alignedWithoutMove = false
+                lastAppliedX = cluster.x
+                lastAppliedZ = cluster.z
+                return .apply(applyContact)
             }
             locked = true
             alignedWithoutMove = false
@@ -762,6 +834,18 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
             let fromLock = hypot(cluster.x - lastX, cluster.z - lastZ)
             if fromLock < GolfBallVisualLock.relockDeadzoneMeters {
                 return .none
+            }
+        }
+        if let currentBallX, let currentBallZ {
+            let clusterFromAR = hypot(cluster.x - currentBallX, cluster.z - currentBallZ)
+            guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
+                return .none
+            }
+            if clusterFromAR <= GolfBallVisualLock.alignSlopMeters {
+                lastAppliedX = currentBallX
+                lastAppliedZ = currentBallZ
+                alignedWithoutMove = true
+                return .confirmAligned
             }
         }
         lastAppliedX = cluster.x

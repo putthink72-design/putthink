@@ -110,6 +110,103 @@ final class GolfBallVisualLockTests: XCTestCase {
         XCTAssertEqual(blob!.centerX, 44, accuracy: 2.5)
     }
 
+    func testMarketColorPaletteCoversCommercialBalls() {
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 220, saturation: 20, hueByte: 0),
+            .white
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 180, saturation: 120, hueByte: 28), // ~56°
+            .yellow
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 150, saturation: 140, hueByte: 15), // ~30°
+            .orange
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 140, saturation: 110, hueByte: 162), // ~324°
+            .pink
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 110, saturation: 140, hueByte: 2), // ~4°
+            .red
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 140, saturation: 150, hueByte: 55), // ~110°
+            .green
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 100, saturation: 120, hueByte: 110), // ~220°
+            .blue
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 90, saturation: 130, hueByte: 140), // ~280°
+            .purple
+        )
+        XCTAssertEqual(
+            GolfBallColorPalette.matches(luma: 35, saturation: 20, hueByte: 0),
+            .black
+        )
+        // 잔디(중간 green, 낮은 luma)는 탈락
+        XCTAssertNil(GolfBallColorPalette.matches(luma: 88, saturation: 90, hueByte: 60))
+    }
+
+    func testDetectsMarketColoredBalls() {
+        var image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 200, sat: 140, hue: 28)
+        let hint = GolfBallDetectionHint(
+            expectedCenterX: 41,
+            expectedCenterY: 39,
+            expectedRadiusPixels: 6,
+            searchRadiusPixels: 22
+        )
+        let blob = GolfBallRGBDetector.detect(image: image, hint: hint)
+        XCTAssertNotNil(blob, "yellow")
+        if let blob {
+            XCTAssertEqual(blob.centerX, 42, accuracy: 2.5)
+        }
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 170, sat: 150, hue: 15)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "orange")
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 160, sat: 130, hue: 162)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "pink")
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 155, sat: 150, hue: 110)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "blue")
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 140, sat: 150, hue: 55)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "green")
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 145, sat: 160, hue: 2)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "red")
+
+        image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 120, sat: 150, hue: 140)
+        XCTAssertNotNil(GolfBallRGBDetector.detect(image: image, hint: hint), "purple")
+    }
+
+    func testDetectsMatteBlackBallWithAbsoluteContrast() {
+        var image = Self.makeGreenField(width: 80, height: 60)
+        Self.stampCircle(&image, cx: 42, cy: 38, radius: 6, luma: 28, sat: 18, hue: 0)
+        let hint = GolfBallDetectionHint.aroundReticle(
+            centerX: 41,
+            centerY: 39,
+            width: 80,
+            height: 60,
+            expectedRadiusPixels: 6,
+            farRadiusPixels: 10
+        )
+        let blob = GolfBallRGBDetector.detect(image: image, hint: hint)
+        XCTAssertNotNil(blob)
+        XCTAssertEqual(blob!.centerX, 42, accuracy: 2.0)
+    }
+
     func testPrefersLargeHighContrastBallOverTinySpeck() {
         var image = Self.makeGreenField(width: 100, height: 80)
         Self.stampWhiteCircle(&image, cx: 22, cy: 30, radius: 2)
@@ -179,7 +276,8 @@ final class GolfBallVisualLockTests: XCTestCase {
 
     func testReticleCropFindsGreenTintedBall() {
         var image = Self.makeGreenField(width: 200, height: 200)
-        Self.stampCircle(&image, cx: 102, cy: 98, radius: 16, luma: 168, sat: 102)
+        // 실외 optic yellow / 약간 녹색 낀 하이비즈 볼
+        Self.stampCircle(&image, cx: 102, cy: 98, radius: 16, luma: 168, sat: 102, hue: 32)
         let blob = GolfBallRGBDetector.detect(
             image: image,
             hint: .aroundReticle(
@@ -357,36 +455,36 @@ final class GolfBallVisualLockTests: XCTestCase {
 
     func testConsensusRequiresAgreeingFramesThenDeadzones() {
         var filter = GolfBallLockConsensus()
-        let current = (x: 0.0, z: 0.0)
+        // 스캔 시작(AR 힌트 없음): 합의 후 후보 apply.
         func contact(_ x: Double, _ z: Double) -> GolfBallWorldContact {
             GolfBallWorldContact(worldX: x, worldY: 0.3, worldZ: z, confidence: 0.9)
         }
         XCTAssertEqual(
             filter.ingest(
                 contact: contact(0.12, 0.01),
-                currentBallX: current.x,
-                currentBallZ: current.z,
-                physicsBallX: 0,
-                physicsBallZ: 0
+                currentBallX: nil,
+                currentBallZ: nil,
+                physicsBallX: nil,
+                physicsBallZ: nil
             ),
             .none
         )
         XCTAssertEqual(
             filter.ingest(
                 contact: contact(0.125, 0.008),
-                currentBallX: current.x,
-                currentBallZ: current.z,
-                physicsBallX: 0,
-                physicsBallZ: 0
+                currentBallX: nil,
+                currentBallZ: nil,
+                physicsBallX: nil,
+                physicsBallZ: nil
             ),
             .none
         )
         let third = filter.ingest(
             contact: contact(0.118, 0.012),
-            currentBallX: current.x,
-            currentBallZ: current.z,
-            physicsBallX: 0,
-            physicsBallZ: 0
+            currentBallX: nil,
+            currentBallZ: nil,
+            physicsBallX: nil,
+            physicsBallZ: nil
         )
         guard case .apply(let fix) = third else {
             return XCTFail("expected apply, got \(third)")
@@ -395,12 +493,49 @@ final class GolfBallVisualLockTests: XCTestCase {
 
         let fourth = filter.ingest(
             contact: contact(0.121, 0.011),
-            currentBallX: fix.worldX,
-            currentBallZ: fix.worldZ,
-            physicsBallX: 0,
-            physicsBallZ: 0
+            currentBallX: nil,
+            currentBallZ: nil,
+            physicsBallX: nil,
+            physicsBallZ: nil
         )
         XCTAssertEqual(fourth, .none)
+    }
+
+    /// 조준 복귀: 2–4cm 어긋나면 AR를 감지 링(실볼)으로 옮긴다. 실볼은 그대로.
+    func testConsensusGuidanceReturnMovesARToDetectedBall() {
+        var filter = GolfBallLockConsensus()
+        var last: GolfBallLockAction = .none
+        for _ in 0..<3 {
+            last = filter.ingest(
+                contact: GolfBallWorldContact(worldX: 0.035, worldY: 0.3, worldZ: 0.012, confidence: 0.9),
+                currentBallX: 0,
+                currentBallZ: 0,
+                physicsBallX: 0,
+                physicsBallZ: 0
+            )
+        }
+        guard case .apply(let fix) = last else {
+            return XCTFail("expected apply to move AR onto real ball, got \(last)")
+        }
+        XCTAssertEqual(fix.worldX, 0.035, accuracy: 0.01)
+        XCTAssertFalse(filter.alignedWithoutMove)
+    }
+
+    /// 이미 거의 겹치면 확인만 (AR 이동 없음).
+    func testConsensusGuidanceReturnConfirmsWhenAlreadyOnBall() {
+        var filter = GolfBallLockConsensus()
+        var last: GolfBallLockAction = .none
+        for _ in 0..<3 {
+            last = filter.ingest(
+                contact: GolfBallWorldContact(worldX: 0.004, worldY: 0.3, worldZ: -0.003, confidence: 1),
+                currentBallX: 0,
+                currentBallZ: 0,
+                physicsBallX: 0,
+                physicsBallZ: 0
+            )
+        }
+        XCTAssertEqual(last, .confirmAligned)
+        XCTAssertTrue(filter.alignedWithoutMove)
     }
 
     func testConsensusPlacesFirstBallWithoutARHint() {
@@ -453,16 +588,18 @@ final class GolfBallVisualLockTests: XCTestCase {
 
     private static func makeGreenField(width: Int, height: Int) -> GolfBallImageBuffer {
         let count = width * height
+        // 잔디: 중간 luma, 중간 sat, green hue ~120° → byte 60
         return GolfBallImageBuffer(
             width: width,
             height: height,
             luma: [UInt8](repeating: 88, count: count),
-            saturation: [UInt8](repeating: 90, count: count)
+            saturation: [UInt8](repeating: 90, count: count),
+            hue: [UInt8](repeating: 60, count: count)
         )
     }
 
     private static func stampWhiteCircle(_ image: inout GolfBallImageBuffer, cx: Int, cy: Int, radius: Int) {
-        stampCircle(&image, cx: cx, cy: cy, radius: radius, luma: 230, sat: 8)
+        stampCircle(&image, cx: cx, cy: cy, radius: radius, luma: 230, sat: 8, hue: 0)
     }
 
     private static func stampCircle(
@@ -471,18 +608,28 @@ final class GolfBallVisualLockTests: XCTestCase {
         cy: Int,
         radius: Int,
         luma: UInt8,
-        sat: UInt8
+        sat: UInt8,
+        hue: UInt8 = 0
     ) {
+        ensureHueBuffer(&image)
         let r2 = radius * radius
         for y in max(0, cy - radius - 1)..<min(image.height, cy + radius + 2) {
             for x in max(0, cx - radius - 1)..<min(image.width, cx + radius + 2) {
                 let dx = x - cx
                 let dy = y - cy
                 if dx * dx + dy * dy <= r2 {
-                    image.luma[y * image.width + x] = luma
-                    image.saturation[y * image.width + x] = sat
+                    let i = y * image.width + x
+                    image.luma[i] = luma
+                    image.saturation[i] = sat
+                    image.hue[i] = hue
                 }
             }
+        }
+    }
+
+    private static func ensureHueBuffer(_ image: inout GolfBallImageBuffer) {
+        if image.hue.count != image.luma.count {
+            image.hue = [UInt8](repeating: 60, count: image.luma.count)
         }
     }
 
@@ -493,10 +640,13 @@ final class GolfBallVisualLockTests: XCTestCase {
         x1: Int,
         y1: Int
     ) {
+        ensureHueBuffer(&image)
         for y in max(0, y0)...min(image.height - 1, y1) {
             for x in max(0, x0)...min(image.width - 1, x1) {
-                image.luma[y * image.width + x] = 235
-                image.saturation[y * image.width + x] = 6
+                let i = y * image.width + x
+                image.luma[i] = 235
+                image.saturation[i] = 6
+                image.hue[i] = 0
             }
         }
     }

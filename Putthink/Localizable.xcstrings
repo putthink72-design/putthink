@@ -68,6 +68,29 @@
         }
       }
     },
+    "aim.lock.adjust_position": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjust Ball"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ボール微調整"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "볼 위치 조정"
+          }
+        }
+      }
+    },
     "aim.lock.ball": {
       "extractionState": "manual",
       "localizations": {

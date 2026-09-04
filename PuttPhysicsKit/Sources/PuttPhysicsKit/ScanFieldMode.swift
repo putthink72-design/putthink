@@ -2,9 +2,9 @@ import Foundation
 
 /// 스캔·높이맵 복도 프리셋. 앱 `ScanFieldSettings`와 연동.
 public enum ScanFieldMode: String, CaseIterable, Sendable, Codable, Identifiable {
-    /// 볼홀지정계산 — 홀 지정 직후 경로 표시. 조준 중 흰 볼 자동 정렬.
+    /// 볼홀지정계산 — 홀 지정 직후 경로 표시. 조준 중 실볼 자동 정렬.
     case competition
-    /// 볼홀볼지정계산 — 홀 지정 직후 계산. 돌아와 조준하면 흰 볼 자동 정렬.
+    /// 볼홀볼지정계산 — 홀 지정 직후 계산. 돌아와 조준하면 실볼 자동 정렬.
     case tuning
 
     public var id: String { rawValue }

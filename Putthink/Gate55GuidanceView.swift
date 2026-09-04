@@ -331,12 +331,12 @@ struct Gate55GuidanceView: View {
             return L10n.lockSearching
         case .candidate:
             return L10n.lockCandidate
+        case .aligned:
+            return L10n.lockMatched
+        case .locked:
+            return L10n.lockAligned
         default:
-            switch controller.visualBallLockStatus {
-            case .aligned: return L10n.lockMatched
-            case .locked: return L10n.lockAligned
-            default: return L10n.lockBall
-            }
+            return L10n.lockBall
         }
     }
 
@@ -689,11 +689,14 @@ struct Gate55ARAimView: UIViewRepresentable {
         private var lastAimLift: Float = 0
         private var lastAimAlpha: CGFloat = 1
         private var lastPathLift: Float = 0
+        private var lastZeroLift: Float = 0
         private var lastPathAlpha: CGFloat = 1
         private var lastAppliedWidthScale: Float = -1
         private var lastAppliedPathAlpha: CGFloat = -1
         private var lastAppliedAimAlpha: CGFloat = -1
         private var lastAppliedBallAlpha: CGFloat = -1
+        /// iOS 18+ `ModelSortGroup` (Any로 보관 — 배포 타깃 17).
+        private var guidanceLineSortGroupStorage: Any?
         /// 근접 하안에서 카메라 높이 노이즈로 선 굵기·알파가 매 프레임 튀지 않게 한다.
         private var smoothedProximityHeight: Float = 0
         private var lastFloorAddressMode = false
@@ -711,9 +714,21 @@ struct Gate55ARAimView: UIViewRepresentable {
         /// 서서 볼 때 경로·조준선 알파. 하안에서 `proximityLineAlpha`로 0.5까지 보간.
         private static let standingLineAlpha: CGFloat = 0.9
 
+        /// 볼 뒤·멀리서 AR 홀/궤적이 짧게 보이는 시각 보정(물리·스캔 불변).
+        /// 캘리브: 6.7m에서 ≈5px ≈0.09m. 홀에 가까워지면 0으로 페이드.
+        private static let standingShortfallCalibDistanceMeters: Float = 6.7
+        private static let standingShortfallCalibMeters: Float = 0.09
+        private static let standingShortfallMinDistanceMeters: Float = 3.0
+        private static let standingShortfallMaxDistanceMeters: Float = 12.0
+        /// 카메라–홀 수평거리 이하면 보정 시작 감쇠, 이하면 0.
+        private static let shortfallFadeStartCamHoleMeters: Float = 4.5
+        private static let shortfallFadeEndCamHoleMeters: Float = 1.4
+
         private var lastZeroWidth: Float = 0
         private var lastZeroHoleDistance: Double = .nan
         private var lastTrajectoryRevision: Int = -1
+        private var lastAlongDisplayBiasMeters: Float = 0
+        private var smoothedAlongDisplayBiasMeters: Float = 0
         var onFloorAddressModeChanged: ((Bool) -> Void)?
         weak var scanController: ARScanSessionController?
         weak var floorHUDView: FloorAddressWorldHUDView?
@@ -955,6 +970,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimLift = 0
                 lastAimAlpha = 1
                 lastPathLift = 0
+                lastZeroLift = 0
                 lastPathAlpha = 1
                 lastVizMode = nil
                 smoothedFloorAddressHUD = false
@@ -1000,40 +1016,54 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimLift = 0
                 lastAimAlpha = 1
                 lastPathLift = 0
+                lastZeroLift = 0
                 lastPathAlpha = 1
                 lastVizMode = nil
                 smoothedProximityHeight = 0
             }
 
-            if shouldReplaceGuidancePose(lockedBallPose, with: scan.ballAnchor),
-               scanController?.guidanceLiveBallPose == nil {
+            if scanController?.guidanceLiveBallPose == nil {
                 let incomingBall = SIMD3<Float>(
                     Float(scan.ballAnchor.worldX),
                     Float(scan.ballAnchor.worldY),
                     Float(scan.ballAnchor.worldZ)
                 )
-                clearContours()
-                clearGridFlow()
-                clearTrajectory()
-                clearOverlayRoot()
-                zeroLineEntity = nil
-                aimEntity = nil
-                lastZeroHoleDistance = .nan
-                lastAimBeta = .nan
-                lastTrajectoryRevision = -1
-                lastVizMode = nil
-                ARReferenceMarkers.removeRealityWorldFixed(
-                    in: view,
-                    existingEntity: &ballAnchorEntity
-                )
-                ARReferenceMarkers.placeRealityWorldFixed(
-                    entityFactory: { ARReferenceMarkers.makeBallEntity() },
-                    at: incomingBall,
-                    in: view,
-                    existingEntity: &ballAnchorEntity
-                )
-                lockedBallPose = scan.ballAnchor
-                lockedScanTransform = scan.scanTransform
+                if shouldReplaceGuidancePose(lockedBallPose, with: scan.ballAnchor) {
+                    // 큰 점프: 앵커·오버레이 재배치.
+                    clearContours()
+                    clearGridFlow()
+                    clearTrajectory()
+                    clearOverlayRoot()
+                    zeroLineEntity = nil
+                    aimEntity = nil
+                    lastZeroHoleDistance = .nan
+                    lastAimBeta = .nan
+                    lastTrajectoryRevision = -1
+                    lastVizMode = nil
+                    ARReferenceMarkers.removeRealityWorldFixed(
+                        in: view,
+                        existingEntity: &ballAnchorEntity
+                    )
+                    ARReferenceMarkers.placeRealityWorldFixed(
+                        entityFactory: { ARReferenceMarkers.makeBallEntity() },
+                        at: incomingBall,
+                        in: view,
+                        existingEntity: &ballAnchorEntity
+                    )
+                    lockedBallPose = scan.ballAnchor
+                    lockedScanTransform = scan.scanTransform
+                } else if shouldSoftFollowGuidancePose(lockedBallPose, with: scan.ballAnchor) {
+                    // cm 추적/재지정: 볼 앵커만 옮김(자식 오버레이 유지). 조준·궤적만 재빌드.
+                    ARReferenceMarkers.moveRealityWorldFixed(
+                        to: incomingBall,
+                        existingEntity: ballAnchorEntity
+                    )
+                    lockedBallPose = scan.ballAnchor
+                    lockedScanTransform = scan.scanTransform
+                    lastZeroHoleDistance = .nan
+                    lastAimBeta = .nan
+                    lastTrajectoryRevision = -1
+                }
             }
             if shouldReplaceGuidancePose(lockedHolePose, with: scan.holeAnchor) {
                 let incomingHole = SIMD3<Float>(
@@ -1090,10 +1120,52 @@ struct Gate55ARAimView: UIViewRepresentable {
                 smoothedCamBallDistance += (target - smoothedCamBallDistance) * alpha
             }
 
-            let pathLift: Float = 0.008
-            let aimLift: Float = 0.010
+            // 멀리(볼 뒤)에서만 홀 방향 표시 연장. 홀에 가까워지면 0 → 깃대·궤적 실좌표로 복귀.
+            let standingBlend = proximityBlend(heightAboveBall: address.heightAboveBall)
+            let camToHole = Self.cameraHorizontalDistance(to: holeWorld, in: view)
+                ?? Float(scan.holeDistance)
+            let rawAlongBias = Self.standingAlongDisplayBiasMeters(
+                holeDistance: Float(scan.holeDistance),
+                cameraToHoleMeters: camToHole,
+                standingBlend: standingBlend
+            )
+            if rawAlongBias <= 0 {
+                smoothedAlongDisplayBiasMeters *= 0.72
+                if smoothedAlongDisplayBiasMeters < 0.001 {
+                    smoothedAlongDisplayBiasMeters = 0
+                }
+            } else if smoothedAlongDisplayBiasMeters <= 0 {
+                smoothedAlongDisplayBiasMeters = rawAlongBias
+            } else {
+                smoothedAlongDisplayBiasMeters += (rawAlongBias - smoothedAlongDisplayBiasMeters) * 0.28
+            }
+            let alongBias = smoothedAlongDisplayBiasMeters
+            var displayHoleWorld = holeWorld
+            if alongBias > 1e-4,
+               let along = Self.holeAlongUnit(from: ballWorld, to: holeWorld) {
+                displayHoleWorld = holeWorld + along * alongBias
+            }
+            if abs(alongBias - lastAlongDisplayBiasMeters) > 0.002
+                || alongBias > 1e-4
+                || lastAlongDisplayBiasMeters > 1e-4 {
+                ARReferenceMarkers.moveRealityWorldFixed(
+                    to: displayHoleWorld,
+                    existingEntity: holeAnchorEntity
+                )
+            }
+            lastAlongDisplayBiasMeters = alongBias
+
+            // 레이어(아래→위): 직교 → 빨간 궤적(지면 추종) → 흰 조준.
+            // 조준은 하안 최대 50% 반투명. 궤적을 조준 아래로 누르지 않는다(서서 짧게 보이는 원인).
+            let zeroLift: Float = 0.004
+            let trajLift: Float = 0.006
+            let aimLift: Float = 0.028
             let pathWidth = Self.standingPathWidth
             let aimWidth = Self.standingAimWidth
+            let aimAlphaNow = proximityLineAlpha(
+                base: Self.standingLineAlpha,
+                heightAboveBall: address.heightAboveBall
+            )
 
             if Self.floorAddressHUDEnabled {
                 reportFloorAddressHUD(address)
@@ -1106,7 +1178,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     ballWorld: ballWorld,
                     holeWorld: holeWorld,
                     betaDegrees: betaDegrees,
-                    lift: pathLift,
+                    lift: zeroLift,
                     transform: transform,
                     holeDistance: scan.holeDistance
                 )
@@ -1121,7 +1193,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                         seedFloorHUDDirectionCache(
                             in: view,
                             ballWorld: ballWorld,
-                            lift: pathLift,
+                            lift: zeroLift,
                             transform: transform,
                             betaDegrees: betaDegrees
                         )
@@ -1172,7 +1244,7 @@ struct Gate55ARAimView: UIViewRepresentable {
 
             let zeroNeedsRebuild = zeroLineEntity == nil
                 || abs(lastZeroHoleDistance - scan.holeDistance) > 1e-4
-                || abs(lastPathLift - pathLift) > 0.0015
+                || abs(lastZeroLift - zeroLift) > 0.0015
                 || abs(lastZeroWidth - pathWidth * 0.35) > 0.0008
                 || arVisibilityChanged
             if zeroNeedsRebuild {
@@ -1180,7 +1252,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 placeBallLocalSegment(
                     toLocalX: 0,
                     toLocalY: scan.holeDistance,
-                    lift: pathLift,
+                    lift: zeroLift,
                     width: zeroWidth,
                     thickness: 0.002,
                     color: UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 0.5),
@@ -1189,7 +1261,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     entity: &zeroLineEntity
                 )
                 lastZeroHoleDistance = scan.holeDistance
-                lastPathLift = pathLift
+                lastZeroLift = zeroLift
                 lastZeroWidth = zeroWidth
             }
 
@@ -1197,13 +1269,15 @@ struct Gate55ARAimView: UIViewRepresentable {
                 aimEntity?.isEnabled = false
                 clearTrajectory()
                 lastTrajectoryRevision = -1
+                applyGuidanceLineStacking(in: overlays)
                 return
             }
 
             let trajSig = trajectorySignature(
                 trajectory,
                 pathWidth: pathWidth * proximityLineWidthScale(heightAboveBall: address.heightAboveBall),
-                lift: pathLift
+                lift: trajLift,
+                alongBiasMeters: alongBias
             )
             var trajectoryRebuilt = false
             if trajSig != lastTrajectoryRevision {
@@ -1212,12 +1286,14 @@ struct Gate55ARAimView: UIViewRepresentable {
                     samples: trajectory,
                     scan: scan,
                     displayTransform: transform,
-                    lift: pathLift,
+                    lift: trajLift,
                     pathWidth: pathWidth * pathWidthScale,
                     pathAlpha: proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall),
+                    alongBiasMeters: alongBias,
                     parent: overlays
                 )
                 lastTrajectoryRevision = trajSig
+                lastPathLift = trajLift
                 lastAppliedWidthScale = pathWidthScale
                 lastAppliedPathAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall)
                 lastAppliedBallAlpha = -1
@@ -1241,8 +1317,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                     toLocalY: cos(beta) * length,
                     lift: aimLift,
                     width: aimWidth,
-                    thickness: 0.0025,
-                    color: UIColor(white: 1, alpha: 0.9),
+                    thickness: 0.0035,
+                    color: UIColor(white: 1, alpha: aimAlphaNow),
                     transform: transform,
                     parent: overlays,
                     entity: &aimEntity
@@ -1252,9 +1328,10 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimWidth = aimWidth
                 lastAimLift = aimLift
                 lastAppliedWidthScale = -1
-                lastAppliedAimAlpha = -1
+                lastAppliedAimAlpha = aimAlphaNow
                 lastAppliedBallAlpha = -1
             }
+            applyGuidanceLineStacking(in: overlays)
             lastFloorAddressMode = address.isFloorAddressHUD
         }
 
@@ -1271,13 +1348,23 @@ struct Gate55ARAimView: UIViewRepresentable {
             lastReportedFloorHUD = smoothedFloorAddressHUD
         }
 
-        /// timestamp·실볼 미세 정렬은 무시. 일어선 뒤 감지가 8cm만 어긋나도 다시 심으면 AR이 계속 흐른다.
+        /// 큰 점프만 하드 재배치. 그 아래 cm 이동은 soft-follow.
         private func shouldReplaceGuidancePose(_ locked: ScanPose?, with incoming: ScanPose) -> Bool {
             guard let locked else { return true }
             let dx = locked.worldX - incoming.worldX
             let dy = locked.worldY - incoming.worldY
             let dz = locked.worldZ - incoming.worldZ
             return (dx * dx + dz * dz) > 0.25 * 0.25 || abs(dy) > 0.12
+        }
+
+        /// 실볼 정렬·재지정 시 cm 단위로 AR 볼을 따라가게 한다(기존 25cm 히스테리시스 우회).
+        private func shouldSoftFollowGuidancePose(_ locked: ScanPose?, with incoming: ScanPose) -> Bool {
+            guard let locked else { return false }
+            let dx = locked.worldX - incoming.worldX
+            let dy = locked.worldY - incoming.worldY
+            let dz = locked.worldZ - incoming.worldZ
+            let horizontal = (dx * dx + dz * dz).squareRoot()
+            return horizontal >= 0.005 || abs(dy) >= 0.006
         }
 
         private func applyFloorHUDOverlayVisibility(hidden: Bool) {
@@ -1347,6 +1434,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             lastAimLift = 0
             lastAimAlpha = 1
             lastPathLift = 0
+            lastZeroLift = 0
             lastPathAlpha = 1
         }
 
@@ -2133,7 +2221,8 @@ struct Gate55ARAimView: UIViewRepresentable {
         private func trajectorySignature(
             _ samples: [TrajectorySample],
             pathWidth: Float,
-            lift: Float
+            lift: Float,
+            alongBiasMeters: Float = 0
         ) -> Int {
             guard let first = samples.first, let last = samples.last else { return 0 }
             var hasher = Hasher()
@@ -2144,7 +2233,52 @@ struct Gate55ARAimView: UIViewRepresentable {
             hasher.combine(last.position.y)
             hasher.combine(Int((pathWidth * 10_000).rounded()))
             hasher.combine(Int((lift * 10_000).rounded()))
+            hasher.combine(Int((alongBiasMeters * 1_000).rounded()))
             return hasher.finalize()
+        }
+
+        /// 볼 뒤에서 멀리 볼 때만 홀 방향으로 표시를 늘림.
+        /// `cameraToHoleMeters`가 작아질수록(홀에 접근) 보정이 사라져 실좌표로 복귀.
+        private static func standingAlongDisplayBiasMeters(
+            holeDistance: Float,
+            cameraToHoleMeters: Float,
+            standingBlend: Float
+        ) -> Float {
+            let blend = max(0, min(1, standingBlend))
+            guard blend > 0.02 else { return 0 }
+            guard holeDistance >= standingShortfallMinDistanceMeters else { return 0 }
+            let d = min(
+                max(holeDistance, standingShortfallMinDistanceMeters),
+                standingShortfallMaxDistanceMeters
+            )
+            let full = standingShortfallCalibMeters
+                * (d / standingShortfallCalibDistanceMeters)
+            let nearFactor: Float
+            if cameraToHoleMeters >= shortfallFadeStartCamHoleMeters {
+                nearFactor = 1
+            } else if cameraToHoleMeters <= shortfallFadeEndCamHoleMeters {
+                nearFactor = 0
+            } else {
+                nearFactor = (cameraToHoleMeters - shortfallFadeEndCamHoleMeters)
+                    / (shortfallFadeStartCamHoleMeters - shortfallFadeEndCamHoleMeters)
+            }
+            return full * blend * max(0, min(1, nearFactor))
+        }
+
+        private static func cameraHorizontalDistance(to world: SIMD3<Float>, in view: ARView) -> Float? {
+            guard let frame = view.session.currentFrame else { return nil }
+            let cam = frame.camera.transform.columns.3
+            let dx = world.x - cam.x
+            let dz = world.z - cam.z
+            return hypot(dx, dz)
+        }
+
+        private static func holeAlongUnit(from ball: SIMD3<Float>, to hole: SIMD3<Float>) -> SIMD3<Float>? {
+            let dx = hole.x - ball.x
+            let dz = hole.z - ball.z
+            let len = hypot(dx, dz)
+            guard len > 1e-3 else { return nil }
+            return SIMD3(dx / len, 0, dz / len)
         }
 
         /// 메시를 다시 만들지 않고 로컬 X(굵기)와 알파만 바꾼다. 하안 근접 끊김 방지.
@@ -2167,6 +2301,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             let height = smoothedProximityHeight
             let widthScale = proximityLineWidthScale(heightAboveBall: height)
             let pathAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: height)
+            // 하안 근접 시 최대 50% 반투명 — 볼을 조준선 너머로 보고 맞추기 위함.
             let aimAlpha = proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: height)
             let ballAlpha = proximityLineAlpha(
                 base: ARReferenceMarkers.ballMarkerStandingAlpha,
@@ -2185,6 +2320,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     widthScale: widthScale,
                     pathAlpha: pathAlpha
                 )
+                // 직선 박스 조준선만 scale.x로 폭 조절(리본이 아님).
                 applyLineScale(aimEntity, scale: widthAxis)
             } else if pathAlphaChanged {
                 lastAppliedPathAlpha = pathAlpha
@@ -2220,17 +2356,20 @@ struct Gate55ARAimView: UIViewRepresentable {
                 samples: cached.trajectory,
                 scan: cached.scan,
                 displayTransform: transform,
-                lift: lastPathLift,
+                lift: lastPathLift > 0 ? lastPathLift : 0.006,
                 pathWidth: effectiveWidth,
                 pathAlpha: pathAlpha,
+                alongBiasMeters: lastAlongDisplayBiasMeters,
                 parent: overlays
             )
             lastTrajectoryRevision = trajectorySignature(
                 cached.trajectory,
                 pathWidth: effectiveWidth,
-                lift: lastPathLift
+                lift: lastPathLift > 0 ? lastPathLift : 0.006,
+                alongBiasMeters: lastAlongDisplayBiasMeters
             )
             lastAppliedPathAlpha = pathAlpha
+            applyGuidanceLineStacking(in: overlays)
         }
 
         private func ballMarkerEntity() -> ModelEntity? {
@@ -2313,6 +2452,46 @@ struct Gate55ARAimView: UIViewRepresentable {
             model.position = mid
             parent.addChild(model)
             entity = model
+        }
+
+        /// 직교선 → 빨간 궤적 → 흰 조준 순으로 쌓기(아래→위).
+        /// 반투명 조준선은 iOS 18+ 그리기 순서로 궤적 위에 고정한다.
+        private func applyGuidanceLineStacking(in parent: Entity) {
+            if let zero = zeroLineEntity {
+                parent.addChild(zero)
+            }
+            if let traj = trajectoryRoot {
+                parent.addChild(traj)
+            }
+            if let aim = aimEntity {
+                parent.addChild(aim)
+            }
+            if #available(iOS 18.0, *) {
+                applyGuidanceLineSortOrderIOS18()
+            }
+        }
+
+        @available(iOS 18.0, *)
+        private func applyGuidanceLineSortOrderIOS18() {
+            let group: ModelSortGroup
+            if let existing = guidanceLineSortGroupStorage as? ModelSortGroup {
+                group = existing
+            } else {
+                group = ModelSortGroup(depthPass: nil)
+                guidanceLineSortGroupStorage = group
+            }
+            applySortGroup(zeroLineEntity, group: group, order: 0)
+            applySortGroup(trajectoryRoot, group: group, order: 1)
+            applySortGroup(aimEntity, group: group, order: 2)
+        }
+
+        @available(iOS 18.0, *)
+        private func applySortGroup(_ entity: Entity?, group: ModelSortGroup, order: Int32) {
+            guard let entity else { return }
+            entity.components.set(ModelSortGroupComponent(group: group, order: order))
+            for child in entity.children {
+                applySortGroup(child, group: group, order: order)
+            }
         }
 
         private func updateContours(
@@ -2804,41 +2983,64 @@ struct Gate55ARAimView: UIViewRepresentable {
             lift: Float,
             pathWidth: Float,
             pathAlpha: CGFloat,
+            alongBiasMeters: Float = 0,
             parent: Entity
         ) {
             clearTrajectory()
             guard samples.count >= 2 else { return }
+            // displayTransform: 궤적은 물리(terrain) 샘플을 쓰므로 XZ에 미사용. 호출부 시그니처 유지.
+            _ = displayTransform
 
+            // 물리 샘플은 terrainTransform(스캔 볼) 기준.
+            // local = physicsWorld - physicsOrigin → 부모(표시 볼) 아래 mid 같은 형상으로 AR 볼에서 시작.
+            // 끝을 홀에 스냅하지 않음 — 미스/오버런은 물리 궤적 그대로(홀 지나침 OK).
             let physicsTransform = scan.terrainTransform
-            var localPoints: [PuttVector2] = [PuttVector2(x: 0, y: 0)]
+            let physicsOrigin = SIMD3(
+                Float(physicsTransform.origin.worldX),
+                Float(physicsTransform.origin.worldY),
+                Float(physicsTransform.origin.worldZ)
+            )
+            let holeWorld = SIMD3(
+                Float(scan.holeAnchor.worldX),
+                Float(scan.holeAnchor.worldY),
+                Float(scan.holeAnchor.worldZ)
+            )
+            let terrainOriginY = physicsOrigin.y
+            let map = scan.result.smoothed
+            let holeDistance = max(
+                hypot(
+                    scan.terrainHoleAnchor.worldX - physicsTransform.origin.worldX,
+                    scan.terrainHoleAnchor.worldZ - physicsTransform.origin.worldZ
+                ),
+                1e-6
+            )
+            // 멀리서 짧게 보이는 표시 보정만 전진축으로 균일 stretch(형상·미스 방향 유지).
+            let stretch = alongBiasMeters > 1e-4
+                ? Float((holeDistance + Double(alongBiasMeters)) / holeDistance)
+                : 1
+
+            var pathPositions: [SIMD3<Float>] = [
+                SIMD3(0, lift, 0)
+            ]
             for sample in samples {
                 let p = sample.position
                 if hypot(p.x, p.y) < 1e-4 { continue }
-                let world = physicsTransform.worldXZ(localX: p.x, localY: p.y)
-                let display = displayTransform.localFromWorld(
-                    worldX: world.worldX,
-                    worldZ: world.worldZ
+                let xz = physicsTransform.worldXZ(
+                    localX: p.x,
+                    localY: Double(Float(p.y) * stretch)
                 )
-                localPoints.append(display)
-            }
-            guard localPoints.count >= 2 else { return }
-
-            let holeLocal = PuttVector2(x: 0, y: scan.holeDistance)
-            let nearestHole = localPoints.map {
-                hypot($0.x - holeLocal.x, $0.y - holeLocal.y)
-            }.min() ?? .infinity
-            if nearestHole > 0.15 {
-                localPoints.append(holeLocal)
+                let progress = Float(min(max(p.y / holeDistance, 0), 1.25))
+                let worldY: Float
+                if let relativeH = sampleHeight(map, localX: p.x, localY: p.y) {
+                    worldY = terrainOriginY + Float(relativeH) + lift
+                } else {
+                    worldY = physicsOrigin.y + (holeWorld.y - physicsOrigin.y) * progress + lift
+                }
+                let worldPoint = SIMD3(Float(xz.worldX), worldY, Float(xz.worldZ))
+                pathPositions.append(worldPoint - physicsOrigin)
             }
 
-            let pathPositions = localPoints.map {
-                ballLocalPoint(
-                    localX: $0.x,
-                    localY: $0.y,
-                    lift: lift,
-                    transform: displayTransform
-                )
-            }
+            guard pathPositions.count >= 2 else { return }
 
             let root = Entity()
             root.name = "trajectory"
