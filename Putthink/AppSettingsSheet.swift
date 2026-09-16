@@ -63,7 +63,7 @@ struct AppSettingsSheet: View {
                 selectedProductID = active
             } else if selectedProductID == nil {
                 selectedProductID = subscriptions.products.first?.id
-                    ?? DisplayPlan.fallbackPlans.first?.id
+                    ?? SubscriptionStore.productIDs.first
             }
         }
     }
