@@ -3594,19 +3594,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Subscriptions auto-renew unless canceled at least 24 hours before the period ends. Price is charged to your Apple ID. Privacy Policy and Terms of Use are in Settings."
+            "value" : "Subscriptions auto-renew unless canceled at least 24 hours before the period ends. Price is charged to your Apple ID. Privacy Policy and Terms of Use (EULA) are linked below."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "期間終了の少なくとも24時間前に解約しない限り自動更新され、Apple IDに請求されます。プライバシーポリシーと利用規約は設定にあります。"
+            "value" : "期間終了の少なくとも24時間前に解約しない限り自動更新され、Apple IDに請求されます。プライバシーポリシーと利用規約（EULA）は下のリンクから確認できます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기간이 끝나기 최소 24시간 전에 해지하지 않으면 구독은 자동 갱신되며 Apple ID로 청구됩니다. 개인정보 처리방침과 이용약관은 설정에 있습니다."
+            "value" : "기간이 끝나기 최소 24시간 전에 해지하지 않으면 구독은 자동 갱신되며 Apple ID로 청구됩니다. 개인정보 처리방침과 이용약관(EULA)은 아래 링크에서 확인할 수 있습니다."
           }
         }
       }
@@ -4193,6 +4193,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Supabase 프로젝트가 아직 없습니다. URL·anon key를 설정하세요."
+          }
+        }
+      }
+    },
+    "showcase.report" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report Showcase content"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パット自慢を報告"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "뽐내기 콘텐츠 신고"
           }
         }
       }

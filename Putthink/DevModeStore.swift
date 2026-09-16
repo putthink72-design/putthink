@@ -15,9 +15,9 @@ final class DevModeStore: ObservableObject {
     var isProductionMode: Bool { !isDevMode }
 
     init() {
-        // Default ON while shipping unfinished monetization / Supabase wiring.
+        // Default OFF for External TF / App Review. Toggle still works for filming.
         if UserDefaults.standard.object(forKey: Self.key) == nil {
-            isDevMode = true
+            isDevMode = false
         } else {
             isDevMode = UserDefaults.standard.bool(forKey: Self.key)
         }

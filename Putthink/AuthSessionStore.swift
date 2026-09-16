@@ -47,6 +47,22 @@ final class AuthSessionStore: NSObject, ObservableObject {
         applySession(userID: session.userID, accessToken: session.accessToken, appleLinked: false)
     }
 
+    /// Account deletion must hit the real cloud user — never mint a fresh device session if Apple was used.
+    func ensureSessionForAccountDeletion() async throws {
+        if isAppleLinked {
+            try await ensureAppleSupabaseSession()
+            return
+        }
+        if let token = supabaseAccessToken, userID != nil, !token.isEmpty {
+            return
+        }
+        do {
+            try await ensureAppleSupabaseSession()
+        } catch {
+            try await ensureSupabaseSessionForUpload()
+        }
+    }
+
     /// Real Apple → Supabase session required for invite link ownership.
     func ensureAppleSupabaseSession() async throws {
         if isAppleLinked, let token = supabaseAccessToken, userID != nil, !token.isEmpty {

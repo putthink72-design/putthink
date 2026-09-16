@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// Local free-run ledger until Supabase Edge Functions are live.
+/// Local free-run ledger with optional Supabase Edge sync for claim/consume.
 /// Spec: organic 3 / invited 6; claim once per device; deduct after guidance readout.
 @MainActor
 final class FreeRunsStore: ObservableObject {

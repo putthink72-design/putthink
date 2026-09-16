@@ -314,6 +314,7 @@ enum L10n {
     static var showcaseUploadSettingsBody: String { s("showcase.upload.settings_body") }
     static var showcaseUploadOpen: String { s("showcase.upload.open") }
     static var showcaseUploadDo: String { s("showcase.upload.do") }
+    static var showcaseReport: String { s("showcase.report") }
     static var showcaseUploadDefaultCaption: String { s("showcase.upload.default_caption") }
     static var nicknameTitle: String { s("nickname.title") }
     static var nicknameFooter: String { s("nickname.footer") }

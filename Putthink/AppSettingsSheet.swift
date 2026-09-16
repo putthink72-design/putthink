@@ -195,6 +195,12 @@ struct AppSettingsSheet: View {
                 ) {
                     showShowcaseUpload = true
                 }
+
+                if let reportURL = URL(string: "mailto:hello@putthink.com?subject=Putthink%20Showcase%20report") {
+                    Link(L10n.showcaseReport, destination: reportURL)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textTertiary)
+                }
             }
         }
     }
@@ -299,6 +305,12 @@ struct AppSettingsSheet: View {
                     }
                 }
 
+                if displayedPlans.isEmpty {
+                    Text(L10n.settingsStoreUnavailable)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                }
+
                 if let message = subscriptions.statusMessage, !message.isEmpty {
                     Text(message)
                         .font(.system(size: 12))
@@ -341,6 +353,21 @@ struct AppSettingsSheet: View {
                     .font(.system(size: 11))
                     .foregroundStyle(OSDPalette.textTertiary)
                     .lineSpacing(2)
+
+                HStack(spacing: 16) {
+                    Button(L10n.settingsPrivacy) {
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            legalKind = .privacy
+                        }
+                    }
+                    Button(L10n.settingsEULA) {
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            legalKind = .eula
+                        }
+                    }
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OSDPalette.accent)
             }
         }
     }
@@ -451,7 +478,7 @@ struct AppSettingsSheet: View {
     private func deleteCloudAccount() async {
         accountDeleteMessage = nil
         do {
-            try await auth.ensureSupabaseSessionForUpload()
+            try await auth.ensureSessionForAccountDeletion()
             guard let token = auth.supabaseAccessToken else {
                 accountDeleteMessage = L10n.showcaseUploadNeedSupabaseSession
                 return
@@ -505,11 +532,13 @@ struct AppSettingsSheet: View {
     }
 
     private var subscribeButtonEnabled: Bool {
-        guard !subscriptions.isBusy, let selected = selectedProductID else { return false }
+        guard !subscriptions.isBusy else { return false }
+        guard !displayedPlans.isEmpty, let selected = selectedProductID else { return false }
         if subscriptions.isSubscribed, selected == subscriptions.activeProductID {
             return false
         }
-        return true
+        return displayedPlans.contains(where: { $0.id == selected && $0.storeProduct != nil })
+            || subscriptions.products.contains(where: { $0.id == selected })
     }
 
     private func purchaseSelected() async {
@@ -569,9 +598,8 @@ private struct DisplayPlan: Identifiable {
     var storeProduct: Product?
 
     static func build(products: [Product]) -> [DisplayPlan] {
-        if products.isEmpty {
-            return fallbackPlans
-        }
+        // No hardcoded USD fallback — empty list surfaces store-unavailable instead of fake prices.
+        guard !products.isEmpty else { return [] }
         let monthlyPrice = products.first(where: { $0.id == SubscriptionStore.productIDs[0] })?.price
         return products.map { product in
             let months = monthCount(for: product.id)
@@ -584,43 +612,6 @@ private struct DisplayPlan: Identifiable {
                 storeProduct: product
             )
         }
-    }
-
-    static var fallbackPlans: [DisplayPlan] {
-        [
-            DisplayPlan(
-                id: SubscriptionStore.productIDs[0],
-                title: L10n.planMonth,
-                price: "$9.99",
-                months: 1,
-                savingsPercent: nil,
-                storeProduct: nil
-            ),
-            DisplayPlan(
-                id: SubscriptionStore.productIDs[1],
-                title: L10n.planQuarter,
-                price: "$24.99",
-                months: 3,
-                savingsPercent: 17,
-                storeProduct: nil
-            ),
-            DisplayPlan(
-                id: SubscriptionStore.productIDs[2],
-                title: L10n.planSixMonth,
-                price: "$44.99",
-                months: 6,
-                savingsPercent: 25,
-                storeProduct: nil
-            ),
-            DisplayPlan(
-                id: SubscriptionStore.productIDs[3],
-                title: L10n.planYear,
-                price: "$74.99",
-                months: 12,
-                savingsPercent: 37,
-                storeProduct: nil
-            ),
-        ]
     }
 
     static func title(for productID: String) -> String {
