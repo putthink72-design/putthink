@@ -56,10 +56,12 @@ enum LegalCopy {
     • Delete the app to remove local data.
     • In Putthink Settings → Legal, use Delete Account to request deletion of your cloud account, profile, and Showcase uploads (Apple subscription billing must still be cancelled in Apple ID settings).
     • Manage language and invites in Settings.
-    • Full website policy: https://www.putthink.com/en/privacy
+    • Full website policy:
+    https://www.putthink.com/en/privacy
 
-    6. Contact
-    Privacy questions: https://www.putthink.com/en/support or the developer contact on the App Store product page.
+    6. Website
+    https://www.putthink.com
+    Or use the developer contact on the App Store product page.
     """
 
     private static let privacyKO = """
@@ -88,10 +90,12 @@ enum LegalCopy {
     5. 선택 권한
     • 앱 삭제로 로컬 데이터를 지울 수 있습니다.
     • 설정 → 법적 고지에서 계정 삭제로 클라우드 계정·프로필·뽐내기 업로드 삭제를 요청할 수 있습니다(구독 해지는 Apple ID 설정에서 별도).
-    • 웹 정책: https://www.putthink.com/ko/privacy
+    • 웹 정책:
+    https://www.putthink.com/ko/privacy
 
-    6. 문의
-    https://www.putthink.com/ko/support 또는 App Store 제품 페이지의 개발자 연락처.
+    6. 웹사이트
+    https://www.putthink.com
+    또는 App Store 제품 페이지의 개발자 연락처.
     """
 
     private static let privacyJA = """
@@ -120,10 +124,12 @@ enum LegalCopy {
     5. お客様の選択
     • アプリ削除でローカルデータを消去できます。
     • 設定 → 法的情報のアカウント削除でクラウドアカウント・プロフィール・投稿の削除を依頼できます（定期購入の解約はApple ID設定で別途）。
-    • ウェブ方針: https://www.putthink.com/ja/privacy
+    • ウェブ方針:
+    https://www.putthink.com/ja/privacy
 
-    6. お問い合わせ
-    https://www.putthink.com/ja/support または App Store製品ページの開発者連絡先。
+    6. ウェブサイト
+    https://www.putthink.com
+    または App Store製品ページの開発者連絡先。
     """
 
     private static let eulaEN = """
@@ -409,17 +415,35 @@ enum LegalCopy {
     }
 
     private static func isolatedURL(_ line: String) -> URL? {
-        guard line.hasPrefix("http"), let url = URL(string: line) else { return nil }
-        return url
+        guard let extracted = extractHTTPURL(from: line),
+              extracted.range.lowerBound == line.startIndex,
+              extracted.range.upperBound == line.endIndex
+        else { return nil }
+        return extracted.url
     }
 
     private static func paragraphWithTrailingURL(_ line: String) -> (text: String, url: URL)? {
-        guard let range = line.range(of: "https://", options: .backwards) else { return nil }
-        let urlString = String(line[range.lowerBound...]).trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: urlString) else { return nil }
-        let text = String(line[..<range.lowerBound])
+        guard let extracted = extractHTTPURL(from: line) else { return nil }
+        let text = String(line[..<extracted.range.lowerBound])
             .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ":")))
-        return (text, url)
+        guard !text.isEmpty else { return nil }
+        return (text, extracted.url)
+    }
+
+    /// First `https://…` token, stopping at whitespace or non-ASCII (so KO/JA suffixes are not swallowed).
+    private static func extractHTTPURL(from line: String) -> (url: URL, range: Range<String.Index>)? {
+        guard let start = line.range(of: "https://") else { return nil }
+        var end = start.lowerBound
+        while end < line.endIndex {
+            let ch = line[end]
+            if ch.isWhitespace || ch == ")" || ch == "]" || ch == ">" { break }
+            if ch.unicodeScalars.contains(where: { $0.value > 0x007F }) { break }
+            line.formIndex(after: &end)
+        }
+        let token = String(line[start.lowerBound..<end])
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,;"))
+        guard let url = URL(string: token), url.host != nil else { return nil }
+        return (url, start.lowerBound..<end)
     }
 }
 

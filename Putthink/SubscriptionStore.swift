@@ -17,6 +17,8 @@ final class SubscriptionStore: ObservableObject {
 
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false
+    /// Currently entitled product in the Putthink Pro group, if any.
+    @Published private(set) var activeProductID: String?
     @Published var statusMessage: String?
     @Published var isBusy = false
 
@@ -113,14 +115,17 @@ final class SubscriptionStore: ObservableObject {
 
     private func updateEntitlements() async {
         var active = false
+        var activeID: String?
         for await result in Transaction.currentEntitlements {
             guard let transaction = try? Self.checkVerified(result) else { continue }
             if Self.productIDs.contains(transaction.productID) {
                 active = true
+                activeID = transaction.productID
                 break
             }
         }
         isSubscribed = active
+        activeProductID = activeID
     }
 
     private static func sortProducts(_ lhs: Product, _ rhs: Product) -> Bool {

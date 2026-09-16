@@ -280,6 +280,9 @@ enum L10n {
     static var settingsSubscribeBody: String { s("settings.subscribe.body") }
     static var settingsSubscribeActive: String { s("settings.subscribe.active") }
     static var settingsSubscribeCTA: String { s("settings.subscribe.cta") }
+    static var settingsSubscribeChangeCTA: String { s("settings.subscribe.change_cta") }
+    static var settingsSubscribeCurrentPlan: String { s("settings.subscribe.current_plan") }
+    static var settingsSubscribeCurrentPlanCTA: String { s("settings.subscribe.current_plan_cta") }
     static var settingsStartTrial: String { s("settings.subscribe.trial_cta") }
     static var settingsTrialBadge: String { s("settings.subscribe.trial_badge") }
     static var settingsTrialShort: String { s("settings.subscribe.trial_short") }

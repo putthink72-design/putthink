@@ -59,7 +59,9 @@ struct AppSettingsSheet: View {
         }
         .task {
             await subscriptions.refresh()
-            if selectedProductID == nil {
+            if let active = subscriptions.activeProductID {
+                selectedProductID = active
+            } else if selectedProductID == nil {
                 selectedProductID = subscriptions.products.first?.id
                     ?? DisplayPlan.fallbackPlans.first?.id
             }
@@ -303,13 +305,12 @@ struct AppSettingsSheet: View {
                         .foregroundStyle(OSDPalette.accent)
                 }
 
-                if !subscriptions.hasProAccess(devMode: devMode) {
-                    OSDPrimaryButton(
-                        title: subscribeButtonTitle,
-                        enabled: !subscriptions.isBusy && selectedProductID != nil
-                    ) {
-                        Task { await purchaseSelected() }
-                    }
+                // Always allow purchase/change so users can upgrade to longer plans or downgrade.
+                OSDPrimaryButton(
+                    title: subscribeButtonTitle,
+                    enabled: subscribeButtonEnabled
+                ) {
+                    Task { await purchaseSelected() }
                 }
 
                 HStack(spacing: 0) {
@@ -346,13 +347,24 @@ struct AppSettingsSheet: View {
 
     private func planTile(_ plan: DisplayPlan) -> some View {
         let selected = selectedProductID == plan.id
+        let isCurrent = subscriptions.activeProductID == plan.id
         return Button {
             selectedProductID = plan.id
         } label: {
             VStack(alignment: .leading, spacing: 6) {
-                Text(plan.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(OSDPalette.textSecondary)
+                HStack(spacing: 6) {
+                    Text(plan.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                    if isCurrent {
+                        Text(L10n.settingsSubscribeCurrentPlan)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(OSDPalette.accentInk)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(OSDPalette.accent, in: Capsule())
+                    }
+                }
                 Text(plan.price)
                     .font(.system(size: 20, weight: .heavy))
                     .foregroundStyle(OSDPalette.textPrimary)
@@ -482,7 +494,22 @@ struct AppSettingsSheet: View {
     }
 
     private var subscribeButtonTitle: String {
-        L10n.settingsSubscribeCTA
+        if subscriptions.isSubscribed {
+            if let selected = selectedProductID,
+               selected == subscriptions.activeProductID {
+                return L10n.settingsSubscribeCurrentPlanCTA
+            }
+            return L10n.settingsSubscribeChangeCTA
+        }
+        return L10n.settingsSubscribeCTA
+    }
+
+    private var subscribeButtonEnabled: Bool {
+        guard !subscriptions.isBusy, let selected = selectedProductID else { return false }
+        if subscriptions.isSubscribed, selected == subscriptions.activeProductID {
+            return false
+        }
+        return true
     }
 
     private func purchaseSelected() async {
@@ -490,8 +517,14 @@ struct AppSettingsSheet: View {
         guard let id = selectedProductID,
               let plan = plans.first(where: { $0.id == id })
         else { return }
+        if subscriptions.isSubscribed, id == subscriptions.activeProductID {
+            return
+        }
         if let product = plan.storeProduct ?? subscriptions.products.first(where: { $0.id == id }) {
             await subscriptions.purchase(product)
+            if let active = subscriptions.activeProductID {
+                selectedProductID = active
+            }
         } else {
             subscriptions.statusMessage = L10n.settingsStoreUnavailable
         }
@@ -756,11 +789,12 @@ struct LegalFormattedBody: View {
 
         case .link(let url):
             Link(destination: url) {
-                Text(url.host ?? url.absoluteString)
+                Text(url.absoluteString)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(OSDPalette.accent)
                     .underline()
                     .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.bottom, 12)
         }
