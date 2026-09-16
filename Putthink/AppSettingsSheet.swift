@@ -82,6 +82,7 @@ struct AppSettingsSheet: View {
                     subscriptionCard
                     languageCard
                     legalCard
+                    deleteAccountControl
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -353,21 +354,6 @@ struct AppSettingsSheet: View {
                     .font(.system(size: 11))
                     .foregroundStyle(OSDPalette.textTertiary)
                     .lineSpacing(2)
-
-                HStack(spacing: 16) {
-                    Button(L10n.settingsPrivacy) {
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            legalKind = .privacy
-                        }
-                    }
-                    Button(L10n.settingsEULA) {
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            legalKind = .eula
-                        }
-                    }
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(OSDPalette.accent)
             }
         }
     }
@@ -439,32 +425,30 @@ struct AppSettingsSheet: View {
                         legalKind = .eula
                     }
                 }
-                Rectangle()
-                    .fill(OSDPalette.glassHair)
-                    .frame(height: 1)
-                    .padding(.vertical, 4)
-                Button {
-                    showDeleteAccountConfirm = true
-                } label: {
-                    HStack {
-                        Text(L10n.settingsDeleteAccount)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Color.red.opacity(0.9))
-                        Spacer()
-                    }
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if let accountDeleteMessage, !accountDeleteMessage.isEmpty {
-                    Text(accountDeleteMessage)
-                        .font(.system(size: 12))
-                        .foregroundStyle(OSDPalette.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 4)
-                }
             }
         }
+    }
+
+    private var deleteAccountControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                showDeleteAccountConfirm = true
+            } label: {
+                Text(L10n.settingsDeleteAccount)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if let accountDeleteMessage, !accountDeleteMessage.isEmpty {
+                Text(accountDeleteMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 16)
         .alert(L10n.settingsDeleteAccountTitle, isPresented: $showDeleteAccountConfirm) {
             Button(L10n.settingsDeleteAccountConfirm, role: .destructive) {
                 Task { await deleteCloudAccount() }

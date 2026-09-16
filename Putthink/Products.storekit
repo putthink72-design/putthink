@@ -4,6 +4,8 @@
   "products" : [],
   "settings" : {
     "_failTransactionsEnabled" : false,
+    "_locale" : "ko_KR",
+    "_storefront" : "KOR",
     "_storeKitErrors" : []
   },
   "subscriptionGroups" : [
@@ -21,7 +23,7 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "9.99",
+          "displayPrice" : "14000",
           "familyShareable" : false,
           "groupNumber" : 4,
           "internalID" : "21481011",
@@ -41,7 +43,7 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "24.99",
+          "displayPrice" : "35000",
           "familyShareable" : false,
           "groupNumber" : 3,
           "internalID" : "21481012",
@@ -61,7 +63,7 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "44.99",
+          "displayPrice" : "59000",
           "familyShareable" : false,
           "groupNumber" : 2,
           "internalID" : "21481013",
@@ -81,7 +83,7 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "74.99",
+          "displayPrice" : "99000",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "21481014",
