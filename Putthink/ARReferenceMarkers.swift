@@ -337,11 +337,17 @@ enum ARReferenceMarkers {
         existingEntity = anchor
     }
 
+    /// `AnchorEntity(world:)`는 앵커 포즈 × local transform으로 월드 좌표가 된다.
+    /// local에 절대 월드 행렬을 넣으면(구 구현) 위치가 대략 2배로 튀어 깃대가 화면 상단으로 날아간다.
+    /// 앵커 포즈 자체를 갱신하고 local은 identity로 둔다(자식 오버레이 유지).
     static func moveRealityWorldFixed(
         to world: SIMD3<Float>,
         existingEntity: AnchorEntity?
     ) {
-        existingEntity?.transform = Transform(matrix: worldTransform(at: world))
+        guard let entity = existingEntity else { return }
+        let matrix = worldTransform(at: world)
+        entity.anchoring = AnchoringComponent(.world(transform: matrix))
+        entity.transform = .identity
     }
 
     static func replaceRealityWorldFixed(

@@ -56,6 +56,9 @@ struct Gate55GuidanceView: View {
     var sessionARView: ARView? = nil
     @Binding var exportError: String?
     @Binding var showSettings: Bool
+    @EnvironmentObject private var subscriptions: SubscriptionStore
+    @EnvironmentObject private var freeRuns: FreeRunsStore
+    @EnvironmentObject private var devMode: DevModeStore
     @StateObject private var model = Gate55GuidanceModel()
     @State private var aimRevision = 0
     @State private var greenVizMode: GreenSurfaceVizMode? = nil
@@ -63,6 +66,7 @@ struct Gate55GuidanceView: View {
     @State private var floorUIModeBridge = FloorAddressUIModeBridge()
     /// 조준 진입 시 한 번 고정. 기울임으로 safe area가 바뀌어도 하단 블록·OSD 높이가 변하지 않는다.
     @State private var guidanceUILayout: GuidanceUILayoutLock?
+    @State private var didConsumeFreeRunForCurrentScan = false
 
     private struct GuidanceUILayoutLock: Equatable {
         var osdCardHeight: CGFloat
@@ -79,6 +83,20 @@ struct Gate55GuidanceView: View {
 
     var body: some View {
         guidanceRoot
+            .onChange(of: model.recommendation?.primary != nil) { _, hasPrimary in
+                guard hasPrimary,
+                      !didConsumeFreeRunForCurrentScan,
+                      let rec = model.recommendation,
+                      rec.flatEquivalentDistance > 0
+                else { return }
+                didConsumeFreeRunForCurrentScan = true
+                _ = freeRuns.consumeAfterGuidanceReady(
+                    isSubscribed: subscriptions.hasProAccess(devMode: devMode)
+                )
+            }
+            .onChange(of: controller.completedScan?.id) { _, _ in
+                didConsumeFreeRunForCurrentScan = false
+            }
     }
 
     private var showsBallAimReticle: Bool {
@@ -155,7 +173,29 @@ struct Gate55GuidanceView: View {
             VStack(spacing: 0) {
                 HStack {
                     Spacer(minLength: 0)
-                    OSDGearButton { showSettings = true }
+                    VStack(alignment: .trailing, spacing: 8) {
+                        OSDGearButton { showSettings = true }
+                        // Temporary: remove before App Store review.
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                devMode.isDevMode.toggle()
+                            }
+                        } label: {
+                            Text(devMode.isDevMode ? L10n.devModeOn : L10n.prodModeOn)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(devMode.isDevMode ? OSDPalette.accentInk : OSDPalette.textPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule().fill(devMode.isDevMode ? OSDPalette.accent : Color.white.opacity(0.12))
+                                )
+                                .overlay(
+                                    Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(devMode.isDevMode ? L10n.devModeOn : L10n.prodModeOn)
+                    }
                 }
                 if let exportError {
                     Text(exportError)
@@ -1012,6 +1052,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lastAimBeta = .nan
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
+                lastAlongDisplayBiasMeters = 0
+                smoothedAlongDisplayBiasMeters = 0
                 lastAimWidth = 0
                 lastAimLift = 0
                 lastAimAlpha = 1
@@ -2992,18 +3034,26 @@ struct Gate55ARAimView: UIViewRepresentable {
             _ = displayTransform
 
             // 물리 샘플은 terrainTransform(스캔 볼) 기준.
-            // local = physicsWorld - physicsOrigin → 부모(표시 볼) 아래 mid 같은 형상으로 AR 볼에서 시작.
-            // 끝을 홀에 스냅하지 않음 — 미스/오버런은 물리 궤적 그대로(홀 지나침 OK).
+            // 부모는 표시 AR 볼. local = physicsWorld − displayOrigin 이면 월드에서 물리 궤적과 동일
+            // (실볼 정렬 후에도 끝이 홀에 맞음). 시작은 표시 볼과 수 cm 어긋날 수 있음.
+            // 끝을 홀에 억지 스냅하지 않음 — 미스/오버런은 물리 궤적 그대로.
             let physicsTransform = scan.terrainTransform
             let physicsOrigin = SIMD3(
                 Float(physicsTransform.origin.worldX),
                 Float(physicsTransform.origin.worldY),
                 Float(physicsTransform.origin.worldZ)
             )
+            // 표시 볼(부모) 월드 — soft-follow 반영. 없으면 물리 원점.
+            let displayOrigin: SIMD3<Float> = {
+                if let ball = ballAnchorEntity {
+                    return ball.position(relativeTo: nil)
+                }
+                return physicsOrigin
+            }()
             let holeWorld = SIMD3(
-                Float(scan.holeAnchor.worldX),
-                Float(scan.holeAnchor.worldY),
-                Float(scan.holeAnchor.worldZ)
+                Float(scan.terrainHoleAnchor.worldX),
+                Float(scan.terrainHoleAnchor.worldY),
+                Float(scan.terrainHoleAnchor.worldZ)
             )
             let terrainOriginY = physicsOrigin.y
             let map = scan.result.smoothed
@@ -3037,7 +3087,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     worldY = physicsOrigin.y + (holeWorld.y - physicsOrigin.y) * progress + lift
                 }
                 let worldPoint = SIMD3(Float(xz.worldX), worldY, Float(xz.worldZ))
-                pathPositions.append(worldPoint - physicsOrigin)
+                pathPositions.append(worldPoint - displayOrigin)
             }
 
             guard pathPositions.count >= 2 else { return }

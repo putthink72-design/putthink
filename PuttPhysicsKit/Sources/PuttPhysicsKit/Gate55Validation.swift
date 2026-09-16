@@ -289,7 +289,8 @@ public enum Gate55Validation {
             context.field.height(at: context.holeLocal)
             - context.field.height(at: context.ballLocal)
 
-        // 평탄한데 |β|만 큰 후보는 LiDAR 노이즈로 보고 스피드 코리도·경로에서 제외.
+        // 평탄 노이즈·홀 미도달(오버런 0 위장)은 코리도에서 제외.
+        // 정렬: 안전(홀인·오버런≈0) → 공격(≈0.35m 오버런).
         let corridor = selection.allCandidates
             .filter {
                 !isLikelyFlatNoiseAim(

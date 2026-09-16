@@ -31,92 +31,99 @@ enum LegalCopy {
 
     private static let privacyEN = """
     Putthink Privacy Policy
-    Last updated: 4 September 2026
+    Last updated: 16 September 2026
 
     Putthink is a putting-guidance app. It uses your iPhone camera and LiDAR to scan the green between your golf ball and the hole, then estimates break and speed on this device.
 
     1. What we process
-    • Camera and LiDAR depth/mesh: to reconstruct the putting surface between ball and hole and to show live aiming overlays. Frames are used for that session’s scan and guidance. We do not upload video, photos, or LiDAR meshes to our servers.
-    • On-device scan files: height maps and related diagnostics may be stored locally so this round’s guidance can be computed. They stay on your iPhone unless you copy them off the device yourself.
-    • App settings: language preference and similar options are stored in on-device settings (UserDefaults).
-    • Apple subscriptions: if you subscribe, Apple processes the purchase through your Apple ID. We do not receive your full payment-card number.
+    • Camera and LiDAR depth/mesh: to reconstruct the putting surface and show aiming overlays for that session. Scan meshes are processed on device for guidance.
+    • On-device scan files and settings: height maps, language, free-run balance, and invite codes may be stored locally (Keychain / UserDefaults).
+    • Apple subscriptions: purchases are processed by Apple through your Apple ID. We do not receive your full payment-card number.
+    • Backend account (Supabase): when you use Showcase upload, invite claiming, or Sign in with Apple for invites, we create or update a cloud account and profile (user id, optional device claim token, free-run balance, referred_by, display nickname).
+    • Showcase content: if you upload, we store your video file and metadata you enter (nickname, caption, club, course, hole, category) and may show them publicly on putthink.com.
+    • Invite data: invite codes and referral links you create or apply.
 
     2. Accounts and tracking
-    Putthink does not create a user account. We do not use third-party advertising, analytics, or tracking SDKs, and we do not track you across other companies’ apps or websites.
+    Putthink may create a cloud account for the features above (device-bound session and/or Sign in with Apple). We do not use third-party advertising or cross-app tracking SDKs.
 
     3. Permissions
-    Camera access is required to scan the green between the ball and the hole, lock those two points, and build the putting height map with LiDAR. If you deny camera access, scanning cannot run. You can change this later in iOS Settings → Privacy & Security → Camera.
+    Camera is required to scan. Photo Library is required only if you pick a Control Center screen recording to upload to Showcase. You can change permissions in iOS Settings.
 
     4. Children
     Putthink is not directed at children under 13.
 
     5. Your choices
-    • Delete locally stored scans by deleting the app, or by clearing the app’s data.
-    • Change language in Putthink Settings.
-    • Manage or cancel a subscription in your Apple ID subscription settings (deleting the app does not cancel billing).
+    • Delete the app to remove local data.
+    • In Putthink Settings → Legal, use Delete Account to request deletion of your cloud account, profile, and Showcase uploads (Apple subscription billing must still be cancelled in Apple ID settings).
+    • Manage language and invites in Settings.
+    • Full website policy: https://www.putthink.com/en/privacy
 
     6. Contact
-    For privacy questions, use the developer contact shown on the Putthink product page on the App Store.
+    Privacy questions: https://www.putthink.com/en/support or the developer contact on the App Store product page.
     """
 
     private static let privacyKO = """
     펏띵 개인정보 처리방침
-    최종 업데이트: 2026년 9월 4일
+    최종 업데이트: 2026년 9월 16일
 
     펏띵은 퍼팅 가이드 앱입니다. iPhone 카메라와 LiDAR로 볼과 홀 사이 그린을 스캔한 뒤, 이 기기에서 휘어짐과 스피드를 추정합니다.
 
     1. 처리하는 정보
-    • 카메라 및 LiDAR 깊이/메시: 볼과 홀 사이 퍼팅 면을 재구성하고 조준 오버레이를 표시하기 위해 사용합니다. 해당 라운드 스캔·가이드에만 쓰이며, 영상·사진·LiDAR 메시를 당사 서버로 올리지 않습니다.
-    • 기기 안 스캔 파일: 높이맵 등 진단 데이터가 이 라운드 계산을 위해 기기에 저장될 수 있습니다. 사용자가 직접 복사하지 않는 한 iPhone에만 남습니다.
-    • 앱 설정: 언어 등 설정은 기기의 UserDefaults에 저장됩니다.
-    • Apple 구독: 구독 결제는 Apple ID를 통해 Apple이 처리합니다. 카드 번호 전체를 당사가 받지 않습니다.
+    • 카메라 및 LiDAR 깊이/메시: 퍼팅 면 재구성과 조준 오버레이용으로, 해당 세션 가이드를 위해 기기에서 처리합니다.
+    • 기기 안 스캔·설정: 높이맵, 언어, 무료 실행 잔량, 초대 코드 등이 Keychain/UserDefaults에 저장될 수 있습니다.
+    • Apple 구독: 결제는 Apple ID를 통해 Apple이 처리합니다. 카드 번호 전체를 당사가 받지 않습니다.
+    • 클라우드 계정(Supabase): 뽐내기 업로드, 초대 클레임, 초대용 Sign in with Apple 사용 시 클라우드 계정·프로필(사용자 id, device claim token, 무료 실행 잔량, referred_by, 닉네임 등)이 생성·갱신됩니다.
+    • 뽐내기 콘텐츠: 업로드 시 영상과 입력 메타데이터(닉네임, 캡션, 클럽, 코스, 홀, 유형)가 저장되며 putthink.com에 공개될 수 있습니다.
+    • 초대 데이터: 생성·적용한 초대 코드와 추천 관계.
 
     2. 계정 및 추적
-    펏띵은 회원 계정을 만들지 않습니다. 제3자 광고·분석·추적 SDK를 쓰지 않으며, 다른 회사 앱·웹사이트를 가로질러 사용자를 추적하지 않습니다.
+    위 기능을 위해 클라우드 계정(기기 세션 및/또는 Sign in with Apple)이 만들어질 수 있습니다. 제3자 광고·교차 앱 추적 SDK는 쓰지 않습니다.
 
     3. 권한
-    볼과 홀 사이 그린을 스캔하고 두 지점을 지정하며 LiDAR로 퍼팅 높이맵을 만들기 위해 카메라가 필요합니다. 카메라 접근을 거부하면 스캔을 할 수 없습니다. 나중에 iOS 설정 → 개인정보 보호 및 보안 → 카메라에서 변경할 수 있습니다.
+    스캔에는 카메라가 필요합니다. 뽐내기 업로드 시에만 사진 보관함 접근이 필요합니다. iOS 설정에서 변경할 수 있습니다.
 
     4. 아동
     펏띵은 13세 미만 아동을 대상으로 하지 않습니다.
 
     5. 선택 권한
-    • 앱을 삭제하거나 앱 데이터를 지우면 로컬 스캔이 삭제됩니다.
-    • 언어는 펏띵 설정에서 바꿀 수 있습니다.
-    • 구독 해지·관리는 Apple ID 구독 설정에서 합니다. 앱 삭제만으로는 결제가 멈추지 않습니다.
+    • 앱 삭제로 로컬 데이터를 지울 수 있습니다.
+    • 설정 → 법적 고지에서 계정 삭제로 클라우드 계정·프로필·뽐내기 업로드 삭제를 요청할 수 있습니다(구독 해지는 Apple ID 설정에서 별도).
+    • 웹 정책: https://www.putthink.com/ko/privacy
 
     6. 문의
-    개인정보 관련 문의는 App Store 펏띵 제품 페이지의 개발자 연락처를 이용해 주세요.
+    https://www.putthink.com/ko/support 또는 App Store 제품 페이지의 개발자 연락처.
     """
 
     private static let privacyJA = """
     Putthink プライバシーポリシー
-    最終更新: 2026年9月4日
+    最終更新: 2026年9月16日
 
     Putthinkはパッティング案内アプリです。iPhoneのカメラとLiDARでボールとホールの間のグリーンをスキャンし、この端末上で曲がりとスピードを推定します。
 
     1. 取り扱う情報
-    • カメラおよびLiDARの深度/メッシュ: ボールとホールの間のパッティング面を再構成し、照準オーバーレイを表示するために使います。そのラウンドのスキャンと案内にのみ使用し、映像・写真・LiDARメッシュを当社サーバーへアップロードしません。
-    • 端末内スキャンファイル: ハイトマップ等の診断データが、そのラウンドの計算のため端末に保存されることがあります。ご自身でコピーしない限りiPhone内に留まります。
-    • アプリ設定: 言語などの設定は端末のUserDefaultsに保存されます。
+    • カメラおよびLiDARの深度/メッシュ: パッティング面の再構成と照準表示のため、そのセッションの案内用に端末上で処理します。
+    • 端末内のスキャン・設定: ハイトマップ、言語、無料実行残高、招待コードなどがKeychain/UserDefaultsに保存されることがあります。
     • Appleサブスクリプション: 購入はApple ID経由でAppleが処理します。カード番号全体は当社に届きません。
+    • クラウドアカウント（Supabase）: ショーケース投稿、招待の適用、招待用のSign in with Apple利用時にクラウドアカウントとプロフィール（ユーザーID、device claim token、無料実行残高、referred_by、表示名など）が作成・更新されます。
+    • ショーケース投稿: 動画と入力メタデータ（ニックネーム、キャプション、クラブ、コース、ホール、カテゴリ）を保存し、putthink.comで公開する場合があります。
+    • 招待データ: 作成・適用した招待コードと紹介関係。
 
     2. アカウントとトラッキング
-    Putthinkはユーザーアカウントを作りません。第三者の広告・分析・トラッキングSDKは使わず、他社アプリやウェブサイトを横断して追跡しません。
+    上記機能のためクラウドアカウント（端末セッションおよび/またはSign in with Apple）が作成されることがあります。第三者広告や横断トラッキングSDKは使いません。
 
     3. 許可
-    ボールとホールの間のグリーンをスキャンし、2点を指定し、LiDARでパッティング用ハイトマップを作るためにカメラが必要です。カメラを拒否するとスキャンできません。後からiOS設定 → プライバシーとセキュリティ → カメラで変更できます。
+    スキャンにはカメラが必要です。ショーケース投稿時のみフォトライブラリが必要です。iOS設定で変更できます。
 
     4. 子ども
     Putthinkは13歳未満の子どもを対象にしていません。
 
     5. お客様の選択
-    • アプリを削除するかデータを消すと、端末内スキャンは削除されます。
-    • 言語はPutthinkの設定で変更できます。
-    • 定期購入の管理・解約はApple IDのサブスクリプション設定で行います。アプリを消しただけでは課金は止まりません。
+    • アプリ削除でローカルデータを消去できます。
+    • 設定 → 法的情報のアカウント削除でクラウドアカウント・プロフィール・投稿の削除を依頼できます（定期購入の解約はApple ID設定で別途）。
+    • ウェブ方針: https://www.putthink.com/ja/privacy
 
     6. お問い合わせ
-    プライバシーに関するご質問は、App StoreのPutthink製品ページに掲載の開発者連絡先をご利用ください。
+    https://www.putthink.com/ja/support または App Store製品ページの開発者連絡先。
     """
 
     private static let eulaEN = """
@@ -134,9 +141,9 @@ enum LegalCopy {
     • 3 months — US$24.99
     • 6 months — US$44.99
     • 1 year — US$74.99
-    Prices are in US dollars for the US storefront and may differ by country or region. Payment is charged to your Apple ID. The subscription renews automatically unless you cancel at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the period ends, at the then-current price.
+    Prices are in US dollars for the US storefront and may differ by country or region. Payment is charged to your Apple ID at the moment you subscribe. The subscription renews automatically unless you cancel at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the period ends, at the then-current price.
 
-    New subscribers who have not used an introductory offer in this subscription group may receive a 3-day free trial on their first eligible purchase. After the trial, the selected plan’s regular price applies unless you cancel in time. Apple determines trial eligibility (typically once per Apple ID per subscription group). Reinstalling the app does not reset eligibility.
+    There is no free trial. Subscription starts with an immediate charge for the selected plan.
 
     3. What the subscription includes
     While active, Putthink Pro unlocks green scanning between ball and hole and on-device putting path / speed corridor guidance. Guidance is an estimate based on a LiDAR scan. It is not a guarantee of hole-outs, tournament results, or professional instruction.
@@ -175,9 +182,9 @@ enum LegalCopy {
     • 3개월 — US$24.99
     • 6개월 — US$44.99
     • 1년 — US$74.99
-    표시 가격은 미국 스토어 기준 달러이며 국가·지역에 따라 다를 수 있습니다. 결제는 Apple ID로 청구됩니다. 현재 기간이 끝나기 최소 24시간 전에 해지하지 않으면 구독은 자동 갱신됩니다. 갱신 요금은 기간 종료 전 24시간 이내에 당시 가격으로 청구됩니다.
+    표시 가격은 미국 스토어 기준 달러이며 국가·지역에 따라 다를 수 있습니다. 구독을 시작하는 순간 Apple ID로 선택한 플랜 요금이 청구됩니다. 현재 기간이 끝나기 최소 24시간 전에 해지하지 않으면 구독은 자동 갱신됩니다. 갱신 요금은 기간 종료 전 24시간 이내에 당시 가격으로 청구됩니다.
 
-    이 구독 그룹에서 소개 혜택을 쓴 적이 없는 신규 구독자는, 첫 해당 구매에 한해 3일 무료 체험을 받을 수 있습니다. 체험이 끝나면 선택한 플랜의 정가가 적용됩니다. 체험 자격은 Apple이 판단하며(보통 Apple ID당 구독 그룹당 1회), 앱을 다시 설치해도 초기화되지 않습니다.
+    무료 체험은 없습니다. 구독은 선택한 플랜의 즉시 결제로 시작됩니다.
 
     3. 구독에 포함되는 내용
     구독이 유효한 동안 펏띵 Pro는 볼과 홀 사이 그린 스캔과 기기 안 퍼팅 경로·스피드 코리도어 가이드를 엽니다. 가이드는 LiDAR 스캔에 기반한 추정이며, 홀인·대회 성적·레슨을 보장하지 않습니다.
@@ -217,9 +224,9 @@ enum LegalCopy {
     • 3か月 — US$24.99
     • 6か月 — US$44.99
     • 1年 — US$74.99
-    表示価格は米国ストアの米ドルであり、国・地域により異なる場合があります。支払いはApple IDに請求されます。現在の期間終了の少なくとも24時間前に解約しない限り自動更新されます。更新料金は期間終了前24時間以内に、その時点の価格で請求されます。
+    表示価格は米国ストアの米ドルであり、国・地域により異なる場合があります。購読を開始した時点でApple IDに選択プランの料金が請求されます。現在の期間終了の少なくとも24時間前に解約しない限り自動更新されます。更新料金は期間終了前24時間以内に、その時点の価格で請求されます。
 
-    このサブスクリプショングループで導入オファーを使ったことがない新規購読者は、最初の対象購入に限り3日間の無料トライアルを受けられることがあります。トライアル後は選択したプランの通常価格が適用されます。資格はAppleが判断し（通常Apple IDあたりグループあたり1回）、アプリの再インストールではリセットされません。
+    無料トライアルはありません。サブスクリプションは選択プランの即時課金で開始されます。
 
     3. 含まれる内容
     有効期間中、Putthink Proはボールとホールの間のグリーンスキャンと、端末上のパッティング経路・スピードコリドー案内を利用できます。案内はLiDARスキャンに基づく推定であり、カップインや競技成績、レッスンを保証しません。
@@ -257,7 +264,7 @@ enum LegalCopy {
 
     You can also use Manage Subscription in this screen, which opens Apple’s subscription sheet.
 
-    Cancel at least 24 hours before the current period (or free trial) ends to avoid the next charge. If you started a 3-day trial, cancel before the trial ends or the selected plan’s price is billed.
+    Cancel at least 24 hours before the current period ends to avoid the next charge.
 
     Restore Purchases re-downloads an existing Apple ID subscription on this or another device. It does not create a new charge.
     """
@@ -275,7 +282,7 @@ enum LegalCopy {
 
     이 화면의 구독 관리를 누르면 Apple 구독 시트가 열립니다.
 
-    다음 결제를 막으려면 현재 기간(또는 무료 체험)이 끝나기 최소 24시간 전에 해지하세요. 3일 체험 중이라면 체험이 끝나기 전에 해지해야 선택한 플랜 요금이 청구되지 않습니다.
+    다음 결제를 막으려면 현재 기간이 끝나기 최소 24시간 전에 해지하세요.
 
     구독 복원은 같은 Apple ID의 기존 구독을 이 기기(또는 다른 기기)에 다시 연결합니다. 새 결제가 발생하지 않습니다.
     """
@@ -293,7 +300,7 @@ enum LegalCopy {
 
     この画面の「サブスクリプションを管理」からもAppleの管理画面を開けます。
 
-    次の請求を避けるには、現在の期間（または無料トライアル）の終了少なくとも24時間前に解約してください。3日間トライアル中なら、終了前に解約しないと選択したプランの料金が請求されます。
+    次の請求を避けるには、現在の期間の終了少なくとも24時間前に解約してください。
 
     購入の復元は、同じApple IDの既存サブスクリプションをこの端末（または別の端末）に再接続します。新規の課金は発生しません。
     """

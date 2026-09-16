@@ -9,8 +9,24 @@
 /* Begin PBXBuildFile section */
 		100000000000000000000001 /* PutthinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* PutthinkApp.swift */; };
 		100000000000000000000002 /* ARScanSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* ARScanSessionController.swift */; };
+		1000000000000000000000027 /* DeviceKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000027 /* DeviceKeychain.swift */; };
+		1000000000000000000000028 /* FreeRunsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000028 /* FreeRunsStore.swift */; };
+		1000000000000000000000029 /* PutthinkSupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000029 /* PutthinkSupabaseConfig.swift */; };
+		100000000000000000000002A /* AuthSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002A /* AuthSessionStore.swift */; };
+		100000000000000000000002C /* ShowcaseUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002C /* ShowcaseUploadService.swift */; };
+		100000000000000000000002D /* ShowcaseUploadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002D /* ShowcaseUploadView.swift */; };
+		100000000000000000000002E /* DevModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002E /* DevModeStore.swift */; };
+		100000000000000000000002F /* SupabaseAuthAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002F /* SupabaseAuthAPI.swift */; };
 		100000000000000000000003 /* ScanFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* ScanFlowView.swift */; };
+		1000000000000000000000030 /* NicknameGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000030 /* NicknameGenerator.swift */; };
+		1000000000000000000000031 /* NicknameStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000031 /* NicknameStore.swift */; };
+		1000000000000000000000032 /* SingleVideoLibraryPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000032 /* SingleVideoLibraryPicker.swift */; };
+		1000000000000000000000033 /* InviteDeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000033 /* InviteDeepLink.swift */; };
+		1000000000000000000000034 /* InviteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000034 /* InviteStore.swift */; };
+		1000000000000000000000035 /* AccountDeleteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000035 /* AccountDeleteAPI.swift */; };
 		100000000000000000000004 /* ScanExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* ScanExporter.swift */; };
+		100000000000000000000005 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* PuttPhysicsKit */; };
+		100000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* Assets.xcassets */; };
 		100000000000000000000007 /* Gate55GuidanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* Gate55GuidanceView.swift */; };
 		100000000000000000000008 /* Gate55GuidanceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Gate55GuidanceModel.swift */; };
 		100000000000000000000009 /* Gate55ExperimentRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* Gate55ExperimentRecorder.swift */; };
@@ -18,38 +34,53 @@
 		10000000000000000000000D /* BrightMeshVisualizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* BrightMeshVisualizer.swift */; };
 		10000000000000000000000E /* ScanCoverageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* ScanCoverageTracker.swift */; };
 		10000000000000000000000F /* ThermalPerformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* ThermalPerformance.swift */; };
+		100000000000000000000011 /* GroundScanFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* GroundScanFilter.swift */; };
 		100000000000000000000012 /* OSDDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* OSDDesignSystem.swift */; };
-		10000000000000000000001A /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* L10n.swift */; };
-		10000000000000000000001B /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001B /* Localizable.xcstrings */; };
-		10000000000000000000001C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001C /* InfoPlist.xcstrings */; };
 		100000000000000000000014 /* CameraTiltStabilizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* CameraTiltStabilizer.swift */; };
 		100000000000000000000015 /* ScanFieldSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* ScanFieldSettings.swift */; };
 		100000000000000000000016 /* LiDARTwistGuidanceOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */; };
 		100000000000000000000017 /* BehindBallSweepOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* BehindBallSweepOverlay.swift */; };
 		100000000000000000000018 /* GolfBallVisualLockSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* GolfBallVisualLockSession.swift */; };
 		100000000000000000000019 /* BallGroundRingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* BallGroundRingOverlay.swift */; };
-		100000000000000000000011 /* GroundScanFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* GroundScanFilter.swift */; };
+		10000000000000000000001A /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* L10n.swift */; };
+		10000000000000000000001B /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001B /* Localizable.xcstrings */; };
+		10000000000000000000001C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001C /* InfoPlist.xcstrings */; };
 		100000000000000000000020 /* AppSettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* AppSettingsSheet.swift */; };
 		100000000000000000000021 /* SubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* SubscriptionStore.swift */; };
 		100000000000000000000022 /* AppLanguageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* AppLanguageStore.swift */; };
 		100000000000000000000023 /* LegalCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* LegalCopy.swift */; };
 		100000000000000000000024 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* PrivacyInfo.xcprivacy */; };
-		100000000000000000000005 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* PuttPhysicsKit */; };
-		100000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* Assets.xcassets */; };
+		100000000000000000000025 /* GreenSpeedSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* GreenSpeedSettings.swift */; };
 		B10000000000000000000001 /* Gate3BenchmarkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* Gate3BenchmarkApp.swift */; };
 		B10000000000000000000002 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000003 /* PuttPhysicsKit */; };
 		C10000000000000000000001 /* GreenSimulatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* GreenSimulatorApp.swift */; };
 		C10000000000000000000002 /* GreenSceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* GreenSceneBuilder.swift */; };
 		C10000000000000000000003 /* PuttPhysicsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000004 /* PuttPhysicsKit */; };
-		C10000000000000000000005 /* GreenSimulatorSnapshotExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* GreenSimulatorSnapshotExporter.swift */; };
 		C10000000000000000000004 /* samples_all36 in Resources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* samples_all36 */; };
+		C10000000000000000000005 /* GreenSimulatorSnapshotExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* GreenSimulatorSnapshotExporter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* PutthinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PutthinkApp.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* ARScanSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARScanSessionController.swift; sourceTree = "<group>"; };
+		2000000000000000000000027 /* DeviceKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeychain.swift; sourceTree = "<group>"; };
+		2000000000000000000000028 /* FreeRunsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeRunsStore.swift; sourceTree = "<group>"; };
+		2000000000000000000000029 /* PutthinkSupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PutthinkSupabaseConfig.swift; sourceTree = "<group>"; };
+		200000000000000000000002A /* AuthSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthSessionStore.swift; sourceTree = "<group>"; };
+		200000000000000000000002C /* ShowcaseUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseUploadService.swift; sourceTree = "<group>"; };
+		200000000000000000000002D /* ShowcaseUploadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseUploadView.swift; sourceTree = "<group>"; };
+		200000000000000000000002E /* DevModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevModeStore.swift; sourceTree = "<group>"; };
+		200000000000000000000002F /* SupabaseAuthAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthAPI.swift; sourceTree = "<group>"; };
 		200000000000000000000003 /* ScanFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanFlowView.swift; sourceTree = "<group>"; };
+		2000000000000000000000030 /* NicknameGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NicknameGenerator.swift; sourceTree = "<group>"; };
+		2000000000000000000000031 /* NicknameStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NicknameStore.swift; sourceTree = "<group>"; };
+		2000000000000000000000032 /* SingleVideoLibraryPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleVideoLibraryPicker.swift; sourceTree = "<group>"; };
+		2000000000000000000000033 /* InviteDeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteDeepLink.swift; sourceTree = "<group>"; };
+		2000000000000000000000034 /* InviteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteStore.swift; sourceTree = "<group>"; };
+		2000000000000000000000035 /* AccountDeleteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeleteAPI.swift; sourceTree = "<group>"; };
 		200000000000000000000004 /* ScanExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanExporter.swift; sourceTree = "<group>"; };
+		200000000000000000000005 /* Putthink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Putthink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000007 /* Gate55GuidanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate55GuidanceView.swift; sourceTree = "<group>"; };
 		200000000000000000000008 /* Gate55GuidanceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate55GuidanceModel.swift; sourceTree = "<group>"; };
 		200000000000000000000009 /* Gate55ExperimentRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate55ExperimentRecorder.swift; sourceTree = "<group>"; };
@@ -57,32 +88,32 @@
 		20000000000000000000000D /* BrightMeshVisualizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrightMeshVisualizer.swift; sourceTree = "<group>"; };
 		20000000000000000000000E /* ScanCoverageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCoverageTracker.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* ThermalPerformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalPerformance.swift; sourceTree = "<group>"; };
+		200000000000000000000011 /* GroundScanFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundScanFilter.swift; sourceTree = "<group>"; };
 		200000000000000000000012 /* OSDDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSDDesignSystem.swift; sourceTree = "<group>"; };
-		20000000000000000000001A /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
-		20000000000000000000001B /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
-		20000000000000000000001C /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		200000000000000000000014 /* CameraTiltStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraTiltStabilizer.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* ScanFieldSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanFieldSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* LiDARTwistGuidanceOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiDARTwistGuidanceOverlay.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* BehindBallSweepOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehindBallSweepOverlay.swift; sourceTree = "<group>"; };
 		200000000000000000000018 /* GolfBallVisualLockSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfBallVisualLockSession.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* BallGroundRingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BallGroundRingOverlay.swift; sourceTree = "<group>"; };
-		200000000000000000000011 /* GroundScanFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroundScanFilter.swift; sourceTree = "<group>"; };
+		20000000000000000000001A /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
+		20000000000000000000001B /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		20000000000000000000001C /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		200000000000000000000020 /* AppSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000021 /* SubscriptionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionStore.swift; sourceTree = "<group>"; };
 		200000000000000000000022 /* AppLanguageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLanguageStore.swift; sourceTree = "<group>"; };
 		200000000000000000000023 /* LegalCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalCopy.swift; sourceTree = "<group>"; };
 		200000000000000000000024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		200000000000000000000025 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Products.storekit; sourceTree = "<group>"; };
-		200000000000000000000005 /* Putthink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Putthink.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		200000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		200000000000000000000026 /* GreenSpeedSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenSpeedSettings.swift; sourceTree = "<group>"; };
+		20000000000000000000002B /* Putthink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Putthink.entitlements; sourceTree = "<group>"; };
 		B20000000000000000000001 /* Gate3BenchmarkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate3BenchmarkApp.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* Gate3Benchmark.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gate3Benchmark.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C20000000000000000000001 /* GreenSimulatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenSimulatorApp.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* GreenSceneBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenSceneBuilder.swift; sourceTree = "<group>"; };
 		C20000000000000000000003 /* GreenSimulator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GreenSimulator.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C20000000000000000000005 /* GreenSimulatorSnapshotExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenSimulatorSnapshotExporter.swift; sourceTree = "<group>"; };
 		C20000000000000000000004 /* samples_all36 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = samples_all36; sourceTree = "<group>"; };
+		C20000000000000000000005 /* GreenSimulatorSnapshotExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenSimulatorSnapshotExporter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +159,22 @@
 			children = (
 				200000000000000000000001 /* PutthinkApp.swift */,
 				200000000000000000000020 /* AppSettingsSheet.swift */,
+				200000000000000000000026 /* GreenSpeedSettings.swift */,
+				20000000000000000000002B /* Putthink.entitlements */,
+				200000000000000000000002A /* AuthSessionStore.swift */,
+				200000000000000000000002F /* SupabaseAuthAPI.swift */,
+				200000000000000000000002E /* DevModeStore.swift */,
+				200000000000000000000002C /* ShowcaseUploadService.swift */,
+				200000000000000000000002D /* ShowcaseUploadView.swift */,
+				2000000000000000000000030 /* NicknameGenerator.swift */,
+				2000000000000000000000031 /* NicknameStore.swift */,
+				2000000000000000000000032 /* SingleVideoLibraryPicker.swift */,
+				2000000000000000000000033 /* InviteDeepLink.swift */,
+				2000000000000000000000034 /* InviteStore.swift */,
+				2000000000000000000000035 /* AccountDeleteAPI.swift */,
+				2000000000000000000000029 /* PutthinkSupabaseConfig.swift */,
+				2000000000000000000000028 /* FreeRunsStore.swift */,
+				2000000000000000000000027 /* DeviceKeychain.swift */,
 				200000000000000000000021 /* SubscriptionStore.swift */,
 				200000000000000000000022 /* AppLanguageStore.swift */,
 				200000000000000000000023 /* LegalCopy.swift */,
@@ -159,6 +206,16 @@
 			path = Putthink;
 			sourceTree = "<group>";
 		};
+		400000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000005 /* Putthink.app */,
+				B20000000000000000000002 /* Gate3Benchmark.app */,
+				C20000000000000000000003 /* GreenSimulator.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		B40000000000000000000001 /* Gate3Benchmark */ = {
 			isa = PBXGroup;
 			children = (
@@ -184,16 +241,6 @@
 				C20000000000000000000004 /* samples_all36 */,
 			);
 			path = Resources;
-			sourceTree = "<group>";
-		};
-		400000000000000000000003 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				200000000000000000000005 /* Putthink.app */,
-				B20000000000000000000002 /* Gate3Benchmark.app */,
-				C20000000000000000000003 /* GreenSimulator.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -333,6 +380,21 @@
 			files = (
 				100000000000000000000001 /* PutthinkApp.swift in Sources */,
 				100000000000000000000020 /* AppSettingsSheet.swift in Sources */,
+				100000000000000000000025 /* GreenSpeedSettings.swift in Sources */,
+				100000000000000000000002A /* AuthSessionStore.swift in Sources */,
+				100000000000000000000002F /* SupabaseAuthAPI.swift in Sources */,
+				100000000000000000000002E /* DevModeStore.swift in Sources */,
+				100000000000000000000002C /* ShowcaseUploadService.swift in Sources */,
+				100000000000000000000002D /* ShowcaseUploadView.swift in Sources */,
+				1000000000000000000000030 /* NicknameGenerator.swift in Sources */,
+				1000000000000000000000031 /* NicknameStore.swift in Sources */,
+				1000000000000000000000032 /* SingleVideoLibraryPicker.swift in Sources */,
+				1000000000000000000000033 /* InviteDeepLink.swift in Sources */,
+				1000000000000000000000034 /* InviteStore.swift in Sources */,
+				1000000000000000000000035 /* AccountDeleteAPI.swift in Sources */,
+				1000000000000000000000029 /* PutthinkSupabaseConfig.swift in Sources */,
+				1000000000000000000000028 /* FreeRunsStore.swift in Sources */,
+				1000000000000000000000027 /* DeviceKeychain.swift in Sources */,
 				100000000000000000000021 /* SubscriptionStore.swift in Sources */,
 				100000000000000000000022 /* AppLanguageStore.swift in Sources */,
 				100000000000000000000023 /* LegalCopy.swift in Sources */,
@@ -426,6 +488,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Putthink/Putthink.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -433,8 +496,10 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Putthink;
+				INFOPLIST_KEY_CFBundleURLTypes = "({CFBundleTypeRole=Editor;CFBundleURLName=com.putthink.putthink;CFBundleURLSchemes=(putthink);})";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Putthink needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Putthink needs photo library access so you can pick a Control Center screen recording to upload to Showcase.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -453,7 +518,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -461,15 +526,18 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Putthink/Putthink.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = AM2W4Z8KRW;
+				DEVELOPMENT_TEAM = 846SD6T252;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Putthink;
+				INFOPLIST_KEY_CFBundleURLTypes = "({CFBundleTypeRole=Editor;CFBundleURLName=com.putthink.putthink;CFBundleURLSchemes=(putthink);})";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Putthink needs the camera to scan the putting green between your ball and the hole, mark those two points, and build a LiDAR height map for aim and speed.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Putthink needs photo library access so you can pick a Control Center screen recording to upload to Showcase.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -488,7 +556,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};

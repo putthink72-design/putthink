@@ -267,6 +267,15 @@ enum L10n {
     static var settingsLanguageKorean: String { s("settings.language.ko") }
     static var settingsLanguageJapanese: String { s("settings.language.ja") }
     static var settingsLanguageFooter: String { s("settings.language.footer") }
+    static var settingsGreenSpeed: String { s("settings.green_speed") }
+    static var settingsGreenSpeedFooter: String { s("settings.green_speed.footer") }
+    static var settingsGreenSpeedSlow: String { s("settings.green_speed.slow") }
+    static var settingsGreenSpeedNormal: String { s("settings.green_speed.normal") }
+    static var settingsGreenSpeedSlightlyFast: String { s("settings.green_speed.slightly_fast") }
+    static var settingsGreenSpeedFast: String { s("settings.green_speed.fast") }
+    static var settingsGreenSpeedVeryFast: String { s("settings.green_speed.very_fast") }
+    static var settingsFreeRunsTitle: String { s("settings.free_runs") }
+    static var settingsFreeRunsFooter: String { s("settings.free_runs.footer") }
     static var settingsSubscribe: String { s("settings.subscribe") }
     static var settingsSubscribeBody: String { s("settings.subscribe.body") }
     static var settingsSubscribeActive: String { s("settings.subscribe.active") }
@@ -283,9 +292,97 @@ enum L10n {
     static var settingsLegal: String { s("settings.legal") }
     static var settingsPrivacy: String { s("settings.privacy") }
     static var settingsEULA: String { s("settings.eula") }
+    static var settingsDeleteAccount: String { s("settings.delete_account") }
+    static var settingsDeleteAccountTitle: String { s("settings.delete_account.title") }
+    static var settingsDeleteAccountBody: String { s("settings.delete_account.body") }
+    static var settingsDeleteAccountConfirm: String { s("settings.delete_account.confirm") }
+    static var settingsDeleteAccountDone: String { s("settings.delete_account.done") }
     static var settingsCancelTitle: String { s("settings.cancel.title") }
     static var settingsNeedsSubscription: String { s("settings.needs_subscription") }
     static var settingsFreeScanAvailable: String { s("settings.free_scan_available") }
+    static func settingsFreeRunsRemaining(_ count: Int) -> String {
+        String(format: s("settings.free_runs_remaining"), count)
+    }
+
+    // MARK: - Showcase upload
+
+    static var showcaseUploadTitle: String { s("showcase.upload.title") }
+    static var showcaseUploadSettingsFooter: String { s("showcase.upload.settings_footer") }
+    static var showcaseUploadSettingsBody: String { s("showcase.upload.settings_body") }
+    static var showcaseUploadOpen: String { s("showcase.upload.open") }
+    static var showcaseUploadDo: String { s("showcase.upload.do") }
+    static var showcaseUploadDefaultCaption: String { s("showcase.upload.default_caption") }
+    static var nicknameTitle: String { s("nickname.title") }
+    static var nicknameFooter: String { s("nickname.footer") }
+    static var nicknameSave: String { s("nickname.save") }
+    static var nicknameRegenerate: String { s("nickname.regenerate") }
+    static var nicknameRejected: String { s("nickname.rejected") }
+    static var nicknameTooLong: String { s("nickname.too_long") }
+    static var inviteTitle: String { s("invite.title") }
+    static var inviteBody: String { s("invite.body") }
+    static var inviteFooter: String { s("invite.footer") }
+    static var inviteShareCTA: String { s("invite.share_cta") }
+    static var invitePreparing: String { s("invite.preparing") }
+    static var inviteNeedApple: String { s("invite.need_apple") }
+    static var inviteNudgeTitle: String { s("invite.nudge_title") }
+    static var inviteNudgeBody: String { s("invite.nudge_body") }
+    static var inviteNudgeSkip: String { s("invite.nudge_skip") }
+    static var inviteClipboardApply: String { s("invite.clipboard_apply") }
+    static var inviteClipboardNotFound: String { s("invite.clipboard_not_found") }
+    static var inviteClipboardUnavailable: String { s("invite.clipboard_unavailable") }
+    static func inviteClipboardApplied(_ code: String) -> String {
+        String(format: s("invite.clipboard_applied"), code)
+    }
+    static var devModeOn: String { s("dev.mode.on") }
+    static var prodModeOn: String { s("dev.mode.prod") }
+    static var devModeAsPro: String { s("dev.mode.as_pro") }
+    static var showcaseUploadHowTitle: String { s("showcase.upload.how_title") }
+    static var showcaseUploadHowBody: String { s("showcase.upload.how_body") }
+    static var showcaseUploadGateTitle: String { s("showcase.upload.gate_title") }
+    static var showcaseUploadNeedPro: String { s("showcase.upload.need_pro") }
+    static var showcaseUploadNeedSignIn: String { s("showcase.upload.need_sign_in") }
+    static var showcaseUploadNeedSupabaseSession: String { s("showcase.upload.need_supabase_session") }
+    static var showcaseSignInApple: String { s("showcase.upload.sign_in_apple") }
+    static var showcaseUploadPickTitle: String { s("showcase.upload.pick_title") }
+    static var showcaseUploadPickFooter: String { s("showcase.upload.pick_footer") }
+    static var showcaseUploadPickCTA: String { s("showcase.upload.pick_cta") }
+    static var showcaseUploadPickReplace: String { s("showcase.upload.pick_replace") }
+    static var showcaseUploadPickFailed: String { s("showcase.upload.pick_failed") }
+    static var showcaseUploadPickerAdd: String { s("showcase.upload.picker_add") }
+    static var showcaseUploadPickerCancel: String { s("showcase.upload.picker_cancel") }
+    static var showcaseUploadPickerPermissionTitle: String { s("showcase.upload.picker_permission_title") }
+    static var showcaseUploadPickerPermissionBody: String { s("showcase.upload.picker_permission_body") }
+    static var showcaseUploadPickerOpenSettings: String { s("showcase.upload.picker_open_settings") }
+    static var showcaseUploadPickerEmpty: String { s("showcase.upload.picker_empty") }
+    static var showcaseUploadPickerEmptyBody: String { s("showcase.upload.picker_empty_body") }
+    static var showcaseUploadReady: String { s("showcase.upload.ready") }
+    static func showcaseUploadReadyMB(_ megabytes: Double) -> String {
+        f("showcase.upload.ready_mb", megabytes)
+    }
+    static func showcaseUploadCompressingPct(_ percent: Int) -> String {
+        f("showcase.upload.compressing_pct", percent)
+    }
+    static func showcaseUploadUploadingPct(_ percent: Int) -> String {
+        f("showcase.upload.uploading_pct", percent)
+    }
+    static var showcaseUploadMetaTitle: String { s("showcase.upload.meta_title") }
+    static var showcaseUploadCategory: String { s("showcase.upload.category") }
+    static var showcaseUploadNickname: String { s("showcase.upload.nickname") }
+    static var showcaseUploadCaption: String { s("showcase.upload.caption") }
+    static var showcaseUploadClub: String { s("showcase.upload.club") }
+    static var showcaseUploadCourse: String { s("showcase.upload.course") }
+    static var showcaseUploadHole: String { s("showcase.upload.hole") }
+    static var showcaseUploadSubmit: String { s("showcase.upload.submit") }
+    static var showcaseUploadUploading: String { s("showcase.upload.uploading") }
+    static var showcaseUploadSuccess: String { s("showcase.upload.success") }
+    static var showcaseUploadNotConfigured: String { s("showcase.upload.not_configured") }
+    static var showcaseUploadEncodeFailed: String { s("showcase.upload.encode_failed") }
+    static var showcaseUploadTooLarge: String { s("showcase.upload.too_large") }
+    static var showcaseCategoryLongPutt: String { s("showcase.category.long_putt") }
+    static var showcaseCategoryMultiBreak: String { s("showcase.category.multi_break") }
+    static var showcaseCategoryRecovery: String { s("showcase.category.recovery") }
+    static var showcaseCategoryFirstHoled: String { s("showcase.category.first_holed") }
+
     static var planMonth: String { s("plan.month") }
     static var planQuarter: String { s("plan.quarter") }
     static var planSixMonth: String { s("plan.six_month") }

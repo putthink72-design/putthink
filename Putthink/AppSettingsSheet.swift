@@ -5,9 +5,19 @@ struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var language: AppLanguageStore
     @EnvironmentObject private var subscriptions: SubscriptionStore
+    @EnvironmentObject private var freeRuns: FreeRunsStore
+    @EnvironmentObject private var auth: AuthSessionStore
+    @EnvironmentObject private var devMode: DevModeStore
+    @EnvironmentObject private var nicknameStore: NicknameStore
+    @EnvironmentObject private var invite: InviteStore
     @State private var selectedProductID: String?
     @State private var showCancelGuide = false
     @State private var legalKind: LegalKind?
+    @State private var greenSpeedMeters: Double = GreenSpeedSettings.load()
+    @State private var showShowcaseUpload = false
+    @State private var inviteApplyMessage: String?
+    @State private var showDeleteAccountConfirm = false
+    @State private var accountDeleteMessage: String?
 
     var body: some View {
         ZStack {
@@ -29,6 +39,24 @@ struct AppSettingsSheet: View {
         .preferredColorScheme(.dark)
         .environment(\.locale, language.locale)
         .animation(.easeInOut(duration: 0.28), value: legalKind?.id)
+        .sheet(isPresented: $showShowcaseUpload) {
+            ShowcaseUploadView()
+                .environmentObject(subscriptions)
+                .environmentObject(auth)
+                .environmentObject(devMode)
+                .environmentObject(nicknameStore)
+                .environmentObject(invite)
+                .environmentObject(language)
+                .environmentObject(freeRuns)
+        }
+        .sheet(isPresented: $invite.showInviteShare) {
+            if invite.inviteURL != nil {
+                // Message already includes the invite URL — don't also pass `url` or it duplicates.
+                ActivityShareSheet(items: [invite.shareMessage(for: language.locale)]) {
+                    invite.showInviteShare = false
+                }
+            }
+        }
         .task {
             await subscriptions.refresh()
             if selectedProductID == nil {
@@ -43,8 +71,14 @@ struct AppSettingsSheet: View {
             header
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
-                    languageCard
+                    greenSpeedCard
+                    if !subscriptions.isSubscribed {
+                        freeRunsCard
+                    }
+                    inviteCard
+                    showcaseUploadCard
                     subscriptionCard
+                    languageCard
                     legalCard
                 }
                 .padding(.horizontal, 16)
@@ -67,6 +101,142 @@ struct AppSettingsSheet: View {
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 10)
+    }
+
+    private var greenSpeedCard: some View {
+        SettingsCard(title: L10n.settingsGreenSpeed, footnote: L10n.settingsGreenSpeedFooter) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(String(format: "%.1f", greenSpeedMeters))
+                        .font(.system(size: 28, weight: .heavy))
+                        .foregroundStyle(OSDPalette.accent)
+                        .monospacedDigit()
+                    Text("m")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                    Spacer(minLength: 8)
+                    Text(GreenSpeedSettings.label(for: greenSpeedMeters))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+
+                Slider(
+                    value: $greenSpeedMeters,
+                    in: GreenSpeedSettings.minimum...GreenSpeedSettings.maximum,
+                    step: GreenSpeedSettings.step
+                )
+                .tint(OSDPalette.accent)
+                .onChange(of: greenSpeedMeters) { _, newValue in
+                    GreenSpeedSettings.save(newValue)
+                }
+
+                HStack {
+                    Text(String(format: "%.1f", GreenSpeedSettings.minimum))
+                    Spacer()
+                    Text(String(format: "%.1f", GreenSpeedSettings.maximum))
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OSDPalette.textTertiary)
+                .monospacedDigit()
+            }
+        }
+    }
+
+    private var inviteCard: some View {
+        SettingsCard(title: L10n.inviteTitle, footnote: L10n.inviteFooter) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L10n.inviteBody)
+                    .font(.system(size: 13))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .lineSpacing(3)
+
+                OSDPrimaryButton(
+                    title: invite.isBusy ? L10n.invitePreparing : L10n.inviteShareCTA,
+                    enabled: !invite.isBusy
+                ) {
+                    Task { await invite.ensureCodeAndShare(auth: auth) }
+                }
+
+                if let msg = invite.statusMessage, !msg.isEmpty {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OSDPalette.accent)
+                }
+                if let code = invite.inviteCode {
+                    Text("putthink.com/i/\(code)")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OSDPalette.textTertiary)
+                }
+            }
+        }
+    }
+
+    private var showcaseUploadCard: some View {
+        SettingsCard(title: L10n.showcaseUploadTitle, footnote: L10n.showcaseUploadSettingsFooter) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L10n.showcaseUploadSettingsBody)
+                    .font(.system(size: 13))
+                    .foregroundStyle(OSDPalette.textSecondary)
+                    .lineSpacing(3)
+
+                if !subscriptions.hasProAccess(devMode: devMode) {
+                    Text(L10n.showcaseUploadNeedPro)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OSDPalette.accent)
+                }
+
+                OSDPrimaryButton(
+                    title: L10n.showcaseUploadOpen,
+                    enabled: subscriptions.hasProAccess(devMode: devMode)
+                ) {
+                    showShowcaseUpload = true
+                }
+            }
+        }
+    }
+
+    private var freeRunsCard: some View {
+        SettingsCard(title: L10n.settingsFreeRunsTitle, footnote: L10n.settingsFreeRunsFooter) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(L10n.settingsFreeRunsRemaining(freeRuns.balance))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OSDPalette.textPrimary)
+                    Spacer()
+                    if subscriptions.hasProAccess(devMode: devMode) {
+                        Text(devMode.isDevMode && !subscriptions.isSubscribed
+                             ? L10n.devModeAsPro
+                             : L10n.settingsSubscribeActive)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OSDPalette.status)
+                    }
+                }
+
+                OSDPrimaryButton(title: L10n.inviteClipboardApply) {
+                    applyInviteFromClipboard()
+                }
+
+                if let inviteApplyMessage, !inviteApplyMessage.isEmpty {
+                    Text(inviteApplyMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                }
+            }
+        }
+    }
+
+    private func applyInviteFromClipboard() {
+        switch freeRuns.applyClipboardInviteIfPresent() {
+        case .applied(let code):
+            inviteApplyMessage = L10n.inviteClipboardApplied(code)
+            Task { await freeRuns.syncClaimWithServer(auth: auth) }
+        case .notFound:
+            inviteApplyMessage = L10n.inviteClipboardNotFound
+        case .unavailable:
+            inviteApplyMessage = L10n.inviteClipboardUnavailable
+        }
     }
 
     private var languageCard: some View {
@@ -110,10 +280,12 @@ struct AppSettingsSheet: View {
                     .foregroundStyle(OSDPalette.textSecondary)
                     .lineSpacing(3)
 
-                if subscriptions.isSubscribed {
+                if subscriptions.hasProAccess(devMode: devMode) {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.seal.fill")
-                        Text(L10n.settingsSubscribeActive)
+                        Text(devMode.isDevMode && !subscriptions.isSubscribed
+                             ? L10n.devModeAsPro
+                             : L10n.settingsSubscribeActive)
                     }
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OSDPalette.status)
@@ -125,20 +297,13 @@ struct AppSettingsSheet: View {
                     }
                 }
 
-                if displayedPlans.contains(where: \.showsTrial) {
-                    Text(L10n.settingsTrialShort)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(OSDPalette.status)
-                        .lineSpacing(2)
-                }
-
                 if let message = subscriptions.statusMessage, !message.isEmpty {
                     Text(message)
                         .font(.system(size: 12))
                         .foregroundStyle(OSDPalette.accent)
                 }
 
-                if !subscriptions.isSubscribed {
+                if !subscriptions.hasProAccess(devMode: devMode) {
                     OSDPrimaryButton(
                         title: subscribeButtonTitle,
                         enabled: !subscriptions.isBusy && selectedProductID != nil
@@ -201,11 +366,6 @@ struct AppSettingsSheet: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(OSDPalette.textTertiary)
                 }
-                if plan.showsTrial {
-                    Text(L10n.planTrialChip)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(OSDPalette.accent)
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -240,7 +400,55 @@ struct AppSettingsSheet: View {
                         legalKind = .eula
                     }
                 }
+                Rectangle()
+                    .fill(OSDPalette.glassHair)
+                    .frame(height: 1)
+                    .padding(.vertical, 4)
+                Button {
+                    showDeleteAccountConfirm = true
+                } label: {
+                    HStack {
+                        Text(L10n.settingsDeleteAccount)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color.red.opacity(0.9))
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if let accountDeleteMessage, !accountDeleteMessage.isEmpty {
+                    Text(accountDeleteMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OSDPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
             }
+        }
+        .alert(L10n.settingsDeleteAccountTitle, isPresented: $showDeleteAccountConfirm) {
+            Button(L10n.settingsDeleteAccountConfirm, role: .destructive) {
+                Task { await deleteCloudAccount() }
+            }
+            Button(L10n.inviteNudgeSkip, role: .cancel) {}
+        } message: {
+            Text(L10n.settingsDeleteAccountBody)
+        }
+    }
+
+    private func deleteCloudAccount() async {
+        accountDeleteMessage = nil
+        do {
+            try await auth.ensureSupabaseSessionForUpload()
+            guard let token = auth.supabaseAccessToken else {
+                accountDeleteMessage = L10n.showcaseUploadNeedSupabaseSession
+                return
+            }
+            try await AccountDeleteAPI.deleteAccount(accessToken: token)
+            auth.signOut()
+            accountDeleteMessage = L10n.settingsDeleteAccountDone
+        } catch {
+            accountDeleteMessage = error.localizedDescription
         }
     }
 
@@ -270,19 +478,11 @@ struct AppSettingsSheet: View {
     }
 
     private var displayedPlans: [DisplayPlan] {
-        DisplayPlan.build(
-            products: subscriptions.products,
-            introEligible: subscriptions.introEligibleProductIDs
-        )
-    }
-
-    private var selectedPlanShowsTrial: Bool {
-        guard let id = selectedProductID else { return false }
-        return displayedPlans.first(where: { $0.id == id })?.showsTrial == true
+        DisplayPlan.build(products: subscriptions.products)
     }
 
     private var subscribeButtonTitle: String {
-        selectedPlanShowsTrial ? L10n.settingsStartTrial : L10n.settingsSubscribeCTA
+        L10n.settingsSubscribeCTA
     }
 
     private func purchaseSelected() async {
@@ -333,10 +533,9 @@ private struct DisplayPlan: Identifiable {
     let price: String
     let months: Int
     let savingsPercent: Int?
-    let showsTrial: Bool
     var storeProduct: Product?
 
-    static func build(products: [Product], introEligible: Set<String>) -> [DisplayPlan] {
+    static func build(products: [Product]) -> [DisplayPlan] {
         if products.isEmpty {
             return fallbackPlans
         }
@@ -349,7 +548,6 @@ private struct DisplayPlan: Identifiable {
                 price: product.displayPrice,
                 months: months,
                 savingsPercent: savingsPercent(months: months, price: product.price, monthly: monthlyPrice),
-                showsTrial: introEligible.contains(product.id),
                 storeProduct: product
             )
         }
@@ -363,7 +561,6 @@ private struct DisplayPlan: Identifiable {
                 price: "$9.99",
                 months: 1,
                 savingsPercent: nil,
-                showsTrial: true,
                 storeProduct: nil
             ),
             DisplayPlan(
@@ -372,7 +569,6 @@ private struct DisplayPlan: Identifiable {
                 price: "$24.99",
                 months: 3,
                 savingsPercent: 17,
-                showsTrial: true,
                 storeProduct: nil
             ),
             DisplayPlan(
@@ -381,7 +577,6 @@ private struct DisplayPlan: Identifiable {
                 price: "$44.99",
                 months: 6,
                 savingsPercent: 25,
-                showsTrial: true,
                 storeProduct: nil
             ),
             DisplayPlan(
@@ -390,7 +585,6 @@ private struct DisplayPlan: Identifiable {
                 price: "$74.99",
                 months: 12,
                 savingsPercent: 37,
-                showsTrial: true,
                 storeProduct: nil
             ),
         ]

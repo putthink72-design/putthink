@@ -6,6 +6,7 @@ public struct RankedPuttCandidate: Sendable, Equatable {
     /// 고정 오버런 목표점(X, 기본 0.35m)까지의 거리 — 1순위 선정용.
     public var distanceToOverrunTarget: Double
     /// 홀을 지난 뒤 실제 정지까지 굴러간 거리(퍼트 방향 투영, m). Speed Corridor 정렬용.
+    /// 홀 평면 미도달 후보는 코리도에서 제외하므로, 0은 “홀까지 도달·정지”(홀인)를 뜻한다.
     public var actualOverrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
     public var searchTier: CandidateSearchTier
@@ -77,6 +78,10 @@ public enum CandidateSelector {
     public static let defaultOverrunDistance = 0.35
     public static let relaxedCaptureRadius = 0.5
     public static let fallbackGridPointCount = 45
+    /// ignoreCapture 정지점이 홀 평면보다 이보다 짧으면 후보 제외(완화 캡처가 홀 앞에서 잡은 경우).
+    public static let minAlongHoleMeters = -0.02
+    /// 스피드 코리도 “공격” 쪽 권장 오버런 상한(표시·1순위 목표와 맞춤).
+    public static let preferredOverrunMeters = 0.35
 
     public static func select<Terrain: TerrainField>(
         terrain: Terrain,
@@ -242,7 +247,7 @@ public enum CandidateSelector {
         captureRadius: Double,
         usedRelaxed: Bool,
         searchTier: CandidateSearchTier
-    ) -> CandidateSelectionResult {
+    ) -> CandidateSelectionResult? {
         let rankedSlots = LockedRankedCandidates(count: raw.count)
         DispatchQueue.concurrentPerform(iterations: raw.count) { index in
             let candidate = raw[index]
@@ -259,13 +264,17 @@ public enum CandidateSelector {
                 ignoreCapture: true,
                 captureRadius: captureRadius
             )
+            let pastHoleX = overrun.finalPosition.x - holePosition.x
+            let pastHoleY = overrun.finalPosition.y - holePosition.y
+            let alongHole = pastHoleX * direction.x + pastHoleY * direction.y
+            // 홀 앞에서 멈춘 경로(완화 캡처 등)는 오버런 0으로 위장되면 안 됨 → 코리도·1순위에서 제외.
+            guard alongHole >= minAlongHoleMeters else { return }
+
             let distance = hypot(
                 overrun.finalPosition.x - overrunTarget.x,
                 overrun.finalPosition.y - overrunTarget.y
             )
-            let pastHoleX = overrun.finalPosition.x - holePosition.x
-            let pastHoleY = overrun.finalPosition.y - holePosition.y
-            let actualOverrun = max(0, pastHoleX * direction.x + pastHoleY * direction.y)
+            let actualOverrun = max(0, alongHole)
             rankedSlots.set(
                 RankedPuttCandidate(
                     candidate: candidate,
@@ -279,6 +288,7 @@ public enum CandidateSelector {
             )
         }
         let ranked = rankedSlots.ordered()
+        guard !ranked.isEmpty else { return nil }
 
         let primary = ranked.min(by: { $0.distanceToOverrunTarget < $1.distanceToOverrunTarget })
         let secondary = ranked.min(

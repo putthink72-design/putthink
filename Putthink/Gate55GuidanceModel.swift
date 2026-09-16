@@ -19,7 +19,7 @@ enum Gate55ComputeMode: String, CaseIterable, Identifiable {
 @MainActor
 final class Gate55GuidanceModel: ObservableObject {
     static let greenSpeedKey = "perf.greenSpeed"
-    static let greenSpeedPresets: [Double] = [2.5, 2.8, 3.0, 3.3]
+    static let greenSpeedPresets: [Double] = [2.0, 2.5, 2.8, 3.0, 3.2]
 
     @Published var greenSpeed: Double {
         didSet {
@@ -74,7 +74,7 @@ final class Gate55GuidanceModel: ObservableObject {
 
     init() {
         let stored = UserDefaults.standard.object(forKey: Self.greenSpeedKey) as? Double
-        greenSpeed = stored ?? 2.5
+        greenSpeed = GreenSpeedSettings.clamped(stored ?? GreenSpeedSettings.defaultMeters)
         thermalLevel = ThermalPerformance.level
         thermalObserver = NotificationCenter.default.addObserver(
             forName: ThermalPerformance.thermalStateDidChangeNotification,
@@ -142,8 +142,7 @@ final class Gate55GuidanceModel: ObservableObject {
 
     /// 그린스피드 프리셋/스테퍼 — 즉시 재계산.
     func setGreenSpeed(_ value: Double, recomputeImmediately: Bool = true) {
-        let clamped = min(max(value, 1.5), 4.0)
-        let rounded = (clamped * 10).rounded() / 10
+        let rounded = GreenSpeedSettings.clamped(value)
         guard abs(greenSpeed - rounded) > 1e-9 else { return }
         greenSpeed = rounded
         if recomputeImmediately {

@@ -25,15 +25,9 @@
           "familyShareable" : false,
           "groupNumber" : 4,
           "internalID" : "21481011",
-          "introductoryOffer" : {
-            "displayPrice" : "0",
-            "internalID" : "21481091",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
           "localizations" : [
             {
-              "description" : "Putthink Pro for 1 month. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 1 month. Billed immediately on subscribe.",
               "displayName" : "1 Month",
               "locale" : "en_US"
             }
@@ -51,15 +45,9 @@
           "familyShareable" : false,
           "groupNumber" : 3,
           "internalID" : "21481012",
-          "introductoryOffer" : {
-            "displayPrice" : "0",
-            "internalID" : "21481092",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
           "localizations" : [
             {
-              "description" : "Putthink Pro for 3 months. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 3 months. Billed immediately on subscribe.",
               "displayName" : "3 Months",
               "locale" : "en_US"
             }
@@ -77,15 +65,9 @@
           "familyShareable" : false,
           "groupNumber" : 2,
           "internalID" : "21481013",
-          "introductoryOffer" : {
-            "displayPrice" : "0",
-            "internalID" : "21481093",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
           "localizations" : [
             {
-              "description" : "Putthink Pro for 6 months. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 6 months. Billed immediately on subscribe.",
               "displayName" : "6 Months",
               "locale" : "en_US"
             }
@@ -103,15 +85,9 @@
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "21481014",
-          "introductoryOffer" : {
-            "displayPrice" : "0",
-            "internalID" : "21481094",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
           "localizations" : [
             {
-              "description" : "Putthink Pro for 1 year. First-time subscribers in this group may get a 3-day free trial.",
+              "description" : "Putthink Pro for 1 year. Billed immediately on subscribe.",
               "displayName" : "1 Year",
               "locale" : "en_US"
             }

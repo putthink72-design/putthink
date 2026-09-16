@@ -7,7 +7,10 @@ import UIKit
 struct ScanFlowView: View {
     @StateObject private var controller = ARScanSessionController()
     @EnvironmentObject private var subscriptions: SubscriptionStore
+    @EnvironmentObject private var freeRuns: FreeRunsStore
+    @EnvironmentObject private var auth: AuthSessionStore
     @EnvironmentObject private var language: AppLanguageStore
+    @EnvironmentObject private var devMode: DevModeStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
     @State private var regionCenterX = 0.5
@@ -42,7 +45,10 @@ struct ScanFlowView: View {
         .sheet(isPresented: $showSettings) {
             AppSettingsSheet()
                 .environmentObject(subscriptions)
+                .environmentObject(freeRuns)
                 .environmentObject(language)
+                .environmentObject(auth)
+                .environmentObject(devMode)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(22)
@@ -77,7 +83,6 @@ struct ScanFlowView: View {
         }
         .onChange(of: controller.completedScan?.id) { _, identifier in
             guard identifier != nil else { return }
-            subscriptions.consumeComplimentaryScanIfNeeded()
             exportCurrentScan()
         }
     }
@@ -122,7 +127,29 @@ struct ScanFlowView: View {
                 Color.clear.frame(width: 1, height: 1)
             }
         } trailing: {
-            OSDGearButton { showSettings = true }
+            VStack(alignment: .trailing, spacing: 8) {
+                OSDGearButton { showSettings = true }
+                // Temporary: remove before App Store review.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        devMode.isDevMode.toggle()
+                    }
+                } label: {
+                    Text(devMode.isDevMode ? L10n.devModeOn : L10n.prodModeOn)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(devMode.isDevMode ? OSDPalette.accentInk : OSDPalette.textPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(devMode.isDevMode ? OSDPalette.accent : Color.white.opacity(0.12))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(devMode.isDevMode ? L10n.devModeOn : L10n.prodModeOn)
+            }
         }
     }
 
@@ -227,7 +254,7 @@ struct ScanFlowView: View {
                 title: controller.scanPipelineReady ? L10n.scanStart : L10n.lidarPreparing,
                 enabled: controller.scanPipelineReady
             ) {
-                if subscriptions.canStartGreenScan {
+                if subscriptions.canStartGreenScan(freeRuns: freeRuns, devMode: devMode) {
                     controller.startScan()
                 } else {
                     showSettings = true
@@ -243,9 +270,9 @@ struct ScanFlowView: View {
 
     private var scanAccessNote: String? {
         if SubscriptionStore.temporarilyUnlockScanStart { return nil }
-        if subscriptions.isSubscribed { return nil }
-        if subscriptions.hasComplimentaryScanRemaining {
-            return L10n.settingsFreeScanAvailable
+        if subscriptions.hasProAccess(devMode: devMode) { return nil }
+        if freeRuns.balance > 0 {
+            return L10n.settingsFreeRunsRemaining(freeRuns.balance)
         }
         return L10n.settingsNeedsSubscription
     }

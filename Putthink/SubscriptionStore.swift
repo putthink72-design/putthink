@@ -11,38 +11,36 @@ final class SubscriptionStore: ObservableObject {
         "com.putthink.putthink.pro.yearly",
     ]
 
-    /// Flip to `false` before App Store review. While `true`, green scan start is not gated.
-    static let temporarilyUnlockScanStart = true
-
-    private static let complimentaryScanUsedKey = "putthink.complimentaryGreenScanUsed"
+    /// Flip to `false` before App Store / External TestFlight review.
+    /// Keep `true` only for local field filming builds if you also leave Dev Mode available.
+    static let temporarilyUnlockScanStart = false
 
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false
-    @Published private(set) var hasUsedComplimentaryScan = false
-    @Published private(set) var introEligibleProductIDs: Set<String> = []
     @Published var statusMessage: String?
     @Published var isBusy = false
 
-    var hasComplimentaryScanRemaining: Bool { !hasUsedComplimentaryScan }
+    /// Real StoreKit entitlement, or Dev Mode override.
+    func hasProAccess(devMode: DevModeStore) -> Bool {
+        isSubscribed || devMode.isDevMode
+    }
 
     var canStartGreenScan: Bool {
         if Self.temporarilyUnlockScanStart { return true }
-        return isSubscribed || hasComplimentaryScanRemaining
+        return isSubscribed
     }
 
     private var transactionListener: Task<Void, Never>?
 
     init() {
-        hasUsedComplimentaryScan = UserDefaults.standard.bool(forKey: Self.complimentaryScanUsedKey)
         transactionListener = Task { await listenForTransactions() }
         Task { await refresh() }
     }
 
-    func consumeComplimentaryScanIfNeeded() {
-        guard !Self.temporarilyUnlockScanStart else { return }
-        guard !isSubscribed, !hasUsedComplimentaryScan else { return }
-        hasUsedComplimentaryScan = true
-        UserDefaults.standard.set(true, forKey: Self.complimentaryScanUsedKey)
+    func canStartGreenScan(freeRuns: FreeRunsStore, devMode: DevModeStore) -> Bool {
+        if Self.temporarilyUnlockScanStart { return true }
+        if hasProAccess(devMode: devMode) { return true }
+        return freeRuns.balance > 0
     }
 
     func refresh() async {
@@ -51,7 +49,6 @@ final class SubscriptionStore: ObservableObject {
         do {
             let loaded = try await Product.products(for: Self.productIDs)
             products = loaded.sorted(by: Self.sortProducts)
-            await refreshIntroEligibility()
             await updateEntitlements()
         } catch {
             statusMessage = error.localizedDescription
@@ -124,18 +121,6 @@ final class SubscriptionStore: ObservableObject {
             }
         }
         isSubscribed = active
-    }
-
-    private func refreshIntroEligibility() async {
-        var eligible: Set<String> = []
-        for product in products {
-            if let subscription = product.subscription,
-               subscription.introductoryOffer != nil,
-               await subscription.isEligibleForIntroOffer {
-                eligible.insert(product.id)
-            }
-        }
-        introEligibleProductIDs = eligible
     }
 
     private static func sortProducts(_ lhs: Product, _ rhs: Product) -> Bool {
