@@ -49,6 +49,33 @@ final class Gate1PipelineTests: XCTestCase {
         XCTAssertEqual(map.value(x: 1, y: 0), 3, accuracy: 1e-12)
     }
 
+    func testCorridorGapWiderThanTenCmIsNeighborFilled() throws {
+        let cell = 0.05
+        var vertices: [LocalVertex] = []
+        for i in 0...4 {
+            let y = Double(i) * cell
+            vertices.append(LocalVertex(x: 0, y: y, height: 0.0, progress: 0))
+        }
+        for i in 0...4 {
+            let y = 0.50 + Double(i) * cell
+            vertices.append(LocalVertex(x: 0, y: y, height: 0.020, progress: 0))
+        }
+        let map = try HeightMapRasterizer.rasterize(
+            vertices: vertices,
+            cellSize: cell,
+            fillMinX: -0.15,
+            fillMaxX: 0.15,
+            fillMinY: 0,
+            fillMaxY: 0.70
+        )
+        let midX = Int(round((0.0 - map.originX) / cell))
+        let midY = Int(round((0.35 - map.originY) / cell))
+        let mid = map.value(x: midX, y: midY)
+        XCTAssertTrue(map.interpolatedMask[map.index(x: midX, y: midY)])
+        XCTAssertGreaterThan(mid, 0.002)
+        XCTAssertLessThan(mid, 0.018)
+    }
+
     func testOneSidedScanKeepsNearestHeightInsteadOfExtrapolatingCrossSlope() throws {
         let cell = 0.05
         let vertices = [

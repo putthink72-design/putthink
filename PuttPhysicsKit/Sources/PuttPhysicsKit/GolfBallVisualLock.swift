@@ -57,6 +57,8 @@ public struct GolfBallDetectionHint: Sendable, Equatable {
 
     public var minRadiusPixels: Double
     public var maxRadiusPixels: Double
+    /// 납작 볼마커(타원)와 구형 실볼을 구분. 지정·조준 창에서 켠다.
+    public var requireRoundAspect: Bool
 
     public init(
         expectedCenterX: Double,
@@ -66,7 +68,8 @@ public struct GolfBallDetectionHint: Sendable, Equatable {
         looseSize: Bool = false,
         minRadiusPixels: Double = 0,
         maxRadiusPixels: Double = 0,
-        rejectSkyBand: Bool = true
+        rejectSkyBand: Bool = true,
+        requireRoundAspect: Bool = false
     ) {
         self.expectedCenterX = expectedCenterX
         self.expectedCenterY = expectedCenterY
@@ -76,6 +79,7 @@ public struct GolfBallDetectionHint: Sendable, Equatable {
         self.minRadiusPixels = minRadiusPixels
         self.maxRadiusPixels = maxRadiusPixels
         self.rejectSkyBand = rejectSkyBand
+        self.requireRoundAspect = requireRoundAspect
     }
 
     /// 스캔 시작: 서서 1.2–1.4m, 숙여서 ~0.5m까지. 발밑 가까운 깊이로 최소 크기를 키우지 않는다.
@@ -129,9 +133,10 @@ public struct GolfBallDetectionHint: Sendable, Equatable {
             expectedRadiusPixels: expected,
             searchRadiusPixels: short * 0.50,
             looseSize: true,
-            minRadiusPixels: max(2.8, far * 0.22),
-            maxRadiusPixels: min(0.50 * short, max(expected * 3.0, 48)),
-            rejectSkyBand: false
+            minRadiusPixels: max(4.0, far * 0.55),
+            maxRadiusPixels: min(0.42 * short, max(expected * 1.55, 36)),
+            rejectSkyBand: false,
+            requireRoundAspect: true
         )
     }
 
@@ -164,9 +169,10 @@ public struct GolfBallDetectionHint: Sendable, Equatable {
             expectedRadiusPixels: expected,
             searchRadiusPixels: short * searchScale,
             looseSize: true,
-            minRadiusPixels: max(2.8, far * 0.22),
-            maxRadiusPixels: min(0.44 * short, max(expected * 2.6, 42)),
-            rejectSkyBand: false
+            minRadiusPixels: max(4.0, far * 0.55),
+            maxRadiusPixels: min(0.40 * short, max(expected * 1.55, 36)),
+            rejectSkyBand: false,
+            requireRoundAspect: true
         )
     }
 }
@@ -478,7 +484,11 @@ public enum GolfBallRGBDetector {
         let bw = Double(maxX - minX + 1)
         let bh = Double(maxY - minY + 1)
         let aspect = min(bw, bh) / max(bw, bh)
-        guard aspect >= (hint.looseSize ? 0.66 : 0.72) else { return nil }
+        let minAspect: Double = {
+            if hint.requireRoundAspect { return 0.80 }
+            return hint.looseSize ? 0.66 : 0.72
+        }()
+        guard aspect >= minAspect else { return nil }
 
         var radiusSum = 0.0
         var radiusSq = 0.0
@@ -716,7 +726,8 @@ public enum GolfBallWorldLocalizer {
     }
 
     public static func isPlausibleGolfBallDiameter(_ meters: Double) -> Bool {
-        meters >= 0.018 && meters <= 0.11
+        /// 골프공 ~42.7mm. 작은 납작 마커·과대 원반을 걸러 낸다.
+        meters >= 0.026 && meters <= 0.070
     }
 
     private static func median(_ values: [Double]) -> Double? {
@@ -775,18 +786,21 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
         currentBallZ: Double?,
         physicsBallX: Double?,
         physicsBallZ: Double?,
-        minAgree: Int = Self.minAgree
+        minAgree: Int = Self.minAgree,
+        enforceProximityLimits: Bool = true
     ) -> GolfBallLockAction {
-        if let physicsBallX, let physicsBallZ {
-            let fromPhysics = hypot(contact.worldX - physicsBallX, contact.worldZ - physicsBallZ)
-            guard fromPhysics <= GolfBallVisualLock.maxOffsetFromPhysicsMeters else {
-                return .none
+        if enforceProximityLimits {
+            if let physicsBallX, let physicsBallZ {
+                let fromPhysics = hypot(contact.worldX - physicsBallX, contact.worldZ - physicsBallZ)
+                guard fromPhysics <= GolfBallVisualLock.maxOffsetFromPhysicsMeters else {
+                    return .none
+                }
             }
-        }
-        if let currentBallX, let currentBallZ {
-            let fromAR = hypot(contact.worldX - currentBallX, contact.worldZ - currentBallZ)
-            guard fromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
-                return .none
+            if let currentBallX, let currentBallZ {
+                let fromAR = hypot(contact.worldX - currentBallX, contact.worldZ - currentBallZ)
+                guard fromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
+                    return .none
+                }
             }
         }
 
@@ -805,8 +819,10 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
         if !locked {
             if let currentBallX, let currentBallZ {
                 let clusterFromAR = hypot(cluster.x - currentBallX, cluster.z - currentBallZ)
-                guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
-                    return .none
+                if enforceProximityLimits {
+                    guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
+                        return .none
+                    }
                 }
                 // 이미 실볼에 거의 겹치면 확인만. 2–4cm 어긋나면 AR를 감지 링(실볼)으로 옮긴다.
                 // 실볼은 움직이지 않는다(경기 규칙).
@@ -838,8 +854,10 @@ public struct GolfBallLockConsensus: Sendable, Equatable {
         }
         if let currentBallX, let currentBallZ {
             let clusterFromAR = hypot(cluster.x - currentBallX, cluster.z - currentBallZ)
-            guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
-                return .none
+            if enforceProximityLimits {
+                guard clusterFromAR <= GolfBallVisualLock.maxOffsetFromARBallMeters else {
+                    return .none
+                }
             }
             if clusterFromAR <= GolfBallVisualLock.alignSlopMeters {
                 lastAppliedX = currentBallX

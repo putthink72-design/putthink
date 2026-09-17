@@ -59,6 +59,190 @@
         }
       }
     },
+    "dev.experiment.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Field experiments"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フィールド実験"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "필드 실험"
+          }
+        }
+      }
+    },
+    "dev.experiment.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dev Mode only. Shipping builds ignore these. Compare on the same ball and hole, then keep the winner."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開発モードのみ。製品版では無効。同じボール/ホールで比較し、良い方だけ残します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "개발모드에서만 동작합니다. 같은 볼·홀로 비교한 뒤 이긴 쪽만 상용에 남깁니다."
+          }
+        }
+      }
+    },
+    "dev.experiment.shooting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shooting search"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "射撃法探索"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사격법 탐색"
+          }
+        }
+      }
+    },
+    "dev.experiment.shooting_footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find aim by miss bisection instead of the full 45×45 grid. One aim line."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全格子の代わりにミス符号で狙いを探します。線は1本です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전수 격자 대신 미스 방향으로 조준을 찾습니다. 궤적은 한 세트입니다."
+          }
+        }
+      }
+    },
+    "dev.experiment.line_lock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Line coverage lock"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラインカバーロック"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "라인 커버 잠금"
+          }
+        }
+      }
+    },
+    "dev.experiment.line_lock_footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Block hole mark until the putt-line ribbon is filled. Does not draw a second path."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラインリボンが埋まるまでホール指定を止めます。線は増えません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "퍼팅 라인 리본을 채우기 전에는 홀 지정을 막습니다. 선이 겹치지 않습니다."
+          }
+        }
+      }
+    },
+    "dev.experiment.line_lock_walk" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep the putt line in view until the ribbon fills, then mark the hole."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラインリボンが埋まるまで歩き、その後ホールを指定してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "퍼팅 라인 리본이 채워질 때까지 비춘 뒤 홀을 지정하세요."
+          }
+        }
+      }
+    },
+    "dev.experiment.line_lock_need_scan" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan more of the putt line, then mark the hole."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ラインをもう少しスキャンしてからホールを指定してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "퍼팅 라인을 더 비춘 뒤 홀을 지정하세요."
+          }
+        }
+      }
+    },
     "aim.lock.adjust_position" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -134,19 +318,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Check Candidate"
+            "value" : "Adjusting ball…"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "候補を確認"
+            "value" : "ボール位置調整中"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "후보 확인"
+            "value" : "볼위치 조정 중"
           }
         }
       }
@@ -174,6 +358,75 @@
         }
       }
     },
+    "aim.lock.confirm_reticle_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Put the crosshair on the real ball"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実ボールにクロスヘアを合わせて"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "십자선을 실볼에 맞추세요"
+          }
+        }
+      }
+    },
+    "aim.lock.confirm_reticle_hint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Then tap here to lock AR to the ball"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合わせてからここをタップ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "맞춘 뒤 여기를 탭하면 AR이 실볼에 붙습니다"
+          }
+        }
+      }
+    },
+    "aim.lock.coach_tap_hint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-aligns when it sees the ball · tap only if stuck"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボールが見えると自動整列 · うまくいかないときだけタップ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실볼이 보이면 자동 정렬 · 안 될 때만 탭"
+          }
+        }
+      }
+    },
     "aim.lock.detecting" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -192,7 +445,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼 감지 중"
+            "value" : "실볼을 찾는 중…"
           }
         }
       }
@@ -226,19 +479,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Candidate · Confirm"
+            "value" : "Keep the ball in view"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "候補 · 確認が必要"
+            "value" : "ボールを画面に保って"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "후보 · 확인 필요"
+            "value" : "실볼을 화면에 유지하세요"
           }
         }
       }
@@ -249,19 +502,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show Ball On Screen"
+            "value" : "Show the ball on screen"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ボールを画面に"
+            "value" : "ボールを画面に入れて"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼을 화면에"
+            "value" : "실볼을 화면에 비추세요"
           }
         }
       }
@@ -272,19 +525,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Finding Ball"
+            "value" : "Finding ball…"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ボール検出中"
+            "value" : "検出中…"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼 감지"
+            "value" : "실볼 찾는 중"
           }
         }
       }
@@ -295,19 +548,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Find Ball"
+            "value" : "Aim at the ball"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ボール待ち"
+            "value" : "ボールへ向けて"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼 대기"
+            "value" : "실볼을 비추세요"
           }
         }
       }
@@ -341,19 +594,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A fresh scan can give a clearer surface. We won’t show a guessed straight line."
+            "value" : "Showing an estimated line. Hole-in is not verified."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "再スキャンすると、より正確な地形で案内できます。推測の直線は表示しません。"
+            "value" : "推定ラインを表示します。ホールインは未検証です。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "스캔을 다시 하면 더 정확한 지형으로 안내할 수 있습니다. 추정 직선은 표시하지 않습니다."
+            "value" : "추정 경로를 표시합니다. 홀인은 검증되지 않았습니다."
           }
         }
       }
@@ -387,19 +640,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No hole-in path found."
+            "value" : "Estimated path"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ホールインのラインが見つかりませんでした。"
+            "value" : "推定ライン"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "홀인 경로를 찾지 못했습니다."
+            "value" : "추정 경로"
           }
         }
       }
@@ -1342,19 +1595,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aggressive"
+            "value" : "A bit past"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "攻め"
+            "value" : "少し先"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "공격적"
+            "value" : "조금 지남"
           }
         }
       }
@@ -1434,19 +1687,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Safe"
+            "value" : "Short"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安全"
+            "value" : "短め"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "안전"
+            "value" : "짧음"
           }
         }
       }
@@ -2881,19 +3134,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fast green"
+            "value" : "Fast green — a touch softer"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "速いグリーン"
+            "value" : "速いグリーン · やや弱め"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "빠른그린"
+            "value" : "빠른 그린 · 조금 약하게"
           }
         }
       }
@@ -2904,19 +3157,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Used for aim distance and line. Stimpmeter-style meters."
+            "value" : "Used for aim distance and line. 2.0–4.0 m, Stimpmeter-style. Grain and skid are not modeled."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "狙い距離・ライン計算に使います。スティンプメータ相当のメートル値です。"
+            "value" : "狙い距離・ライン計算に使います。2.0〜4.0 m（スティンプ相当）。芝目・スキッドは計算しません。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "조준 거리·경로 계산에 사용합니다. 스팀프미터에 가까운 미터 값입니다."
+            "value" : "조준 거리·경로 계산에 씁니다. 2.0–4.0 m (스팀프 상당). 결·스키드는 계산하지 않습니다."
           }
         }
       }
@@ -2939,7 +3192,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "보통그린"
+            "value" : "보통 그린"
           }
         }
       }
@@ -2950,19 +3203,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slightly fast"
+            "value" : "Slightly fast green"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "やや速い"
+            "value" : "やや速いグリーン"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "약간빠름"
+            "value" : "약간 빠른 그린"
           }
         }
       }
@@ -2973,19 +3226,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slow green"
+            "value" : "Slow green — hit firmer"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "遅いグリーン"
+            "value" : "遅いグリーン · 強めに"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "느린그린"
+            "value" : "느린 그린 · 더 세게"
           }
         }
       }
@@ -2996,19 +3249,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Very fast"
+            "value" : "Very fast green — hit softer"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "非常に速い"
+            "value" : "非常に速いグリーン · 弱めに"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "매우빠름"
+            "value" : "매우 빠른 그린 · 약하게"
           }
         }
       }
@@ -5054,19 +5307,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No hole-in path — please rescan"
+            "value" : "Estimated path"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ホールインラインなし — 再スキャンしてください"
+            "value" : "推定ライン"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "홀인 경로 없음 — 스캔을 다시 하세요"
+            "value" : "추정 경로"
           }
         }
       }
@@ -5123,19 +5376,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No hole-in path · please rescan"
+            "value" : "Estimated path · hole-in not verified"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ホールインラインなし · 再スキャンしてください"
+            "value" : "推定ライン · ホールイン未検証"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "홀인 경로 없음 · 스캔을 다시 하세요"
+            "value" : "추정 경로 · 홀인 미검증"
           }
         }
       }

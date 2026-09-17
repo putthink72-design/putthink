@@ -19,7 +19,7 @@ enum Gate55ComputeMode: String, CaseIterable, Identifiable {
 @MainActor
 final class Gate55GuidanceModel: ObservableObject {
     static let greenSpeedKey = "perf.greenSpeed"
-    static let greenSpeedPresets: [Double] = [2.0, 2.5, 2.8, 3.0, 3.2]
+    static let greenSpeedPresets: [Double] = [2.0, 2.5, 3.0, 3.5, 4.0]
 
     @Published var greenSpeed: Double {
         didSet {
@@ -35,7 +35,7 @@ final class Gate55GuidanceModel: ObservableObject {
     @Published var forwardResult: Gate55ForwardResult?
     @Published var context: Gate55TerrainContext?
     @Published var thermalLevel: ThermalPerformance.Level = .nominal
-    /// Speed Corridor 이산 인덱스 (안전→공격적).
+    /// Speed Corridor 이산 인덱스 (짧음 34cm → 조금 지남 44cm).
     @Published var corridorIndex: Int = 0
     @Published private(set) var isApplyingCorridor = false
 
@@ -115,6 +115,12 @@ final class Gate55GuidanceModel: ObservableObject {
         physicsBall: ScanPose,
         physicsHole: ScanPose
     ) {
+        let holeD = hypot(
+            physicsHole.worldX - physicsBall.worldX,
+            physicsHole.worldZ - physicsBall.worldZ
+        )
+        recommendation = nil
+        forwardResult = nil
         do {
             context = try Gate55Validation.contextFromScan(
                 result: scan.result,
@@ -125,17 +131,13 @@ final class Gate55GuidanceModel: ObservableObject {
             boundPhysicsBall = physicsBall
             boundPhysicsHole = physicsHole
             thermalLevel = ThermalPerformance.level
-            statusMessage = L10n.computingForHole(
-                hypot(
-                    physicsHole.worldX - physicsBall.worldX,
-                    physicsHole.worldZ - physicsBall.worldZ
-                )
-            )
+            statusMessage = L10n.computingForHole(holeD)
             recompute()
         } catch {
             boundPhysicsScanID = nil
             boundPhysicsBall = nil
             boundPhysicsHole = nil
+            isComputing = false
             statusMessage = L10n.contextFailed(error.localizedDescription)
         }
     }
@@ -167,39 +169,65 @@ final class Gate55GuidanceModel: ObservableObject {
         let snapshot = context
         let coarsePoints = RecommendScanGrid.light.rawValue
         let finePoints = RecommendScanGrid.balanced.rawValue
-        let taskPriority: TaskPriority =
-            thermalLevel >= .serious ? .utility : .userInitiated
-        Task.detached(priority: taskPriority) {
+        let started = Date()
+        Task.detached(priority: .userInitiated) {
             switch mode {
             case .recommend:
+                let shoot = Gate55Validation.recommend(
+                    context: snapshot,
+                    greenSpeed: greenSpeed,
+                    velocityPointCount: coarsePoints,
+                    directionPointCount: coarsePoints,
+                    searchStrategy: .shooting
+                )
+                let keepRefining = !CandidateSelector.meetsServiceLine(
+                    searchTier: shoot.searchTier,
+                    overrunDistance: shoot.overrunDistance
+                )
+                await MainActor.run {
+                    self.applyRecommend(
+                        shoot,
+                        generation: generation,
+                        gridNote: "shoot",
+                        stillComputing: keepRefining
+                    )
+                }
+                guard keepRefining else { return }
+
                 let coarse = Gate55Validation.recommend(
                     context: snapshot,
                     greenSpeed: greenSpeed,
                     velocityPointCount: coarsePoints,
                     directionPointCount: coarsePoints
                 )
-                let usedFine = coarse.primary == nil
-                let result = usedFine
-                    ? Gate55Validation.recommend(
-                        context: snapshot,
-                        greenSpeed: greenSpeed,
-                        velocityPointCount: finePoints,
-                        directionPointCount: finePoints
-                    )
-                    : coarse
-                let points = usedFine ? finePoints : coarsePoints
+                let betterCoarse = Self.preferRecommend(incoming: coarse, current: shoot)
+                let elapsed = Date().timeIntervalSince(started)
+                // 90×90은 발열 대비 이득이 작다. 선이 있으면 생략.
+                let skipFine = betterCoarse.primary != nil
+                    || elapsed >= 2.5
+                    || ThermalPerformance.level >= .fair
                 await MainActor.run {
-                    guard generation == self.recomputeGeneration else { return }
-                    self.recommendation = result
-                    self.forwardResult = nil
-                    self.corridorIndex = result.defaultCorridorIndex
-                    self.isComputing = false
-                    let gridNote = "\(points)×\(points)"
-                    self.statusMessage = L10n.status(
-                        tier: result.searchTier,
-                        candidateCount: result.candidateCount,
-                        corridorCount: result.corridorCandidates.count,
-                        gridNote: gridNote
+                    self.applyRecommend(
+                        betterCoarse,
+                        generation: generation,
+                        gridNote: "\(coarsePoints)×\(coarsePoints)",
+                        stillComputing: !skipFine
+                    )
+                }
+                guard !skipFine else { return }
+
+                let fine = Gate55Validation.recommend(
+                    context: snapshot,
+                    greenSpeed: greenSpeed,
+                    velocityPointCount: finePoints,
+                    directionPointCount: finePoints
+                )
+                let best = Self.preferRecommend(incoming: fine, current: betterCoarse)
+                await MainActor.run {
+                    self.applyRecommend(
+                        best,
+                        generation: generation,
+                        gridNote: "\(finePoints)×\(finePoints)"
                     )
                 }
             case .forward:
@@ -222,6 +250,45 @@ final class Gate55GuidanceModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func applyRecommend(
+        _ result: Gate55Recommendation,
+        generation: Int,
+        gridNote: String,
+        stillComputing: Bool = false
+    ) {
+        guard generation == recomputeGeneration else { return }
+        if result.primary == nil, recommendation?.primary != nil {
+            isComputing = stillComputing
+            return
+        }
+        recommendation = result
+        forwardResult = nil
+        corridorIndex = result.defaultCorridorIndex
+        isComputing = stillComputing
+        statusMessage = L10n.status(
+            tier: result.searchTier,
+            candidateCount: result.candidateCount,
+            corridorCount: result.corridorCandidates.count,
+            gridNote: gridNote
+        )
+    }
+
+    nonisolated private static func preferRecommend(
+        incoming: Gate55Recommendation,
+        current: Gate55Recommendation
+    ) -> Gate55Recommendation {
+        if incoming.primary == nil { return current }
+        if current.primary == nil { return incoming }
+        if incoming.searchTier.displayPriority != current.searchTier.displayPriority {
+            return incoming.searchTier.displayPriority > current.searchTier.displayPriority
+                ? incoming : current
+        }
+        if incoming.candidateCount != current.candidateCount {
+            return incoming.candidateCount > current.candidateCount ? incoming : current
+        }
+        return incoming
     }
 
     /// Speed Corridor 눈금 변경 — 해당 후보로 v0/β/궤적만 갱신(격자 재탐색 없음).

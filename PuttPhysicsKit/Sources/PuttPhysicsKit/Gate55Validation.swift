@@ -79,9 +79,9 @@ public struct Gate55Recommendation: Sendable, Equatable {
     public var candidateCount: Int
     public var trajectory: [TrajectorySample]
     public var primary: RankedPuttCandidate?
-    /// 실제 오버런 거리 오름차순(안전→공격적). 이산 코리도 눈금.
+    /// 홀 뒤 0.34–0.44m만. 오름차순(짧음→조금 지남).
     public var corridorCandidates: [RankedPuttCandidate]
-    /// `corridorCandidates`에서 X=0.35m 목표에 가장 가까운(기존 1순위) 인덱스.
+    /// `corridorCandidates`에서 0.35m 목표에 가장 가까운(기존 1순위) 인덱스.
     public var defaultCorridorIndex: Int
 
     public init(
@@ -120,14 +120,12 @@ public struct Gate55Recommendation: Sendable, Equatable {
 
     public var strokeGuidance: String {
         switch searchTier {
-        case .proximityEstimate:
-            return String(format: "%.1fm 추정 — 홀인 미검증", flatEquivalentDistance)
+        case .verified:
+            return String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
         case .flatHeuristic:
             return String(format: "%.1fm 거리 추정 — 브레이크 미반영", flatEquivalentDistance)
-        case .noPath:
-            return "홀인 경로 없음 — 스캔을 다시 하세요"
-        default:
-            return String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
+        case .relaxedCapture, .expandedSearch, .proximityEstimate, .noPath:
+            return String(format: "%.1fm 추정 — 홀인 미검증", flatEquivalentDistance)
         }
     }
 }
@@ -271,7 +269,8 @@ public enum Gate55Validation {
         context: Gate55TerrainContext,
         greenSpeed: Double,
         velocityPointCount: Int = 130,
-        directionPointCount: Int = 130
+        directionPointCount: Int = 130,
+        searchStrategy: CandidateSearchStrategy = .grid
     ) -> Gate55Recommendation {
         let selection = CandidateSelector.select(
             terrain: context.field,
@@ -279,7 +278,8 @@ public enum Gate55Validation {
             holeDistance: context.holeDistance,
             holeDirectionDegrees: 0,
             velocityPointCount: velocityPointCount,
-            directionPointCount: directionPointCount
+            directionPointCount: directionPointCount,
+            strategy: searchStrategy
         )
         let horizontal = hypot(
             context.holeLocal.x - context.ballLocal.x,
@@ -289,70 +289,145 @@ public enum Gate55Validation {
             context.field.height(at: context.holeLocal)
             - context.field.height(at: context.ballLocal)
 
-        // 평탄 노이즈·홀 미도달(오버런 0 위장)은 코리도에서 제외.
-        // 정렬: 안전(홀인·오버런≈0) → 공격(≈0.35m 오버런).
+        // 평탄 노이즈·홀 미도달·컵에서 죽는 공(오버런 0)은 코리도에서 제외.
+        // 슬라이더: 짧음(0.34m) → 조금 지남(0.44m).
         let corridor = selection.allCandidates
             .filter {
-                !isLikelyFlatNoiseAim(
-                    elevationDelta: elevationDelta,
-                    directionDegrees: $0.candidate.directionDegrees
-                )
+                CandidateSelector.isServiceOverrun($0.actualOverrunDistance)
+                    && !isLikelyFlatNoiseAim(
+                        elevationDelta: elevationDelta,
+                        directionDegrees: $0.candidate.directionDegrees
+                    )
             }
             .sorted {
                 $0.actualOverrunDistance < $1.actualOverrunDistance
             }
 
-        let primary: RankedPuttCandidate?
-        if let selected = selection.primary,
-           !isLikelyFlatNoiseAim(
-               elevationDelta: elevationDelta,
-               directionDegrees: selected.candidate.directionDegrees
-           ) {
-            primary = selected
-        } else if let selected = selection.primary {
-            primary = corridor.min(by: {
+        let primary: RankedPuttCandidate
+        if let selected = selection.primary {
+            if !isLikelyFlatNoiseAim(
+                elevationDelta: elevationDelta,
+                directionDegrees: selected.candidate.directionDegrees
+            ) {
+                primary = selected
+            } else if let nearest = corridor.min(by: {
                 abs($0.actualOverrunDistance - selected.actualOverrunDistance)
                     < abs($1.actualOverrunDistance - selected.actualOverrunDistance)
-            })
+            }) {
+                primary = nearest
+            } else {
+                primary = selected
+            }
+        } else if let first = corridor.first {
+            primary = first
         } else {
-            primary = corridor.first
-        }
-
-        guard let primary else {
-            return Gate55Recommendation(
-                horizontalDistance: horizontal,
-                flatEquivalentDistance: 0,
-                distanceAdjustment: -horizontal,
-                elevationDelta: elevationDelta,
-                initialVelocity: 0,
-                directionDegrees: 0,
-                stopPosition: .zero,
-                overrunDistance: 0,
-                usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
-                searchTier: .noPath,
-                candidateCount: 0,
-                trajectory: [],
-                primary: nil,
-                corridorCandidates: [],
-                defaultCorridorIndex: 0
+            return nearestCalculatedRecommendation(
+                context: context,
+                greenSpeed: greenSpeed,
+                horizontal: horizontal,
+                elevationDelta: elevationDelta
             )
         }
 
         let defaultIndex = corridor.firstIndex(where: {
             $0.candidate.initialVelocity == primary.candidate.initialVelocity
                 && $0.candidate.directionDegrees == primary.candidate.directionDegrees
+        }) ?? corridor.indices.min(by: {
+            abs(corridor[$0].actualOverrunDistance - CandidateSelector.preferredOverrunMeters)
+                < abs(corridor[$1].actualOverrunDistance - CandidateSelector.preferredOverrunMeters)
         }) ?? 0
 
-        let flat = flatDisplayEquivalentDistance(
-            initialVelocity: primary.candidate.initialVelocity
+        return recommendation(
+            context: context,
+            greenSpeed: greenSpeed,
+            horizontal: horizontal,
+            elevationDelta: elevationDelta,
+            primary: primary,
+            corridor: corridor,
+            defaultIndex: defaultIndex,
+            searchTier: selection.searchTier,
+            usedRelaxed: selection.usedRelaxedCaptureRadius
         )
+    }
+
+    /// 5.4cm 홀인이 없어도 같은 물리 엔진으로 홀에 가장 가깝게 굴린 궤적.
+    private static func nearestCalculatedRecommendation(
+        context: Gate55TerrainContext,
+        greenSpeed: Double,
+        horizontal: Double,
+        elevationDelta: Double
+    ) -> Gate55Recommendation {
+        let velocity = max(1.2, min(6.0, 1.15 + horizontal * 0.28))
         let forward = runForward(
             context: context,
             greenSpeed: greenSpeed,
-            initialVelocity: primary.candidate.initialVelocity,
-            directionDegrees: primary.candidate.directionDegrees,
+            initialVelocity: velocity,
+            directionDegrees: 0,
             recordTrajectory: true
         )
+        let ranked = RankedPuttCandidate(
+            candidate: InitialConditionCandidate(
+                initialVelocity: velocity,
+                directionDegrees: 0,
+                result: FlatPuttResult(
+                    trajectory: forward.trajectory,
+                    ballStopIf: forward.ballStopIf ? 1 : 0,
+                    ballHoleIf: forward.ballHoleIf ? 1 : 0,
+                    ballPassOverHoleIf: forward.ballPassOverHoleIf ? 1 : 0,
+                    arcLength: forward.arcLength,
+                    finalPosition: forward.stopPosition
+                )
+            ),
+            overrunStopPosition: forward.stopPosition,
+            distanceToOverrunTarget: hypot(
+                forward.stopPosition.x,
+                forward.stopPosition.y - horizontal - CandidateSelector.preferredOverrunMeters
+            ),
+            actualOverrunDistance: max(0, forward.stopPosition.y - horizontal),
+            usedRelaxedCaptureRadius: false,
+            searchTier: .proximityEstimate
+        )
+        return recommendation(
+            context: context,
+            greenSpeed: greenSpeed,
+            horizontal: horizontal,
+            elevationDelta: elevationDelta,
+            primary: ranked,
+            corridor: CandidateSelector.isServiceOverrun(ranked.actualOverrunDistance) ? [ranked] : [],
+            defaultIndex: 0,
+            searchTier: .proximityEstimate,
+            usedRelaxed: false,
+            trajectory: forward.trajectory
+        )
+    }
+
+    private static func recommendation(
+        context: Gate55TerrainContext,
+        greenSpeed: Double,
+        horizontal: Double,
+        elevationDelta: Double,
+        primary: RankedPuttCandidate,
+        corridor: [RankedPuttCandidate],
+        defaultIndex: Int,
+        searchTier: CandidateSearchTier,
+        usedRelaxed: Bool,
+        trajectory: [TrajectorySample]? = nil
+    ) -> Gate55Recommendation {
+        let flat = flatDisplayEquivalentDistance(
+            initialVelocity: primary.candidate.initialVelocity
+        )
+        let path: [TrajectorySample]
+        if let trajectory, trajectory.count >= 2 {
+            path = trajectory
+        } else {
+            path = runForward(
+                context: context,
+                greenSpeed: greenSpeed,
+                initialVelocity: primary.candidate.initialVelocity,
+                directionDegrees: primary.candidate.directionDegrees,
+                recordTrajectory: true
+            ).trajectory
+        }
         return Gate55Recommendation(
             horizontalDistance: horizontal,
             flatEquivalentDistance: flat,
@@ -362,10 +437,10 @@ public enum Gate55Validation {
             directionDegrees: primary.candidate.directionDegrees,
             stopPosition: primary.overrunStopPosition,
             overrunDistance: primary.actualOverrunDistance,
-            usedRelaxedCaptureRadius: selection.usedRelaxedCaptureRadius,
-            searchTier: selection.searchTier,
+            usedRelaxedCaptureRadius: usedRelaxed,
+            searchTier: searchTier,
             candidateCount: corridor.count,
-            trajectory: forward.trajectory,
+            trajectory: path,
             primary: primary,
             corridorCandidates: corridor,
             defaultCorridorIndex: defaultIndex

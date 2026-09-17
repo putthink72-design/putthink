@@ -387,6 +387,8 @@ final class GolfBallVisualLockTests: XCTestCase {
         XCTAssertTrue(GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(diameter!))
         XCTAssertFalse(GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(0.16))
         XCTAssertFalse(GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(0.01))
+        XCTAssertFalse(GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(0.020))
+        XCTAssertTrue(GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(0.04267))
     }
 
     func testLocalizerWorksWithoutExpectedARBall() {
@@ -584,6 +586,26 @@ final class GolfBallVisualLockTests: XCTestCase {
         )
         XCTAssertEqual(action, .none)
         XCTAssertTrue(filter.recent.isEmpty)
+    }
+
+    func testConsensusGuidanceReturnIgnoresDriftCapWhenDisabled() {
+        var filter = GolfBallLockConsensus()
+        var last: GolfBallLockAction = .none
+        for _ in 0..<3 {
+            last = filter.ingest(
+                contact: GolfBallWorldContact(worldX: 0.72, worldY: 0.3, worldZ: 0.04, confidence: 0.9),
+                currentBallX: 0,
+                currentBallZ: 0,
+                physicsBallX: 0,
+                physicsBallZ: 0,
+                minAgree: 3,
+                enforceProximityLimits: false
+            )
+        }
+        guard case .apply(let fix) = last else {
+            return XCTFail("expected apply when drift cap is off, got \(last)")
+        }
+        XCTAssertEqual(fix.worldX, 0.72, accuracy: 0.03)
     }
 
     private static func makeGreenField(width: Int, height: Int) -> GolfBallImageBuffer {

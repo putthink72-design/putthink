@@ -86,7 +86,8 @@ public enum DriftCorrector {
 }
 
 public enum HeightMapRasterizer {
-    /// 메시 구멍만 이웃 평균(최대 10cm). 한쪽 스캔의 반대 플랭크는 최근접 높이로 채우고 횡경사는 외삽하지 않는다.
+    /// 메시 구멍은 이웃 평균. 10cm 이내는 로컬 평균, 볼–홀 복도의 더 큰 구멍은 이웃 전파로 메운다.
+    /// 한쪽 스캔의 먼 플랭크는 최근접 높이로 남기고 횡경사는 외삽하지 않는다.
     public static let maxInterpolationGapMeters = 0.10
 
     public static func rasterize(
@@ -192,6 +193,40 @@ public enum HeightMapRasterizer {
                 for x in 0..<width {
                     let index = y * width + x
                     guard !known[index], distance[index] <= maxGapCells else { continue }
+                    var sum = 0.0
+                    var weightSum = 0.0
+                    for dy in -1...1 {
+                        for dx in -1...1 where dx != 0 || dy != 0 {
+                            let nx = x + dx
+                            let ny = y + dy
+                            guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                            let neighbor = ny * width + nx
+                            guard known[neighbor] else { continue }
+                            let weight = (dx == 0 || dy == 0) ? 1.0 : 1.0 / sqrt(2)
+                            sum += result[neighbor] * weight
+                            weightSum += weight
+                        }
+                    }
+                    if weightSum > 0 {
+                        additions.append((index, sum / weightSum))
+                    }
+                }
+            }
+            guard !additions.isEmpty else { break }
+            for addition in additions {
+                result[addition.index] = addition.value
+                known[addition.index] = true
+                interpolated[addition.index] = true
+            }
+        }
+
+        // 복도 안의 큰 빈 칸: 10cm를 넘어도 이웃 평균으로 메운다(지정 후 래스터).
+        while true {
+            var additions: [(index: Int, value: Double)] = []
+            for y in 0..<height {
+                for x in 0..<width {
+                    let index = y * width + x
+                    guard !known[index] else { continue }
                     var sum = 0.0
                     var weightSum = 0.0
                     for dy in -1...1 {

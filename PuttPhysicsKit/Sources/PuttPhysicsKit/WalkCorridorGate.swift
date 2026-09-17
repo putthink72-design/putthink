@@ -1,11 +1,13 @@
 import Foundation
 import simd
 
-/// STEP 3 홀 방향 걷기 스캔 — 라인 리본 커버·이동 거리·프레임 품질.
+/// STEP 3 홀 방향 걷기 스캔 — 라인 리본 커버. 가까운 홀은 볼 뒤에서 지정한다.
 public enum WalkCorridorGate {
     /// 볼→진행 방향(카메라 전방 proxy) 기준 라인 리본 반폭.
     public static let lineRibbonHalfWidthMeters = 0.45
-    /// 홀 지정 전 최소 볼↔카메라 수평 거리.
+    /// 이 거리 안은 짧은 퍼트 씬. 컵을 지나 시간·거리를 채우지 않는다.
+    public static let shortPuttMaxDistanceFromBall = 2.5
+    /// 긴 퍼트에서만 참고하는 볼↔카메라 수평 거리.
     public static let minWalkDistanceFromBall = 1.5
     public static let minimumDurationSeconds = 2.0
     public static let requiredRibbonCells = 20
@@ -142,17 +144,23 @@ public enum WalkCorridorGate {
     }
 
     public static func qualityMet(stats: Stats) -> Bool {
-        stats.maxDistanceFromBall >= minWalkDistanceFromBall
-            && stats.durationSeconds >= minimumDurationSeconds
-            && stats.ribbonCells >= requiredRibbonCells
-            && stats.goodFrames >= minimumGoodFrames
+        guard stats.ribbonCells >= requiredRibbonCells
+            && stats.goodFrames >= minimumGoodFrames else { return false }
+        // 볼 근처(짧은 홀): 라인만 비추면 지정. 2초·1.5m를 위해 컵을 지나지 않음.
+        if stats.maxDistanceFromBall < shortPuttMaxDistanceFromBall {
+            return true
+        }
+        return stats.durationSeconds >= minimumDurationSeconds
     }
 
     public static func progress(stats: Stats) -> Double {
-        let d = min(1, stats.maxDistanceFromBall / minWalkDistanceFromBall)
-        let t = min(1, stats.durationSeconds / minimumDurationSeconds)
         let c = min(1, Double(stats.ribbonCells) / Double(requiredRibbonCells))
         let f = min(1, Double(stats.goodFrames) / Double(minimumGoodFrames))
+        if stats.maxDistanceFromBall < shortPuttMaxDistanceFromBall {
+            return min(1, (c + f) / 2)
+        }
+        let d = min(1, stats.maxDistanceFromBall / minWalkDistanceFromBall)
+        let t = min(1, stats.durationSeconds / minimumDurationSeconds)
         return min(1, (d + t + c + f) / 4)
     }
 

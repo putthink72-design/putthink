@@ -111,6 +111,9 @@ enum L10n {
     static var gridFlow: String { s("aim.viz.grid") }
 
     static var confirmCrosshair: String { s("aim.lock.confirm_reticle") }
+    static var lockConfirmReticleTitle: String { s("aim.lock.confirm_reticle_title") }
+    static var lockConfirmReticleHint: String { s("aim.lock.confirm_reticle_hint") }
+    static var lockCoachTapHint: String { s("aim.lock.coach_tap_hint") }
     static var lockWaiting: String { s("aim.lock.waiting") }
     static var lockSearching: String { s("aim.lock.searching") }
     static var lockCandidate: String { s("aim.lock.candidate") }
@@ -160,14 +163,12 @@ enum L10n {
         flatEquivalentDistance: Double
     ) -> String {
         switch tier {
-        case .proximityEstimate:
-            return f("stroke.estimate", flatEquivalentDistance)
+        case .verified:
+            return f("stroke.feel", flatEquivalentDistance)
         case .flatHeuristic:
             return f("stroke.flat", flatEquivalentDistance)
-        case .noPath:
-            return s("stroke.none")
-        default:
-            return f("stroke.feel", flatEquivalentDistance)
+        case .relaxedCapture, .expandedSearch, .proximityEstimate, .noPath:
+            return f("stroke.estimate", flatEquivalentDistance)
         }
     }
 

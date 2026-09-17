@@ -8,19 +8,31 @@ public enum CandidateSearchTier: String, Sendable, Codable, Equatable {
     case relaxedCapture
     /// v·β 범위 확대 + 완화 캡처.
     case expandedSearch
-    /// 홀 통과 lateral miss 최소 — 홀인 미검증 추정. (조준 UI에서는 사용하지 않음)
+    /// 홀 통과에 가장 가까운 물리 궤적 — 5.4cm 홀인 미검증. 빈 화면 방지.
     case proximityEstimate
-    /// 평지 거리·고도만 반영, β=0. (조준 UI에서는 사용하지 않음)
+    /// 거리·고도 기반 β=0 궤적. 마지막 표시용.
     case flatHeuristic
-    /// 홀인 후보 없음 — 재스캔.
+    /// 홀인 후보 없음. 조준 UI는 이 티어를 고객에게 보여 주지 않는다.
     case noPath
 
     public var isHoleInVerified: Bool {
         switch self {
-        case .verified, .relaxedCapture, .expandedSearch:
+        case .verified:
             return true
-        case .proximityEstimate, .flatHeuristic, .noPath:
+        case .relaxedCapture, .expandedSearch, .proximityEstimate, .flatHeuristic, .noPath:
             return false
+        }
+    }
+
+    /// 높을수록 조준 화면에 남길 결과.
+    public var displayPriority: Int {
+        switch self {
+        case .verified: return 5
+        case .relaxedCapture: return 4
+        case .expandedSearch: return 3
+        case .proximityEstimate: return 2
+        case .flatHeuristic: return 1
+        case .noPath: return 0
         }
     }
 
@@ -37,7 +49,7 @@ public enum CandidateSearchTier: String, Sendable, Codable, Equatable {
         case .flatHeuristic:
             return "거리 추정 · 브레이크 미반영"
         case .noPath:
-            return "홀인 경로 없음 · 스캔을 다시 하세요"
+            return "추정 경로 · 홀인 미검증"
         }
     }
 }

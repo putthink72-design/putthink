@@ -181,10 +181,10 @@ public enum GolfBallFastDetector {
 
         let sizeFit: Double = {
             let ratio = radius / max(hint.expectedRadiusPixels, 3.5)
-            if ratio < 0.45 || ratio > 2.4 { return 0 }
-            return 1 - min(1, abs(log(ratio)) / 1.25)
+            if ratio < 0.55 || ratio > 2.40 { return 0 }
+            return 1 - min(1, abs(log(ratio)) / 0.85)
         }()
-        guard sizeFit > 0.12 else { return nil }
+        guard sizeFit > 0.18 else { return nil }
 
         let dist = hypot(Double(cx) - hint.expectedCenterX, Double(cy) - hint.expectedCenterY)
         let proximity = 1 - min(1, dist / max(hint.searchRadiusPixels, 6))

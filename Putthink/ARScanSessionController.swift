@@ -225,7 +225,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     private let meshExtractionQueue = DispatchQueue(label: "putthink.mesh-extract", qos: .userInitiated)
     private let visualLockQueue = DispatchQueue(label: "putthink.ball-lock", qos: .userInitiated)
     private var visualLockConsensus = GolfBallLockConsensus()
-    private let ballPreviewSmoothing = 0.58
+    private let ballPreviewSmoothing = 1.0
     private var visualLockProcessing = false
     private var lastVisualLockTime: TimeInterval = 0
 
@@ -1547,8 +1547,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             return
         }
         let jump = hypot(previous.worldX - pose.worldX, previous.worldZ - pose.worldZ)
-        // 원점 보정이면 보간하지 않는다. 보간하면 링이 흐르는 격자를 따라간다.
-        if jump >= 0.06 {
+        // 마커→실볼 기어감을 없앤다. 1.5cm 미만만 소량 보정.
+        if jump >= 0.015 {
             ballDetectionPreview = pose
             return
         }
@@ -1574,6 +1574,17 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     /// 조준 오버레이는 스캔 볼 월드 좌표에 고정. 실볼 미세 보정으로 앵커를 옮기면 하안에서 AR이 흐른다.
     private func freezeGuidanceWorldAnchor() {
         guidanceLiveBallPose = nil
+    }
+
+    /// 조준선 근접 하안 — 볼이 화면에서 커지고 카메라가 낮다.
+    private func isCloseAimGuidance(cameraToWorld: simd_float4x4) -> Bool {
+        guard let ball = completedScan?.ballAnchor else { return false }
+        let cam = cameraToWorld.columns.3
+        let dx = Double(cam.x) - ball.worldX
+        let dy = Double(cam.y) - ball.worldY
+        let dz = Double(cam.z) - ball.worldZ
+        let dist = (dx * dx + dy * dy + dz * dz).squareRoot()
+        return dist < 1.35 && dy < 0.50
     }
 
     private func processVisualBallLock(frame: ARFrame) {
@@ -1657,14 +1668,27 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                         self.visualBallLockStatus = .searching
                     }
                 }
+                // 조준 근접(하안): 링이 커진 볼을 따라가면 선 자세가 아니어도 찾은 것으로 본다.
+                // AR 볼을 옮기지 않는다. 옮기면 하안에서 오버레이가 흐른다.
+                if stillGuiding, stillHunting, !self.visualBallLockStatus.isSettled,
+                   contact.confidence >= 0.50,
+                   self.isCloseAimGuidance(cameraToWorld: snapshot.cameraToWorld) {
+                    self.needsBallReanchor = false
+                    self.visualBallLockStatus = .aligned
+                    self.ballDetectionPreview = nil
+                    self.pendingDetectedBall = nil
+                    self.freezeGuidanceWorldAnchor()
+                    return
+                }
                 let action = self.visualLockConsensus.ingest(
                     contact: contact,
                     currentBallX: stillGuiding ? self.completedScan?.ballAnchor.worldX : nil,
                     currentBallZ: stillGuiding ? self.completedScan?.ballAnchor.worldZ : nil,
                     physicsBallX: stillGuiding ? self.completedScan?.physicsStartPose.worldX : nil,
                     physicsBallZ: stillGuiding ? self.completedScan?.physicsStartPose.worldZ : nil,
-                    // 조준: 링이 같은 자리에 몇 프레임 → 그때 AR 이동.
-                    minAgree: stillGuiding ? 4 : 2
+                    // 조준: RGB 창이 이미 최초 볼 근처. 드리프트 한도로 합의를 버리지 않는다.
+                    minAgree: stillGuiding ? 3 : 2,
+                    enforceProximityLimits: !stillGuiding
                 )
                 switch action {
                 case .none:
@@ -1691,10 +1715,14 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                 case .apply(let fix):
                     if stillPlacing {
                         self.offerDetectedBallCandidate(fix, timestamp: now)
-                    } else if stillGuiding, stillHunting,
-                              fix.confidence >= 0.62, let live = self.completedScan {
-                        // 안정 링 → AR 볼 이동 1회 → 감지 UI 종료.
-                        self.applyVisualBallLock(fix, scan: live, timestamp: now)
+                    } else if stillGuiding, stillHunting, let live = self.completedScan {
+                        // 링과 같은 0.50. 합의는 이미 locked라 적용 실패 시 롤백.
+                        if fix.confidence >= 0.50 {
+                            self.applyVisualBallLock(fix, scan: live, timestamp: now)
+                        }
+                        if !self.visualBallLockStatus.isSettled {
+                            self.visualLockConsensus.locked = false
+                        }
                     }
                 }
             }
@@ -1984,9 +2012,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             walkCanArrive = stats.qualityMet
             if stats.qualityMet {
                 walkStatus = "참고 품질 OK"
-            } else if stats.maxDistanceFromBall < WalkCorridorGate.minWalkDistanceFromBall {
-                walkStatus = "홀 쪽으로 더 걸으면 좋음"
-            } else if stats.ribbonCells < WalkCorridorGate.requiredRibbonCells {
+            } else if stats.ribbonCells < WalkCorridorGate.requiredRibbonCells
+                || stats.goodFrames < WalkCorridorGate.minimumGoodFrames {
                 walkStatus = "라인 리본 더 채우면 좋음"
             } else {
                 walkStatus = "스캔 중"

@@ -26,29 +26,67 @@ final class WalkCorridorGateTests: XCTestCase {
         XCTAssertFalse(WalkCorridorGate.countsTowardRibbon(sample: sample, context: ctx))
     }
 
-    func testQualityMetRequiresWalkDistanceAndRibbon() {
-        let ok = WalkCorridorGate.Stats(
-            durationSeconds: 3,
-            processedFrames: 12,
-            ribbonSamples: 400,
+    func testQualityMetAllowsShortPuttWithoutWalkingPastHole() {
+        let fromAddress = WalkCorridorGate.Stats(
+            durationSeconds: 0.4,
+            processedFrames: 8,
+            ribbonSamples: 200,
+            ribbonCells: 22,
+            goodFrames: 4,
+            maxDistanceFromBall: 0.8,
+            inBandFrameCount: 6,
+            qualityMet: false
+        )
+        XCTAssertTrue(WalkCorridorGate.qualityMet(stats: fromAddress))
+
+        let aroundTwoMeters = WalkCorridorGate.Stats(
+            durationSeconds: 0.5,
+            processedFrames: 8,
+            ribbonSamples: 200,
             ribbonCells: 22,
             goodFrames: 4,
             maxDistanceFromBall: 2.0,
-            inBandFrameCount: 8,
+            inBandFrameCount: 6,
             qualityMet: false
         )
-        XCTAssertTrue(WalkCorridorGate.qualityMet(stats: ok))
+        XCTAssertTrue(WalkCorridorGate.qualityMet(stats: aroundTwoMeters))
 
-        let shortWalk = WalkCorridorGate.Stats(
+        let thinRibbon = WalkCorridorGate.Stats(
             durationSeconds: 3,
             processedFrames: 12,
-            ribbonSamples: 400,
-            ribbonCells: 22,
-            goodFrames: 4,
+            ribbonSamples: 10,
+            ribbonCells: 5,
+            goodFrames: 1,
             maxDistanceFromBall: 0.8,
             inBandFrameCount: 8,
             qualityMet: false
         )
-        XCTAssertFalse(WalkCorridorGate.qualityMet(stats: shortWalk))
+        XCTAssertFalse(WalkCorridorGate.qualityMet(stats: thinRibbon))
+    }
+
+    func testQualityMetLongWalkStillNeedsDuration() {
+        let rushed = WalkCorridorGate.Stats(
+            durationSeconds: 0.4,
+            processedFrames: 4,
+            ribbonSamples: 200,
+            ribbonCells: 22,
+            goodFrames: 4,
+            maxDistanceFromBall: 4.0,
+            inBandFrameCount: 3,
+            qualityMet: false
+        )
+        XCTAssertFalse(WalkCorridorGate.qualityMet(stats: rushed))
+
+        let walked = WalkCorridorGate.Stats(
+            durationSeconds: 2.2,
+            processedFrames: 12,
+            ribbonSamples: 400,
+            ribbonCells: 22,
+            goodFrames: 4,
+            maxDistanceFromBall: 4.0,
+            inBandFrameCount: 8,
+            qualityMet: false
+        )
+        XCTAssertTrue(WalkCorridorGate.qualityMet(stats: walked))
     }
 }

@@ -92,7 +92,7 @@ enum GolfBallVisualLockSession {
             let dx = Double(cam.x) - ball.worldX
             let dy = Double(cam.y) - ball.worldY
             let dz = Double(cam.z) - ball.worldZ
-            distance = min(max(sqrt(dx * dx + dy * dy + dz * dz), 0.35), 8.0)
+            distance = min(max(sqrt(dx * dx + dy * dy + dz * dz), 0.22), 8.0)
         } else {
             distance = min(max(depthMeters ?? 1.3, 0.50), 1.70)
         }
@@ -224,9 +224,22 @@ enum GolfBallVisualLockSession {
             radiusSourcePixels: blob.radiusPixels * snapshot.detectionToSource,
             depthMeters: Double(medianDepth),
             focalX: Double(snapshot.rgbIntrinsics[0, 0])
-           ),
-           diameter > 0.18 {
-            return nil
+           ) {
+            guard GolfBallWorldLocalizer.isPlausibleGolfBallDiameter(diameter) else {
+                return nil
+            }
+            // 공만 한 납작 마커: 디스크는 고리와 깊이가 같고, 구는 1–4cm 가깝다.
+            // 라이다가 공을 뚫으면 고리와 비슷해지므로 그때는 지름·원형만으로 판정.
+            if let inner = ring.innerMedianDepth {
+                let bump = Double(medianDepth) - Double(inner)
+                if bump < -0.012 {
+                    return nil
+                }
+            }
+        } else {
+            let expected = max(snapshot.hint.expectedRadiusPixels, 3.5)
+            let ratio = blob.radiusPixels / expected
+            guard ratio >= 0.62, ratio <= 1.70 else { return nil }
         }
 
         let source = snapshot.sourcePixel(x: blob.centerX, y: blob.centerY)
@@ -782,10 +795,13 @@ enum GolfBallVisualLockSession {
     private struct DepthRing {
         var groundY: [Double]
         var medianDepth: Float?
+        var innerMedianDepth: Float?
     }
 
     private static func depthRing(around blob: GolfBallBlob, snapshot: Snapshot) -> DepthRing {
-        guard let depth = snapshot.depth else { return DepthRing(groundY: [], medianDepth: nil) }
+        guard let depth = snapshot.depth else {
+            return DepthRing(groundY: [], medianDepth: nil, innerMedianDepth: nil)
+        }
         let source = snapshot.sourcePixel(x: blob.centerX, y: blob.centerY)
         let gx = source.x * Double(depth.mapWidth) / Double(max(snapshot.sourceWidth, 1))
         let gy = source.y * Double(depth.mapHeight) / Double(max(snapshot.sourceHeight, 1))
@@ -799,6 +815,7 @@ enum GolfBallVisualLockSession {
         let inner = sr * 1.5
         let outer = max(sr * 3.6, 9)
         var depths: [Float] = []
+        var innerDepths: [Float] = []
         var worlds: [(worldX: Double, worldY: Double, worldZ: Double)] = []
         let x0 = max(0, Int(sx - outer))
         let x1 = min(depth.width - 1, Int(sx + outer))
@@ -810,13 +827,17 @@ enum GolfBallVisualLockSession {
                 let dx = Double(x) - sx
                 let dy = Double(y) - sy
                 let r = hypot(dx, dy)
-                guard r >= inner, r <= outer else { continue }
                 let idx = y * depth.width + x
                 if depth.confidence[idx] < ScanCoverage.minConfidence { continue }
                 let d = depth.depths[idx]
                 guard d.isFinite, d >= ScanCoverage.minDepthMeters, d <= ScanCoverage.maxDepthMeters else {
                     continue
                 }
+                if r <= sr * 0.85 {
+                    innerDepths.append(d)
+                    continue
+                }
+                guard r >= inner, r <= outer else { continue }
                 depths.append(d)
                 let wx = Double(x + depth.originX)
                 let wy = Double(y + depth.originY)
@@ -838,6 +859,11 @@ enum GolfBallVisualLockSession {
             let sorted = depths.sorted()
             return sorted[sorted.count / 2]
         }()
+        let innerMedianDepth: Float? = {
+            guard innerDepths.count >= 3 else { return nil }
+            let sorted = innerDepths.sorted()
+            return sorted[sorted.count / 2]
+        }()
         var groundY: [Double] = []
         if let current = snapshot.currentBall {
             groundY = GolfBallWorldLocalizer.filterGroundRingY(
@@ -850,6 +876,6 @@ enum GolfBallVisualLockSession {
         if groundY.isEmpty {
             groundY = worlds.map(\.worldY)
         }
-        return DepthRing(groundY: groundY, medianDepth: medianDepth)
+        return DepthRing(groundY: groundY, medianDepth: medianDepth, innerMedianDepth: innerMedianDepth)
     }
 }
