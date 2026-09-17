@@ -1526,19 +1526,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "downhill adjust"
+            "value" : "shorter"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "下り補正"
+            "value" : "短め"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "내리막 보정"
+            "value" : "짧게"
           }
         }
       }
@@ -1572,19 +1572,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "uphill adjust"
+            "value" : "past the hole"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "上り補正"
+            "value" : "ホール先の余裕"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "오르막 보정"
+            "value" : "홀 뒤 여유"
           }
         }
       }

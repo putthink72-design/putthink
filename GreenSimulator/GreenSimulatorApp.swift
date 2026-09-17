@@ -662,7 +662,7 @@ private struct PuttGuideCard: View {
     }
 
     private func adjustmentText(_ value: Double) -> String {
-        let direction = value >= 0 ? "오르막 보정" : "내리막 보정"
+        let direction = value >= 0 ? "홀 뒤 여유" : "짧게"
         return String(format: "(%+.1f m %@)", value, direction)
     }
 

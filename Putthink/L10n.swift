@@ -132,6 +132,7 @@ enum L10n {
 
     static var unitMeters: String { s("osd.unit_m") }
 
+    /// 평지환산 − 실거리. 고도가 아니라 홀 뒤 여유(오버런)·그린스피드 환산이다.
     static func adjustment(meters: Double) -> String {
         let label = meters >= 0 ? s("osd.adj.uphill") : s("osd.adj.downhill")
         return f("osd.adj.format", meters, label)
