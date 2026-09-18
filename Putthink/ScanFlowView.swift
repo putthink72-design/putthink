@@ -25,6 +25,8 @@ struct ScanFlowView: View {
     @State private var sessionARView: ARView?
 
     var body: some View {
+        // L10n은 정적 locale이라 SwiftUI 의존성 추적에 안 잡힘 — epoch로 스캔/OSD UI 갱신.
+        let _ = language.displayEpoch
         ZStack {
             PlacementARView(controller: controller, sessionARView: $sessionARView)
                 .ignoresSafeArea()
@@ -37,12 +39,17 @@ struct ScanFlowView: View {
                     exportError: $exportError,
                     showSettings: $showSettings
                 )
+                .environment(\.locale, language.locale)
             } else {
                 scanExperienceOverlays
+                    .environment(\.locale, language.locale)
+                    .id(language.displayEpoch)
             }
         }
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showSettings, onDismiss: {
+            language.refreshPresentedUI()
+        }) {
             AppSettingsSheet()
                 .environmentObject(subscriptions)
                 .environmentObject(freeRuns)
@@ -91,6 +98,8 @@ struct ScanFlowView: View {
         ZStack {
             if showsReticle && controller.flowState != .placingHole {
                 OSDAmberReticle(dashedRing: controller.flowState != .placingBall)
+                    .opacity(controller.ballRingWorldPose == nil ? 1 : 0.2)
+                    .animation(.easeOut(duration: 0.15), value: controller.ballRingWorldPose == nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
@@ -496,6 +505,7 @@ private struct PlacementARView: UIViewRepresentable {
         private var ballAnchorEntity: AnchorEntity?
         private var holeAnchorEntity: AnchorEntity?
         private weak var ringOverlay: PlacementRingOverlayView?
+        private var lastCoverageDisplayEpoch = 0
 
         func attachDisplayLink(controller: ARScanSessionController) {
             self.controller = controller
@@ -536,6 +546,11 @@ private struct PlacementARView: UIViewRepresentable {
                 if let ball = controller.ballAnchor {
                     brightMesh.corridorBallXZ = SIMD2(ball.worldX, ball.worldZ)
                     brightMesh.corridorBallY = Float(ball.worldY)
+                } else if controller.flowState == .placingBall,
+                          let frame = view.session.currentFrame,
+                          let aim = controller.centerGroundPose(frame: frame) {
+                    brightMesh.corridorBallXZ = SIMD2(aim.worldX, aim.worldZ)
+                    brightMesh.corridorBallY = Float(aim.worldY)
                 }
             }
             brightMesh.update(in: view)
@@ -543,7 +558,17 @@ private struct PlacementARView: UIViewRepresentable {
         }
 
         @objc private func onDisplayLink(_ link: CADisplayLink) {
-            guard meshEnabled, let controller, let view = arView else { return }
+            guard let controller, let view = arView else { return }
+            let huntingBall = controller.flowState == .placingBall
+                || (controller.flowState == .complete && !controller.visualBallLockStatus.isSettled)
+            if huntingBall || controller.flowState == .placingHole || controller.placementRequest != nil {
+                refreshPlacementRings(controller: controller, in: view)
+            }
+            if controller.coverageDisplayEpoch != lastCoverageDisplayEpoch {
+                lastCoverageDisplayEpoch = controller.coverageDisplayEpoch
+                brightMesh.resetCoverageDisplayLock(in: view)
+            }
+            guard meshEnabled else { return }
             let burst = controller.meshCaptureBurstActive && !meshHidden
             if burst != burstRateApplied {
                 link.preferredFrameRateRange = burst
@@ -563,6 +588,12 @@ private struct PlacementARView: UIViewRepresentable {
             if let ball = controller.ballAnchor {
                 brightMesh.corridorBallXZ = SIMD2(ball.worldX, ball.worldZ)
                 brightMesh.corridorBallY = Float(ball.worldY)
+            } else if controller.flowState == .placingBall,
+                      let frame = view.session.currentFrame,
+                      let aim = controller.centerGroundPose(frame: frame) {
+                // 볼 확정 전에도 십자선 지면 근처에 흰 격자를 심는다(커버리지와 병렬).
+                brightMesh.corridorBallXZ = SIMD2(aim.worldX, aim.worldZ)
+                brightMesh.corridorBallY = Float(aim.worldY)
             } else {
                 brightMesh.corridorBallXZ = nil
                 brightMesh.corridorBallY = nil

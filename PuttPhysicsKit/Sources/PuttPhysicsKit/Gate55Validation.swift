@@ -79,10 +79,11 @@ public struct Gate55Recommendation: Sendable, Equatable {
     public var candidateCount: Int
     public var trajectory: [TrajectorySample]
     public var primary: RankedPuttCandidate?
-    /// 홀 뒤 0.34–0.44m만. 오름차순(짧음→조금 지남).
+    /// 홀 뒤 정지 후보. 평지는 0.34–0.44m, 내리막·옆경사는 `overrunPolicy` 밴드.
     public var corridorCandidates: [RankedPuttCandidate]
-    /// `corridorCandidates`에서 0.35m 목표에 가장 가까운(기존 1순위) 인덱스.
+    /// `corridorCandidates`에서 현재 오버런 목표에 가장 가까운 인덱스.
     public var defaultCorridorIndex: Int
+    public var overrunPolicy: ServiceOverrunPolicy
 
     public init(
         horizontalDistance: Double,
@@ -99,7 +100,8 @@ public struct Gate55Recommendation: Sendable, Equatable {
         trajectory: [TrajectorySample],
         primary: RankedPuttCandidate?,
         corridorCandidates: [RankedPuttCandidate] = [],
-        defaultCorridorIndex: Int = 0
+        defaultCorridorIndex: Int = 0,
+        overrunPolicy: ServiceOverrunPolicy = .flat
     ) {
         self.horizontalDistance = horizontalDistance
         self.flatEquivalentDistance = flatEquivalentDistance
@@ -116,17 +118,11 @@ public struct Gate55Recommendation: Sendable, Equatable {
         self.primary = primary
         self.corridorCandidates = corridorCandidates
         self.defaultCorridorIndex = defaultCorridorIndex
+        self.overrunPolicy = overrunPolicy
     }
 
     public var strokeGuidance: String {
-        switch searchTier {
-        case .verified:
-            return String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
-        case .flatHeuristic:
-            return String(format: "%.1fm 거리 추정 — 브레이크 미반영", flatEquivalentDistance)
-        case .relaxedCapture, .expandedSearch, .proximityEstimate, .noPath:
-            return String(format: "%.1fm 추정 — 홀인 미검증", flatEquivalentDistance)
-        }
+        String(format: "%.1fm 치는 느낌으로 스트로크하세요", flatEquivalentDistance)
     }
 }
 
@@ -289,15 +285,11 @@ public enum Gate55Validation {
             context.field.height(at: context.holeLocal)
             - context.field.height(at: context.ballLocal)
 
-        // 평탄 노이즈·홀 미도달·컵에서 죽는 공(오버런 0)은 코리도에서 제외.
-        // 슬라이더: 짧음(0.34m) → 조금 지남(0.44m).
+        // 슬라이더: 짧음(정책 하한) → 조금 지남(정책 상한).
+        let corridorPolicy = selection.overrunPolicy
         let corridor = selection.allCandidates
             .filter {
-                CandidateSelector.isServiceOverrun($0.actualOverrunDistance)
-                    && !isLikelyFlatNoiseAim(
-                        elevationDelta: elevationDelta,
-                        directionDegrees: $0.candidate.directionDegrees
-                    )
+                corridorPolicy.contains($0.actualOverrunDistance)
             }
             .sorted {
                 $0.actualOverrunDistance < $1.actualOverrunDistance
@@ -305,19 +297,7 @@ public enum Gate55Validation {
 
         let primary: RankedPuttCandidate
         if let selected = selection.primary {
-            if !isLikelyFlatNoiseAim(
-                elevationDelta: elevationDelta,
-                directionDegrees: selected.candidate.directionDegrees
-            ) {
-                primary = selected
-            } else if let nearest = corridor.min(by: {
-                abs($0.actualOverrunDistance - selected.actualOverrunDistance)
-                    < abs($1.actualOverrunDistance - selected.actualOverrunDistance)
-            }) {
-                primary = nearest
-            } else {
-                primary = selected
-            }
+            primary = selected
         } else if let first = corridor.first {
             primary = first
         } else {
@@ -325,7 +305,8 @@ public enum Gate55Validation {
                 context: context,
                 greenSpeed: greenSpeed,
                 horizontal: horizontal,
-                elevationDelta: elevationDelta
+                elevationDelta: elevationDelta,
+                policy: corridorPolicy
             )
         }
 
@@ -333,8 +314,8 @@ public enum Gate55Validation {
             $0.candidate.initialVelocity == primary.candidate.initialVelocity
                 && $0.candidate.directionDegrees == primary.candidate.directionDegrees
         }) ?? corridor.indices.min(by: {
-            abs(corridor[$0].actualOverrunDistance - CandidateSelector.preferredOverrunMeters)
-                < abs(corridor[$1].actualOverrunDistance - CandidateSelector.preferredOverrunMeters)
+            abs(corridor[$0].actualOverrunDistance - corridorPolicy.preferredMeters)
+                < abs(corridor[$1].actualOverrunDistance - corridorPolicy.preferredMeters)
         }) ?? 0
 
         return recommendation(
@@ -346,7 +327,8 @@ public enum Gate55Validation {
             corridor: corridor,
             defaultIndex: defaultIndex,
             searchTier: selection.searchTier,
-            usedRelaxed: selection.usedRelaxedCaptureRadius
+            usedRelaxed: selection.usedRelaxedCaptureRadius,
+            overrunPolicy: corridorPolicy
         )
     }
 
@@ -355,7 +337,8 @@ public enum Gate55Validation {
         context: Gate55TerrainContext,
         greenSpeed: Double,
         horizontal: Double,
-        elevationDelta: Double
+        elevationDelta: Double,
+        policy: ServiceOverrunPolicy
     ) -> Gate55Recommendation {
         let velocity = max(1.2, min(6.0, 1.15 + horizontal * 0.28))
         let forward = runForward(
@@ -381,7 +364,7 @@ public enum Gate55Validation {
             overrunStopPosition: forward.stopPosition,
             distanceToOverrunTarget: hypot(
                 forward.stopPosition.x,
-                forward.stopPosition.y - horizontal - CandidateSelector.preferredOverrunMeters
+                forward.stopPosition.y - horizontal - policy.preferredMeters
             ),
             actualOverrunDistance: max(0, forward.stopPosition.y - horizontal),
             usedRelaxedCaptureRadius: false,
@@ -393,11 +376,12 @@ public enum Gate55Validation {
             horizontal: horizontal,
             elevationDelta: elevationDelta,
             primary: ranked,
-            corridor: CandidateSelector.isServiceOverrun(ranked.actualOverrunDistance) ? [ranked] : [],
+            corridor: policy.contains(ranked.actualOverrunDistance) ? [ranked] : [],
             defaultIndex: 0,
             searchTier: .proximityEstimate,
             usedRelaxed: false,
-            trajectory: forward.trajectory
+            trajectory: forward.trajectory,
+            overrunPolicy: policy
         )
     }
 
@@ -411,7 +395,8 @@ public enum Gate55Validation {
         defaultIndex: Int,
         searchTier: CandidateSearchTier,
         usedRelaxed: Bool,
-        trajectory: [TrajectorySample]? = nil
+        trajectory: [TrajectorySample]? = nil,
+        overrunPolicy: ServiceOverrunPolicy = .flat
     ) -> Gate55Recommendation {
         let flat = flatDisplayEquivalentDistance(
             initialVelocity: primary.candidate.initialVelocity
@@ -443,7 +428,8 @@ public enum Gate55Validation {
             trajectory: path,
             primary: primary,
             corridorCandidates: corridor,
-            defaultCorridorIndex: defaultIndex
+            defaultCorridorIndex: defaultIndex,
+            overrunPolicy: overrunPolicy
         )
     }
 

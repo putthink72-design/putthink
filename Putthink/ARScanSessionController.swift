@@ -172,8 +172,10 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
     private(set) var guidanceLiveBallPose: ScanPose?
     /// 감지된 볼 후보. 골퍼가 확인하기 전에는 지정되지 않는다. 볼 없는 스캔도 가능.
     @Published private(set) var pendingDetectedBall: ScanPose?
-    /// 1프레임 미리보기(링). 확인 버튼은 `pendingDetectedBall` 합의 후에만.
+    /// 1프레임 미리보기(링). 확정은 `pendingDetectedBall`(합의) 또는 십자선.
     @Published private(set) var ballDetectionPreview: ScanPose?
+    /// 볼 확정 후 흰 격자 stick을 확정 볼로 다시 심도록 DisplayLink에 알림.
+    @Published private(set) var coverageDisplayEpoch = 0
     /// 지면 링 투영(디스플레이 링크 갱신).
     /// When true, placement ring UI hides the hole cup (e.g. floor-address mode).
     var hidesHoleCupRingOverlay = false
@@ -540,25 +542,14 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             placementMessage = "트래킹이 정상일 때 다시 지정하세요."
             return
         }
+        // 합의 후보만 감지 좌표로 확정. 단발 preview는 오탐(우측 하단 등)이 많아 쓰지 않는다.
         if let candidate = pendingDetectedBall {
-            if trackingLimited {
-                placementMessage = "트래킹이 정상일 때 다시 지정하세요."
-                return
-            }
             confirmBallAnchor(candidate)
             visualBallLockStatus = .locked(offsetMeters: 0)
             markVisualLock(at: candidate)
             pendingDetectedBall = nil
+            ballDetectionPreview = nil
             placementMessage = "감지 후보로 볼 지정"
-            coverageHaptic.impactOccurred()
-            return
-        }
-        if let preview = ballDetectionPreview {
-            confirmBallAnchor(preview)
-            visualBallLockStatus = .locked(offsetMeters: 0)
-            markVisualLock(at: preview)
-            pendingDetectedBall = nil
-            placementMessage = "감지 미리보기로 볼 지정"
             coverageHaptic.impactOccurred()
             return
         }
@@ -568,6 +559,11 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             return
         }
         confirmBallAnchor(pose)
+        visualBallLockStatus = .locked(offsetMeters: 0)
+        markVisualLock(at: pose)
+        ballDetectionPreview = nil
+        pendingDetectedBall = nil
+        coverageHaptic.impactOccurred()
 #endif
     }
 
@@ -695,12 +691,9 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         return centerGroundPose(frame: frame)
     }
 
-    /// 링 오버레이와 동일한 월드 좌표. preview만 있을 때 raycast로 떨어지면 오차가 난다.
+    /// 링 오버레이와 동일한 월드 좌표. 합의 후보가 있을 때만 감지 좌표를 쓰고, 아니면 십자선.
     private func resolvedManualBallPlacementPose() -> ScanPose? {
         if let pending = pendingDetectedBall { return pending }
-        if (flowState == .placingBall || isVisualBallHunting), let preview = ballDetectionPreview {
-            return preview
-        }
         return immediateGroundPose()
     }
 
@@ -930,34 +923,43 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         let coverageSnapshot = self.coverageSnapshot
 
         Task.detached(priority: .userInitiated) {
-            // flatMap·융합은 메인 밖에서 — 워치독/히칭 방지
-            let rawMeshVertices = Self.filterMeshVerticesForTerrain(
-                meshSnapshot.values.flatMap { $0 },
-                ball: ballAnchor,
-                hole: holeAnchor,
-                margins: corridorMargins
-            )
             let fusedVertices = await coverage.fusedGroundVerticesAsync(
                 ball: ballAnchor,
                 hole: holeAnchor,
                 margins: corridorMargins
             )
-            let (vertices, surfaceSource) = Self.selectTerrainVertices(
-                fused: fusedVertices,
-                rawMesh: rawMeshVertices,
-                coverage: coverageSnapshot,
-                ball: ballAnchor,
-                hole: holeAnchor,
-                margins: corridorMargins
-            )
+            let vertices: [ScanVertex]
+            let surfaceSource: String
+            var rawMeshCount = 0
+            if fusedVertices.count >= 100 {
+                vertices = fusedVertices
+                surfaceSource = "temporal_scene_depth"
+            } else {
+                let rawMeshVertices = Self.filterMeshVerticesForTerrain(
+                    meshSnapshot.values.flatMap { $0 },
+                    ball: ballAnchor,
+                    hole: holeAnchor,
+                    margins: corridorMargins
+                )
+                rawMeshCount = rawMeshVertices.count
+                (vertices, surfaceSource) = Self.selectTerrainVertices(
+                    fused: fusedVertices,
+                    rawMesh: rawMeshVertices,
+                    coverage: coverageSnapshot,
+                    ball: ballAnchor,
+                    hole: holeAnchor,
+                    margins: corridorMargins
+                )
+            }
             let usesFusedDepth = surfaceSource.hasPrefix("temporal_scene_depth")
             let surfaceVertexCount = vertices.count
+            let meshCountForMessage = rawMeshCount
 
             await MainActor.run {
                 guard generation == self.processingGeneration else { return }
                 self.placementMessage = usesFusedDepth
                     ? "다중 프레임 깊이 융합 \(fusedVertices.count.formatted())점 처리 중…"
-                    : "깊이 융합 관측 부족 · AR 메시 \(rawMeshVertices.count.formatted())점 처리 중…"
+                    : "깊이 융합 관측 부족 · AR 메시 \(meshCountForMessage.formatted())점 처리 중…"
             }
 
             do {
@@ -1059,7 +1061,6 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
 
         var kept: [ScanVertex] = []
         kept.reserveCapacity(min(vertices.count, 80_000))
-        var outsideIndex = 0
         for (index, vertex) in vertices.enumerated() {
             if reject[index] { continue }
             let inside = Self.isNearPuttCorridor(
@@ -1073,13 +1074,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
             )
             if inside {
                 kept.append(vertex)
-            } else {
-                outsideIndex += 1
-                if outsideIndex % 8 == 0 {
-                    kept.append(vertex)
-                }
             }
-            if kept.count >= 120_000 { break }
+            if kept.count >= 80_000 { break }
         }
         return kept
     }
@@ -1200,6 +1196,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         guidanceTrackingEvents.removeAll()
         guidanceTrackingOK = true
         resetCoverageState()
+        coverageDisplayEpoch &+= 1
         flowState = .idle
         lidarTwistGuidance = nil
         walkCorridorStatsSnapshot = .empty
@@ -1337,6 +1334,8 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         walkCorridorStatsSnapshot = .empty
         // 별도 「볼 뒤 대기」 STEP 없음 — 걷기부터 항상 사선 스캔.
         flowState = .walkingToHole
+        // 지정 전 십자선 임시 plant → 확정 볼 원점으로 흰 격자 재심기.
+        coverageDisplayEpoch &+= 1
         placementMessage = nil
     }
 
@@ -1597,9 +1596,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         return
 #else
         let now = frame.timestamp
-        let interval = guiding
-            ? GolfBallVisualLockSession.guidanceProcessInterval
-            : GolfBallVisualLockSession.placingProcessInterval
+        let interval = GolfBallVisualLockSession.placingProcessInterval
         guard now - lastVisualLockTime >= interval else { return }
         guard !visualLockProcessing else { return }
 
@@ -1686,15 +1683,15 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
                     currentBallZ: stillGuiding ? self.completedScan?.ballAnchor.worldZ : nil,
                     physicsBallX: stillGuiding ? self.completedScan?.physicsStartPose.worldX : nil,
                     physicsBallZ: stillGuiding ? self.completedScan?.physicsStartPose.worldZ : nil,
-                    // 조준: RGB 창이 이미 최초 볼 근처. 드리프트 한도로 합의를 버리지 않는다.
-                    minAgree: stillGuiding ? 3 : 2,
+                    // 조준·지정 모두 2프레임 합의로 확정. 링/「조정 중」은 첫 감지로 즉시.
+                    minAgree: 2,
                     enforceProximityLimits: !stillGuiding
                 )
                 switch action {
                 case .none:
                     if stillHunting, !self.visualBallLockStatus.isSettled {
-                        // 링이 같은 부근에 모이면 후보 UI(확정 전).
-                        if self.visualLockConsensus.recent.count >= 2 {
+                        // 조준·지정 모두 첫 감지에서 「위치 조정 중」으로 넘어가 피드백을 빨리.
+                        if self.visualLockConsensus.recent.count >= 1 {
                             self.visualBallLockStatus = .candidate
                         } else if self.visualBallLockStatus != .searching,
                                   self.visualBallLockStatus != .candidate {
@@ -1736,7 +1733,7 @@ final class ARScanSessionController: NSObject, ObservableObject, @unchecked Send
         timestamp: TimeInterval
     ) {
         guard flowState == .placingBall else { return }
-        guard contact.confidence >= 0.62 else { return }
+        guard contact.confidence >= 0.55 else { return }
         let pose = ScanPose(
             worldX: contact.worldX,
             worldY: contact.worldY,
@@ -2126,6 +2123,7 @@ extension ARScanSessionController: ARSessionDelegate {
         }
 
         // Polycam형 커버리지: 스캔 직후 유예 뒤에 depth 샘플링 (첫 LiDAR 가동과 겹치면 행업).
+        // depth 복사만 세션 스레드, 역투영·융합은 tracker 큐 — RGB 볼감지와 병렬 가능.
         if isCoverageActiveState,
            meshCaptureEnabled,
            CACurrentMediaTime() >= heavyWorkAllowedAfter {
@@ -2251,7 +2249,13 @@ extension ARScanSessionController: ARSessionDelegate {
         cameraTransform: simd_float4x4?
     ) {
         // 스로틀 판단은 메인에서, 정점 복사·필터는 백그라운드에서. 볼 지정 전(burst)은 촘촘히.
-        let minInterval: TimeInterval = meshCaptureBurstActive ? 0.06 : 0.35
+        let minInterval: TimeInterval
+        if flowState == .placingBall {
+            // 볼 지정 중에는 RGB 탐지가 세션 스레드를 써야 한다. 메시는 워밍업분 + 느린 보강만.
+            minInterval = pendingMeshVertexCount >= Self.meshReadyVertexThreshold ? 0.55 : 0.16
+        } else {
+            minInterval = meshCaptureBurstActive ? 0.06 : 0.35
+        }
         guard frameTimestamp - lastMeshCaptureTime >= minInterval else { return }
         lastMeshCaptureTime = frameTimestamp
 

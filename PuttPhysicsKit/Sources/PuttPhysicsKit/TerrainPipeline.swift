@@ -112,10 +112,17 @@ public enum HeightMapRasterizer {
             minY = min(minY, vertex.y)
             maxY = max(maxY, vertex.y)
         }
-        if let fillMinX { minX = min(minX, fillMinX) }
-        if let fillMaxX { maxX = max(maxX, fillMaxX) }
-        if let fillMinY { minY = min(minY, fillMinY) }
-        if let fillMaxY { maxY = max(maxY, fillMaxY) }
+        if let fillMinX, let fillMaxX, let fillMinY, let fillMaxY {
+            minX = fillMinX
+            maxX = fillMaxX
+            minY = fillMinY
+            maxY = fillMaxY
+        } else {
+            if let fillMinX { minX = min(minX, fillMinX) }
+            if let fillMaxX { maxX = max(maxX, fillMaxX) }
+            if let fillMinY { minY = min(minY, fillMinY) }
+            if let fillMaxY { maxY = max(maxY, fillMaxY) }
+        }
 
         let originX = floor(minX / cellSize) * cellSize
         let originY = floor(minY / cellSize) * cellSize
@@ -220,13 +227,22 @@ public enum HeightMapRasterizer {
             }
         }
 
-        // 복도 안의 큰 빈 칸: 10cm를 넘어도 이웃 평균으로 메운다(지정 후 래스터).
-        while true {
-            var additions: [(index: Int, value: Double)] = []
-            for y in 0..<height {
-                for x in 0..<width {
-                    let index = y * width + x
+        // 큰 구멍: 측정점 거리 순으로 한 번만 메운다. 격자 전체를 반복 스캔하지 않음.
+        let reachable = distance.filter { $0 != Int.max }
+        let maxDistance = reachable.max() ?? 0
+        if maxDistance > maxGapCells {
+            var layers = Array(repeating: [Int](), count: maxDistance + 1)
+            for index in 0..<result.count {
+                let cellDistance = distance[index]
+                if !known[index], cellDistance != Int.max, cellDistance > maxGapCells {
+                    layers[cellDistance].append(index)
+                }
+            }
+            for d in (maxGapCells + 1)...maxDistance {
+                for index in layers[d] {
                     guard !known[index] else { continue }
+                    let x = index % width
+                    let y = index / width
                     var sum = 0.0
                     var weightSum = 0.0
                     for dy in -1...1 {
@@ -242,15 +258,11 @@ public enum HeightMapRasterizer {
                         }
                     }
                     if weightSum > 0 {
-                        additions.append((index, sum / weightSum))
+                        result[index] = sum / weightSum
+                        known[index] = true
+                        interpolated[index] = true
                     }
                 }
-            }
-            guard !additions.isEmpty else { break }
-            for addition in additions {
-                result[addition.index] = addition.value
-                known[addition.index] = true
-                interpolated[addition.index] = true
             }
         }
 
@@ -465,14 +477,19 @@ public enum TerrainPipeline {
             fillMinY: -margins.ballEndMargin,
             fillMaxY: holeDistance + margins.pastHoleMargin
         )
-        let corrected = try HeightMapRasterizer.rasterize(
-            vertices: correctedVertices,
-            cellSize: cellSize,
-            fillMinX: -margins.lateralHalfWidth,
-            fillMaxX: margins.lateralHalfWidth,
-            fillMinY: -margins.ballEndMargin,
-            fillMaxY: holeDistance + margins.pastHoleMargin
-        )
+        let corrected: HeightMap
+        if abs(drift) < 1e-6 {
+            corrected = uncorrected
+        } else {
+            corrected = try HeightMapRasterizer.rasterize(
+                vertices: correctedVertices,
+                cellSize: cellSize,
+                fillMinX: -margins.lateralHalfWidth,
+                fillMaxX: margins.lateralHalfWidth,
+                fillMinY: -margins.ballEndMargin,
+                fillMaxY: holeDistance + margins.pastHoleMargin
+            )
+        }
         let smoothed = GaussianSmoother.smooth(corrected, sigma: sigma)
         let gradient = GradientFieldBuilder.build(from: smoothed)
         return TerrainPipelineResult(

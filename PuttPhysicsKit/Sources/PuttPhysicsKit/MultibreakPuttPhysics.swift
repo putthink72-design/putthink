@@ -91,12 +91,14 @@ public enum MultibreakPuttPhysics {
     /// - Parameters:
     ///   - ignoreCapture: true면 캡처를 무시하고 정지까지 적분(오버런 평가용)
     ///   - captureRadius: 캡처 허용 반경. 기본 0.054m, 3순위 완화 시 0.5m
+    ///   - maxAlongHoleMeters: 볼→홀 축 진행이 이 값을 넘으면 중단. 탐색에서 내리막 폭주 적분을 막는다.
     public static func simulate<Terrain: TerrainField>(
         configuration: MultibreakPuttConfiguration,
         terrain: Terrain,
         recordTrajectory: Bool = true,
         ignoreCapture: Bool = false,
-        captureRadius: Double = 0.054
+        captureRadius: Double = 0.054,
+        maxAlongHoleMeters: Double? = nil
     ) -> FlatPuttResult {
         let initialBeta = configuration.initialDirectionDegrees * .pi / 180.0
         let holeBeta = configuration.holeDirectionDegrees * .pi / 180.0
@@ -174,6 +176,19 @@ public enum MultibreakPuttPhysics {
             if velocity2.magnitude < configuration.stopVelocity {
                 result.ballStopIf = 1
                 break
+            }
+
+            if let maxAlong = maxAlongHoleMeters {
+                let along = position2.x * sin(holeBeta) + position2.y * cos(holeBeta)
+                if along > maxAlong {
+                    arcLength += hypot(position2.x - position1.x, position2.y - position1.y)
+                    position1 = position2
+                    velocity1 = velocity2
+                    if result.ballPassOverHoleIf == 0 {
+                        result.ballPassOverHoleIf = 1
+                    }
+                    break
+                }
             }
 
             arcLength += hypot(position2.x - position1.x, position2.y - position1.y)
@@ -262,7 +277,8 @@ public enum MultibreakPuttPhysics {
         stopVelocity: Double = 0.01,
         timeFinal: Double = 20,
         timeDelta: Double = 0.01,
-        captureRadius: Double = 0.054
+        captureRadius: Double = 0.054,
+        maxAlongHoleMeters: Double? = nil
     ) -> [InitialConditionCandidate] {
         let velocities = exactValues(
             minimum: minimumVelocity,
@@ -291,7 +307,8 @@ public enum MultibreakPuttPhysics {
                     ),
                     terrain: terrain,
                     recordTrajectory: false,
-                    captureRadius: captureRadius
+                    captureRadius: captureRadius,
+                    maxAlongHoleMeters: maxAlongHoleMeters
                 )
                 guard result.ballHoleIf == 1 else { return nil }
                 return InitialConditionCandidate(

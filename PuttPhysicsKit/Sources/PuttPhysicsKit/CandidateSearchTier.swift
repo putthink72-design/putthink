@@ -8,7 +8,7 @@ public enum CandidateSearchTier: String, Sendable, Codable, Equatable {
     case relaxedCapture
     /// v·β 범위 확대 + 완화 캡처.
     case expandedSearch
-    /// 홀 통과에 가장 가까운 물리 궤적 — 5.4cm 홀인 미검증. 빈 화면 방지.
+    /// 컵(5.4cm) 안을 지나는 물리 궤적. 홀인 캡처는 미검증.
     case proximityEstimate
     /// 거리·고도 기반 β=0 궤적. 마지막 표시용.
     case flatHeuristic

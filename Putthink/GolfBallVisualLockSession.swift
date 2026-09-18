@@ -10,7 +10,8 @@ enum GolfBallVisualLockSession {
     static let detectionWidth = 960
     /// 배치 단계: 30Hz 근처. 경쟁 앱은 십자선 고정 시 거의 즉시 반응한다.
     static let placingProcessInterval: TimeInterval = 1.0 / 30.0
-    static let guidanceProcessInterval: TimeInterval = 0.07
+    /// 조준 실볼 정렬도 지정과 같은 주기 — 「찾는 중→조정 중→확정」을 짧게.
+    static let guidanceProcessInterval: TimeInterval = placingProcessInterval
     static var processInterval: TimeInterval { placingProcessInterval }
     /// 십자선 주변 네이티브 크롭(px). 작을수록 빠르고 십자선 정렬 UX와 맞다.
     static let placingPatchPixels = 280

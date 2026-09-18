@@ -374,6 +374,51 @@ final class GolfBallVisualLockTests: XCTestCase {
         XCTAssertEqual(contact!.worldZ, 0.18, accuracy: 0.05)
     }
 
+    func testLocalizerAcceptsCloseFloorAddressLookDown() {
+        var cameraToWorld = matrix_identity_float4x4
+        let origin = SIMD3<Float>(0, 0.52, 0.02)
+        let look = simd_normalize(SIMD3<Float>(0, 0.321 - origin.y, 0.04 - origin.z))
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let right = simd_normalize(simd_cross(look, worldUp))
+        let up = simd_cross(right, look)
+        cameraToWorld.columns.0 = SIMD4<Float>(right.x, right.y, right.z, 0)
+        cameraToWorld.columns.1 = SIMD4<Float>(up.x, up.y, up.z, 0)
+        cameraToWorld.columns.2 = SIMD4<Float>(-look.x, -look.y, -look.z, 0)
+        cameraToWorld.columns.3 = SIMD4<Float>(origin.x, origin.y, origin.z, 1)
+
+        let fx: Float = 700
+        let fy: Float = 700
+        let cx: Float = 160
+        let cy: Float = 120
+        var intrinsics = matrix_identity_float3x3
+        intrinsics[0, 0] = fx
+        intrinsics[1, 1] = fy
+        intrinsics[2, 0] = cx
+        intrinsics[2, 1] = cy
+        let sphere = SIMD4<Float>(0, 0.32133, 0.04, 1)
+        let local = cameraToWorld.inverse * sphere
+        let u = fx * (local.x / -local.z) + cx
+        let v = -fy * (local.y / -local.z) + cy
+
+        let contact = GolfBallWorldLocalizer.localize(
+            imageX: Double(u),
+            imageY: Double(v),
+            imageWidth: 320,
+            imageHeight: 240,
+            sourceWidth: 320,
+            sourceHeight: 240,
+            rgbIntrinsics: intrinsics,
+            cameraToWorld: cameraToWorld,
+            groundYSamples: [0.30, 0.30, 0.31],
+            fallbackGroundY: 0.30,
+            expectedWorldX: nil,
+            expectedWorldZ: nil
+        )
+        XCTAssertNotNil(contact)
+        XCTAssertEqual(contact!.worldX, 0, accuracy: 0.06)
+        XCTAssertEqual(contact!.worldZ, 0.04, accuracy: 0.06)
+    }
+
     func testPlausibleDiameterAcceptsGolfBall() {
         let fx = 700.0
         let depth = 1.2
@@ -501,6 +546,27 @@ final class GolfBallVisualLockTests: XCTestCase {
             physicsBallZ: nil
         )
         XCTAssertEqual(fourth, .none)
+    }
+
+    func testNoteMissKeepsStickySamplesLikeCommittedLock() {
+        var filter = GolfBallLockConsensus()
+        for _ in 0..<3 {
+            _ = filter.ingest(
+                contact: GolfBallWorldContact(worldX: 0.4, worldY: 0.3, worldZ: 1.1, confidence: 0.9),
+                currentBallX: nil,
+                currentBallZ: nil,
+                physicsBallX: nil,
+                physicsBallZ: nil
+            )
+        }
+        XCTAssertTrue(filter.locked)
+        XCTAssertGreaterThanOrEqual(filter.recent.count, 2)
+        // HEAD 동작: count > 2일 때만 하나 제거 → 최소 2샘플이 남는다.
+        for _ in 0..<GolfBallLockConsensus.window {
+            filter.noteMiss()
+        }
+        XCTAssertEqual(filter.recent.count, 2)
+        XCTAssertTrue(filter.locked)
     }
 
     /// 조준 복귀: 2–4cm 어긋나면 AR를 감지 링(실볼)으로 옮긴다. 실볼은 그대로.

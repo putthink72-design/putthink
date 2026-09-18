@@ -33,6 +33,8 @@ final class AppLanguageStore: ObservableObject {
     static let preferenceKey = "putthink.appLanguage"
 
     @Published private(set) var option: AppLanguageOption
+    /// OSD 등 시트 뒤 화면이 언어 변경을 즉시·닫힘 시 다시 읽도록 bump.
+    @Published private(set) var displayEpoch: UInt = 0
 
     var locale: Locale { option.locale }
 
@@ -61,6 +63,12 @@ final class AppLanguageStore: ObservableObject {
         UserDefaults.standard.set(option.rawValue, forKey: Self.preferenceKey)
         Self.applyAppleLanguages(option)
         L10n.locale = option.locale
+        displayEpoch &+= 1
+    }
+
+    /// 설정 시트 닫힐 때 — 시트 표시 중 밀린 부모/OSD body를 한 번 더 돌린다.
+    func refreshPresentedUI() {
+        displayEpoch &+= 1
     }
 
     private static func applyAppleLanguages(_ option: AppLanguageOption) {

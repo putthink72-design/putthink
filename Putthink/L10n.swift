@@ -156,21 +156,15 @@ enum L10n {
     static var corridorAggressive: String { s("osd.corridor.aggressive") }
     static var corridorNone: String { s("osd.corridor.none") }
     static var corridorOne: String { s("osd.corridor.one") }
+    static var corridorRestLimit: String { s("osd.corridor.rest_limit") }
 
     // MARK: - Stroke / tiers / status
 
     static func strokeGuidance(
-        tier: CandidateSearchTier,
+        tier _: CandidateSearchTier,
         flatEquivalentDistance: Double
     ) -> String {
-        switch tier {
-        case .verified:
-            return f("stroke.feel", flatEquivalentDistance)
-        case .flatHeuristic:
-            return f("stroke.flat", flatEquivalentDistance)
-        case .relaxedCapture, .expandedSearch, .proximityEstimate, .noPath:
-            return f("stroke.estimate", flatEquivalentDistance)
-        }
+        f("stroke.feel", flatEquivalentDistance)
     }
 
     static func tierLabel(_ tier: CandidateSearchTier) -> String {
@@ -197,12 +191,8 @@ enum L10n {
             return f("status.relaxed", candidateCount, gridNote)
         case .expandedSearch:
             return f("status.expanded", candidateCount, gridNote)
-        case .proximityEstimate:
-            return f("status.proximity", gridNote)
-        case .flatHeuristic:
-            return f("status.flat", gridNote)
-        case .noPath:
-            return s("tier.none")
+        case .proximityEstimate, .flatHeuristic, .noPath:
+            return f("status.verified", candidateCount, corridorCount, gridNote)
         }
     }
 

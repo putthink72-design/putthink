@@ -1635,6 +1635,29 @@
         }
       }
     },
+    "osd.corridor.rest_limit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die at the cup · it will not stop past"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カップで止める · 過ぎると止まらない"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컵에 죽이기 · 지나가면 정지 불가"
+          }
+        }
+      }
+    },
     "osd.corridor.one" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -6,7 +6,7 @@ public struct RankedPuttCandidate: Sendable, Equatable {
     /// 고정 오버런 목표점(X, 기본 0.35m)까지의 거리 — 1순위 선정용.
     public var distanceToOverrunTarget: Double
     /// 홀을 지난 뒤 실제 정지까지 굴러간 거리(퍼트 방향 투영, m). Speed Corridor 정렬용.
-    /// ignoreCapture 기준. 서비스 코리도는 0.34–0.44m만 남긴다. 0은 컵에서 죽는 공이라 안전이 아니다.
+    /// ignoreCapture 기준. 서비스 코리도는 `ServiceOverrunPolicy` 밴드만 남긴다.
     public var actualOverrunDistance: Double
     public var usedRelaxedCaptureRadius: Bool
     public var searchTier: CandidateSearchTier
@@ -35,6 +35,7 @@ public struct CandidateSelectionResult: Sendable, Equatable {
     public var overrunTarget: PuttVector2
     public var usedRelaxedCaptureRadius: Bool
     public var searchTier: CandidateSearchTier
+    public var overrunPolicy: ServiceOverrunPolicy
 
     public init(
         allCandidates: [RankedPuttCandidate],
@@ -42,7 +43,8 @@ public struct CandidateSelectionResult: Sendable, Equatable {
         secondary: RankedPuttCandidate?,
         overrunTarget: PuttVector2,
         usedRelaxedCaptureRadius: Bool,
-        searchTier: CandidateSearchTier = .verified
+        searchTier: CandidateSearchTier = .verified,
+        overrunPolicy: ServiceOverrunPolicy = .flat
     ) {
         self.allCandidates = allCandidates
         self.primary = primary
@@ -50,6 +52,7 @@ public struct CandidateSelectionResult: Sendable, Equatable {
         self.overrunTarget = overrunTarget
         self.usedRelaxedCaptureRadius = usedRelaxedCaptureRadius
         self.searchTier = searchTier
+        self.overrunPolicy = overrunPolicy
     }
 }
 
@@ -77,7 +80,7 @@ private final class LockedRankedCandidates: @unchecked Sendable {
 public enum CandidateSearchStrategy: String, Sendable, Equatable {
     /// 기존 N×N 전수 격자.
     case grid
-    /// 미스 부호로 v·β를 이분한 뒤 국소 격자. Dev 필드 실험용.
+    /// 홀 평면 미스 부호로 v·β를 이분한 뒤 국소 격자.
     case shooting
 }
 
@@ -89,22 +92,62 @@ public enum CandidateSelector {
     public static let fallbackGridPointCount = 45
     /// ignoreCapture 정지점이 홀 평면보다 이보다 짧으면 후보 제외(완화 캡처가 홀 앞에서 잡은 경우).
     public static let minAlongHoleMeters = -0.02
-    /// 지시한 대로 쳤을 때 최소 성적: 홀 뒤 34–44cm에서 정지.
+    /// 지시한 대로 쳤을 때 최소 성적: 평지·오르막은 홀 뒤 34–44cm.
     public static let serviceOverrunMinMeters = 0.34
     public static let serviceOverrunMaxMeters = 0.44
-    /// 스피드 코리도 기본 눈금(표시·1순위 목표).
+    /// 스피드 코리도 기본 눈금(평지·오르막).
     public static let preferredOverrunMeters = 0.35
+    /// 추정 궤적도 108mm 컵 안(반경 5.4cm)을 지나야 한다. 더 느슨하면 컵 옆 미스가 홀인처럼 보인다.
+    public static let displayCupPassRadius = holeInCaptureRadius
+    /// 탐색 적분은 홀 뒤 여기까지만. 서비스 밴드(≤44cm)보다 길고, 내리막 20초 폭주를 막는다.
+    public static let searchCoastPastHoleMeters = 0.80
 
-    public static func isServiceOverrun(_ meters: Double) -> Bool {
-        meters + 1e-9 >= serviceOverrunMinMeters && meters - 1e-9 <= serviceOverrunMaxMeters
+    private static func searchTimeFinal(holeDistance: Double) -> Double {
+        min(12.0, 3.0 + holeDistance * 0.6)
     }
 
-    /// 홀인(5.4cm)이거나, 홀 뒤 34–44cm에 이미 서 있으면 최소 성적 충족.
+    private static func searchSimulate<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        velocity: Double,
+        betaDegrees: Double,
+        ignoreCapture: Bool,
+        captureRadius: Double = holeInCaptureRadius,
+        recordTrajectory: Bool = false
+    ) -> FlatPuttResult {
+        MultibreakPuttPhysics.simulate(
+            configuration: MultibreakPuttConfiguration(
+                greenSpeed: greenSpeed,
+                initialVelocity: velocity,
+                initialDirectionDegrees: betaDegrees,
+                timeFinal: searchTimeFinal(holeDistance: holeDistance),
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees
+            ),
+            terrain: terrain,
+            recordTrajectory: recordTrajectory,
+            ignoreCapture: ignoreCapture,
+            captureRadius: captureRadius,
+            maxAlongHoleMeters: holeDistance + searchCoastPastHoleMeters
+        )
+    }
+
+    public static func isServiceOverrun(
+        _ meters: Double,
+        policy: ServiceOverrunPolicy = .flat
+    ) -> Bool {
+        policy.contains(meters)
+    }
+
+    /// 홀인(5.4cm)이거나, 현재 경사 정책의 오버런 밴드에 서 있으면 최소 성적 충족.
     public static func meetsServiceLine(
         searchTier: CandidateSearchTier,
-        overrunDistance: Double
+        overrunDistance: Double,
+        policy: ServiceOverrunPolicy = .flat
     ) -> Bool {
-        searchTier == .verified || isServiceOverrun(overrunDistance)
+        searchTier == .verified || policy.contains(overrunDistance)
     }
 
     public static func select<Terrain: TerrainField>(
@@ -112,7 +155,7 @@ public enum CandidateSelector {
         greenSpeed: Double,
         holeDistance: Double,
         holeDirectionDegrees: Double = 0,
-        overrunDistance: Double = defaultOverrunDistance,
+        overrunDistance: Double? = nil,
         minimumVelocity: Double = 1.0,
         maximumVelocity: Double = 4.0,
         velocityPointCount: Int = 130,
@@ -121,10 +164,24 @@ public enum CandidateSelector {
         directionPointCount: Int = 130,
         strategy: CandidateSearchStrategy = .grid
     ) -> CandidateSelectionResult {
+        let policy: ServiceOverrunPolicy
+        let targetOverrun: Double
+        if let overrunDistance {
+            policy = ServiceOverrunPolicy.targeting(overrunDistance)
+            targetOverrun = overrunDistance
+        } else {
+            policy = ServiceOverrunPolicy.make(
+                terrain: terrain,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees
+            )
+            targetOverrun = policy.preferredMeters
+        }
         let frame = searchFrame(
             holeDistance: holeDistance,
             holeDirectionDegrees: holeDirectionDegrees,
-            overrunDistance: overrunDistance
+            overrunDistance: targetOverrun,
+            policy: policy
         )
         if strategy == .shooting {
             return selectByShooting(
@@ -170,12 +227,13 @@ public enum CandidateSelector {
             maximumDirectionDegrees: firstMaxB,
             directionPointCount: directionPointCount,
             captureRadius: holeInCaptureRadius,
-            searchTier: .verified
+            searchTier: .verified,
+            policy: frame.policy
         ) {
             return result
         }
 
-        // ② 반경 완화
+        // ② 반경 완화 — 50cm 캡처여도 표시 선은 컵(5.4cm) 안을 지나야 한다.
         if let result = scanHoleInCandidates(
             terrain: terrain,
             greenSpeed: greenSpeed,
@@ -191,7 +249,15 @@ public enum CandidateSelector {
             maximumDirectionDegrees: firstMaxB,
             directionPointCount: directionPointCount,
             captureRadius: relaxedCaptureRadius,
-            searchTier: .relaxedCapture
+            searchTier: .relaxedCapture,
+            policy: frame.policy
+        ), launchPassesCup(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            frame: frame,
+            candidate: result.primary
         ) {
             return result
         }
@@ -212,7 +278,15 @@ public enum CandidateSelector {
             maximumDirectionDegrees: expanded.maximumDirectionDegrees,
             directionPointCount: fallbackPoints,
             captureRadius: relaxedCaptureRadius,
-            searchTier: .expandedSearch
+            searchTier: .expandedSearch,
+            policy: frame.policy
+        ), launchPassesCup(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            frame: frame,
+            candidate: result.primary
         ) {
             return result
         }
@@ -232,12 +306,14 @@ public enum CandidateSelector {
         var direction: PuttVector2
         var overrunTarget: PuttVector2
         var overrunDistance: Double
+        var policy: ServiceOverrunPolicy
     }
 
     private static func searchFrame(
         holeDistance: Double,
         holeDirectionDegrees: Double,
-        overrunDistance: Double
+        overrunDistance: Double,
+        policy: ServiceOverrunPolicy
     ) -> SearchFrame {
         let holeBeta = holeDirectionDegrees * .pi / 180.0
         let holePosition = PuttVector2(
@@ -252,7 +328,8 @@ public enum CandidateSelector {
                 x: holePosition.x + overrunDistance * direction.x,
                 y: holePosition.y + overrunDistance * direction.y
             ),
-            overrunDistance: overrunDistance
+            overrunDistance: overrunDistance,
+            policy: policy
         )
     }
 
@@ -269,10 +346,11 @@ public enum CandidateSelector {
         velocityPointCount: Int,
         minimumDirectionDegrees: Double,
         maximumDirectionDegrees: Double,
-        directionPointCount: Int,
-        captureRadius: Double,
-        searchTier: CandidateSearchTier
-    ) -> CandidateSelectionResult? {
+            directionPointCount: Int,
+            captureRadius: Double,
+            searchTier: CandidateSearchTier,
+            policy: ServiceOverrunPolicy
+        ) -> CandidateSelectionResult? {
         let raw = MultibreakPuttPhysics.scanExactGridParallel(
             terrain: terrain,
             greenSpeed: greenSpeed,
@@ -284,7 +362,9 @@ public enum CandidateSelector {
             minimumDirectionDegrees: minimumDirectionDegrees,
             maximumDirectionDegrees: maximumDirectionDegrees,
             directionPointCount: directionPointCount,
-            captureRadius: captureRadius
+            timeFinal: searchTimeFinal(holeDistance: holeDistance),
+            captureRadius: captureRadius,
+            maxAlongHoleMeters: holeDistance + searchCoastPastHoleMeters
         )
         guard !raw.isEmpty else { return nil }
         return rankCandidates(
@@ -298,7 +378,8 @@ public enum CandidateSelector {
             overrunTarget: overrunTarget,
             captureRadius: captureRadius,
             usedRelaxed: captureRadius > holeInCaptureRadius + 1e-9,
-            searchTier: searchTier
+            searchTier: searchTier,
+            policy: policy
         )
     }
 
@@ -313,21 +394,19 @@ public enum CandidateSelector {
         overrunTarget: PuttVector2,
         captureRadius: Double,
         usedRelaxed: Bool,
-        searchTier: CandidateSearchTier
+        searchTier: CandidateSearchTier,
+        policy: ServiceOverrunPolicy
     ) -> CandidateSelectionResult? {
         let rankedSlots = LockedRankedCandidates(count: raw.count)
         DispatchQueue.concurrentPerform(iterations: raw.count) { index in
             let candidate = raw[index]
-            let overrun = MultibreakPuttPhysics.simulate(
-                configuration: MultibreakPuttConfiguration(
-                    greenSpeed: greenSpeed,
-                    initialVelocity: candidate.initialVelocity,
-                    initialDirectionDegrees: candidate.directionDegrees,
-                    holeDistance: holeDistance,
-                    holeDirectionDegrees: holeDirectionDegrees
-                ),
+            let overrun = searchSimulate(
                 terrain: terrain,
-                recordTrajectory: false,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                velocity: candidate.initialVelocity,
+                betaDegrees: candidate.directionDegrees,
                 ignoreCapture: true,
                 captureRadius: captureRadius
             )
@@ -357,7 +436,7 @@ public enum CandidateSelector {
         var ranked = rankedSlots.ordered()
         guard !ranked.isEmpty else { return nil }
 
-        var inBand = ranked.filter { isServiceOverrun($0.actualOverrunDistance) }
+        var inBand = ranked.filter { policy.contains($0.actualOverrunDistance) }
         if inBand.isEmpty,
            let seed = ranked.min(by: { $0.distanceToOverrunTarget < $1.distanceToOverrunTarget }),
            let adjusted = adjustedServiceCandidate(
@@ -370,10 +449,11 @@ public enum CandidateSelector {
             overrunTarget: overrunTarget,
             seed: seed,
             usedRelaxed: usedRelaxed,
-            searchTier: searchTier
+            searchTier: searchTier,
+            policy: policy
            ) {
             ranked.append(adjusted)
-            if isServiceOverrun(adjusted.actualOverrunDistance) {
+            if policy.contains(adjusted.actualOverrunDistance) {
                 inBand = [adjusted]
             }
         }
@@ -389,7 +469,8 @@ public enum CandidateSelector {
             secondary: secondary,
             overrunTarget: overrunTarget,
             usedRelaxedCaptureRadius: usedRelaxed,
-            searchTier: primary?.searchTier ?? searchTier
+            searchTier: primary?.searchTier ?? searchTier,
+            overrunPolicy: policy
         )
     }
 
@@ -404,7 +485,8 @@ public enum CandidateSelector {
         overrunTarget: PuttVector2,
         seed: RankedPuttCandidate,
         usedRelaxed: Bool,
-        searchTier: CandidateSearchTier
+        searchTier: CandidateSearchTier,
+        policy: ServiceOverrunPolicy
     ) -> RankedPuttCandidate? {
         let overrunDistance = hypot(
             overrunTarget.x - holePosition.x,
@@ -433,7 +515,8 @@ public enum CandidateSelector {
             holePosition: holePosition,
             direction: direction,
             overrunTarget: overrunTarget,
-            overrunDistance: overrunDistance
+            overrunDistance: overrunDistance,
+            policy: policy
         )
         guard var ranked = rankedLaunch(
             terrain: terrain,
@@ -453,7 +536,7 @@ public enum CandidateSelector {
         return ranked
     }
 
-    /// 홀 평면 미스 부호로 조준각·속도를 이분한 뒤, 그 주변만 5.4cm 캡처 격자로 검증한다.
+    /// 홀을 지나는 조준각을 잡은 뒤 속도를 경사 정책 오버런까지 이분하고, 그 주변만 5.4cm 캡처 격자로 검증한다.
     private static func selectByShooting<Terrain: TerrainField>(
         terrain: Terrain,
         greenSpeed: Double,
@@ -480,8 +563,43 @@ public enum CandidateSelector {
             frame: frame,
             expanded: expanded
         )
+        let seedGeometry = closestApproachToHole(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: seed.velocity,
+            betaDegrees: seed.betaDegrees
+        )
+        var aimedSeed = seed
+        if !(seedGeometry.reached && seedGeometry.closest <= displayCupPassRadius) {
+            aimedSeed = aimThroughCup(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                frame: frame,
+                expanded: expanded,
+                seed: seed
+            )
+        }
+        let aimedGeometry = closestApproachToHole(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: aimedSeed.velocity,
+            betaDegrees: aimedSeed.betaDegrees
+        )
+        let seedHitsCup = aimedGeometry.reached && aimedGeometry.closest <= displayCupPassRadius
         let vSpan = max(0.18, (expanded.maximumVelocity - expanded.minimumVelocity) * 0.08)
-        let betaSpan = max(4.0, (expanded.maximumDirectionDegrees - expanded.minimumDirectionDegrees) * 0.12)
+        let betaSpan = seedHitsCup
+            ? max(4.0, (expanded.maximumDirectionDegrees - expanded.minimumDirectionDegrees) * 0.12)
+            : max(14.0, (expanded.maximumDirectionDegrees - expanded.minimumDirectionDegrees) * 0.45)
         let local = scanHoleInCandidates(
             terrain: terrain,
             greenSpeed: greenSpeed,
@@ -490,16 +608,24 @@ public enum CandidateSelector {
             holePosition: frame.holePosition,
             direction: frame.direction,
             overrunTarget: frame.overrunTarget,
-            minimumVelocity: max(expanded.minimumVelocity, seed.velocity - vSpan),
-            maximumVelocity: min(expanded.maximumVelocity, seed.velocity + vSpan),
+            minimumVelocity: max(expanded.minimumVelocity, aimedSeed.velocity - vSpan),
+            maximumVelocity: min(expanded.maximumVelocity, aimedSeed.velocity + vSpan),
             velocityPointCount: 9,
-            minimumDirectionDegrees: max(expanded.minimumDirectionDegrees, seed.betaDegrees - betaSpan),
-            maximumDirectionDegrees: min(expanded.maximumDirectionDegrees, seed.betaDegrees + betaSpan),
+            minimumDirectionDegrees: max(expanded.minimumDirectionDegrees, aimedSeed.betaDegrees - betaSpan),
+            maximumDirectionDegrees: min(expanded.maximumDirectionDegrees, aimedSeed.betaDegrees + betaSpan),
             directionPointCount: 9,
             captureRadius: holeInCaptureRadius,
-            searchTier: .verified
+            searchTier: .verified,
+            policy: frame.policy
         )
-        if let local {
+        if let local, launchPassesCup(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            frame: frame,
+            candidate: local.primary
+        ) {
             return local
         }
         return drawableFallback(
@@ -509,7 +635,7 @@ public enum CandidateSelector {
             holeDirectionDegrees: holeDirectionDegrees,
             frame: frame,
             expanded: expanded,
-            seed: seed
+            seed: aimedSeed
         )
     }
 
@@ -531,7 +657,7 @@ public enum CandidateSelector {
             maximumDirectionDegrees: Double
         )
     ) -> ShootingSeed {
-        let vSeed = binarySearchVelocity(
+        var velocity = binarySearchVelocity(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
@@ -543,18 +669,39 @@ public enum CandidateSelector {
             minimumVelocity: expanded.minimumVelocity,
             maximumVelocity: expanded.maximumVelocity
         )
-        let betaSeed = binarySearchDirection(
+        // 홀 평면 조준은 홀을 지나게 한 속도로. 짧은 공의 정지점 좌우를 0으로 맞추지 않는다.
+        func aimVelocity(at beta: Double) -> Double {
+            min(
+                expanded.maximumVelocity,
+                max(
+                    velocity,
+                    binarySearchVelocity(
+                        terrain: terrain,
+                        greenSpeed: greenSpeed,
+                        holeDistance: holeDistance,
+                        holeDirectionDegrees: holeDirectionDegrees,
+                        holePosition: frame.holePosition,
+                        direction: frame.direction,
+                        overrunDistance: max(frame.overrunDistance, 0.12),
+                        betaDegrees: beta,
+                        minimumVelocity: expanded.minimumVelocity,
+                        maximumVelocity: expanded.maximumVelocity
+                    )
+                )
+            )
+        }
+        var beta = binarySearchDirection(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
             holeDirectionDegrees: holeDirectionDegrees,
             holePosition: frame.holePosition,
             direction: frame.direction,
-            velocity: vSeed,
+            velocity: aimVelocity(at: 0),
             minimumDirectionDegrees: expanded.minimumDirectionDegrees,
             maximumDirectionDegrees: expanded.maximumDirectionDegrees
         )
-        let vRefined = binarySearchVelocity(
+        velocity = binarySearchVelocity(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
@@ -562,14 +709,61 @@ public enum CandidateSelector {
             holePosition: frame.holePosition,
             direction: frame.direction,
             overrunDistance: frame.overrunDistance,
-            betaDegrees: betaSeed,
+            betaDegrees: beta,
             minimumVelocity: expanded.minimumVelocity,
             maximumVelocity: expanded.maximumVelocity
         )
-        return ShootingSeed(velocity: vRefined, betaDegrees: betaSeed)
+        beta = binarySearchDirection(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: aimVelocity(at: beta),
+            minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+            maximumDirectionDegrees: expanded.maximumDirectionDegrees
+        )
+        velocity = binarySearchVelocity(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            overrunDistance: frame.overrunDistance,
+            betaDegrees: beta,
+            minimumVelocity: expanded.minimumVelocity,
+            maximumVelocity: expanded.maximumVelocity
+        )
+        beta = binarySearchDirection(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: velocity,
+            minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+            maximumDirectionDegrees: expanded.maximumDirectionDegrees
+        )
+        velocity = binarySearchVelocity(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            overrunDistance: frame.overrunDistance,
+            betaDegrees: beta,
+            minimumVelocity: expanded.minimumVelocity,
+            maximumVelocity: expanded.maximumVelocity
+        )
+        return ShootingSeed(velocity: velocity, betaDegrees: beta)
     }
 
-    /// 5.4cm 격자가 비어도 홀 뒤 0.35m까지 올린 추정 궤적을 그린다. 재스캔 화면을 만들지 않는다.
+    /// 5.4cm 홀인 격자가 비어도, 같은 물리로 108mm 컵 안을 지난 뒤 홀 뒤 목표까지 올린 추정 궤적을 그린다.
+    /// 컵 옆을 스치는 선은 그리지 않는다.
     private static func drawableFallback<Terrain: TerrainField>(
         terrain: Terrain,
         greenSpeed: Double,
@@ -584,7 +778,7 @@ public enum CandidateSelector {
         ),
         seed: ShootingSeed? = nil
     ) -> CandidateSelectionResult {
-        let resolved = seed ?? shootingSeed(
+        var resolved = seed ?? shootingSeed(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
@@ -592,6 +786,79 @@ public enum CandidateSelector {
             frame: frame,
             expanded: expanded
         )
+        func approach(velocity: Double, beta: Double) -> Double {
+            let geometry = closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: velocity,
+                betaDegrees: beta
+            )
+            return geometry.reached ? geometry.closest : .greatestFiniteMagnitude
+        }
+        if approach(velocity: resolved.velocity, beta: resolved.betaDegrees) > displayCupPassRadius {
+            let aimVelocity = binarySearchVelocity(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                overrunDistance: max(frame.overrunDistance, 0.12),
+                betaDegrees: resolved.betaDegrees,
+                minimumVelocity: expanded.minimumVelocity,
+                maximumVelocity: expanded.maximumVelocity
+            )
+            resolved.betaDegrees = binarySearchDirection(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: aimVelocity,
+                minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+                maximumDirectionDegrees: expanded.maximumDirectionDegrees
+            )
+            resolved.velocity = binarySearchVelocity(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                overrunDistance: frame.overrunDistance,
+                betaDegrees: resolved.betaDegrees,
+                minimumVelocity: expanded.minimumVelocity,
+                maximumVelocity: expanded.maximumVelocity
+            )
+            resolved.betaDegrees = binarySearchDirection(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: resolved.velocity,
+                minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+                maximumDirectionDegrees: expanded.maximumDirectionDegrees
+            )
+            resolved.velocity = binarySearchVelocity(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                overrunDistance: frame.overrunDistance,
+                betaDegrees: resolved.betaDegrees,
+                minimumVelocity: expanded.minimumVelocity,
+                maximumVelocity: expanded.maximumVelocity
+            )
+        }
         let raised = binarySearchVelocity(
             terrain: terrain,
             greenSpeed: greenSpeed,
@@ -606,11 +873,13 @@ public enum CandidateSelector {
         )
         let attempts: [(Double, Double, CandidateSearchTier)] = [
             (raised, resolved.betaDegrees, .proximityEstimate),
-            (expanded.maximumVelocity, resolved.betaDegrees, .proximityEstimate),
-            (expanded.maximumVelocity, 0, .flatHeuristic)
+            (expanded.maximumVelocity, resolved.betaDegrees, .proximityEstimate)
         ]
-        var bestPastHole: RankedPuttCandidate?
-        var bestPastHoleTier: CandidateSearchTier = .proximityEstimate
+        var best: RankedPuttCandidate?
+        var bestClosest = Double.greatestFiniteMagnitude
+        var bestInBand = false
+        var bestPassesCup = false
+        var bestTier: CandidateSearchTier = .proximityEstimate
         for (velocity, beta, tier) in attempts {
             guard let ranked = rankedLaunch(
                 terrain: terrain,
@@ -623,54 +892,260 @@ public enum CandidateSelector {
                 tier: tier,
                 requireReachHole: true
             ) else { continue }
-            if ranked.actualOverrunDistance + 1e-9 >= serviceOverrunMinMeters {
+            let geom = closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: velocity,
+                betaDegrees: beta
+            )
+            let closest = geom.reached ? geom.closest : Double.greatestFiniteMagnitude
+            let inBand = frame.policy.contains(ranked.actualOverrunDistance)
+            let passesCup = geom.reached && closest <= displayCupPassRadius
+            if passesCup && inBand {
                 return CandidateSelectionResult(
                     allCandidates: [ranked],
                     primary: ranked,
                     secondary: ranked,
                     overrunTarget: frame.overrunTarget,
                     usedRelaxedCaptureRadius: false,
-                    searchTier: tier
+                    searchTier: tier,
+                    overrunPolicy: frame.policy
                 )
             }
-            if bestPastHole == nil
-                || ranked.actualOverrunDistance > (bestPastHole?.actualOverrunDistance ?? -1) {
-                bestPastHole = ranked
-                bestPastHoleTier = tier
+            let better: Bool
+            if best == nil {
+                better = true
+            } else if passesCup != bestPassesCup {
+                better = passesCup
+            } else if inBand != bestInBand {
+                better = inBand
+            } else {
+                better = closest < bestClosest
+            }
+            if better {
+                best = ranked
+                bestClosest = closest
+                bestInBand = inBand
+                bestPassesCup = passesCup
+                bestTier = tier
             }
         }
-        if let bestPastHole {
+        if bestPassesCup, let best {
             return CandidateSelectionResult(
-                allCandidates: [bestPastHole],
-                primary: bestPastHole,
-                secondary: bestPastHole,
+                allCandidates: [best],
+                primary: best,
+                secondary: best,
                 overrunTarget: frame.overrunTarget,
                 usedRelaxedCaptureRadius: false,
-                searchTier: bestPastHoleTier
+                searchTier: bestTier,
+                overrunPolicy: frame.policy
             )
         }
-        let last = rankedLaunch(
+        resolved = aimThroughCup(
             terrain: terrain,
             greenSpeed: greenSpeed,
             holeDistance: holeDistance,
             holeDirectionDegrees: holeDirectionDegrees,
             frame: frame,
-            velocity: max(expanded.maximumVelocity, 2.5),
-            betaDegrees: 0,
-            tier: .flatHeuristic,
-            requireReachHole: false
+            expanded: expanded,
+            seed: resolved
         )
-        if let last {
+        if approach(velocity: resolved.velocity, beta: resolved.betaDegrees) <= displayCupPassRadius,
+           let ranked = rankedLaunch(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            frame: frame,
+            velocity: resolved.velocity,
+            betaDegrees: resolved.betaDegrees,
+            tier: .proximityEstimate,
+            requireReachHole: true
+           ) {
             return CandidateSelectionResult(
-                allCandidates: [last],
-                primary: last,
-                secondary: last,
+                allCandidates: [ranked],
+                primary: ranked,
+                secondary: ranked,
                 overrunTarget: frame.overrunTarget,
                 usedRelaxedCaptureRadius: false,
-                searchTier: .flatHeuristic
+                searchTier: .proximityEstimate,
+                overrunPolicy: frame.policy
             )
         }
         return syntheticStraightSelection(frame: frame, holeDistance: holeDistance)
+    }
+
+    private static func launchPassesCup<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        frame: SearchFrame,
+        candidate: RankedPuttCandidate?
+    ) -> Bool {
+        guard let candidate else { return false }
+        let geometry = closestApproachToHole(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: candidate.candidate.initialVelocity,
+            betaDegrees: candidate.candidate.directionDegrees
+        )
+        return geometry.reached && geometry.closest <= displayCupPassRadius
+    }
+
+    /// 오버런보다 컵 통과를 우선. 컵을 못 뚫는 추정 선은 내보내지 않는다.
+    private static func aimThroughCup<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        frame: SearchFrame,
+        expanded: (
+            minimumVelocity: Double,
+            maximumVelocity: Double,
+            minimumDirectionDegrees: Double,
+            maximumDirectionDegrees: Double
+        ),
+        seed: ShootingSeed
+    ) -> ShootingSeed {
+        func approachGeometry(_ velocity: Double, _ beta: Double) -> (lateral: Double, reached: Bool, closest: Double) {
+            closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: velocity,
+                betaDegrees: beta
+            )
+        }
+        func approach(_ velocity: Double, _ beta: Double) -> Double {
+            let geometry = approachGeometry(velocity, beta)
+            return geometry.reached ? geometry.closest : .greatestFiniteMagnitude
+        }
+        func direction(at velocity: Double) -> Double {
+            binarySearchDirection(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: velocity,
+                minimumDirectionDegrees: expanded.minimumDirectionDegrees,
+                maximumDirectionDegrees: expanded.maximumDirectionDegrees
+            )
+        }
+        func speed(at beta: Double, overrun: Double) -> Double {
+            binarySearchVelocity(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                overrunDistance: overrun,
+                betaDegrees: beta,
+                minimumVelocity: expanded.minimumVelocity,
+                maximumVelocity: expanded.maximumVelocity
+            )
+        }
+        let coastOverrun = max(frame.overrunDistance, preferredOverrunMeters)
+        var velocity = max(seed.velocity, speed(at: seed.betaDegrees, overrun: coastOverrun))
+        var beta = denseCupBeta(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            frame: frame,
+            expanded: expanded,
+            velocity: velocity,
+            hint: seed.betaDegrees
+        )
+        var closest = approach(velocity, beta)
+        if closest > displayCupPassRadius {
+            velocity = expanded.maximumVelocity
+            beta = denseCupBeta(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                frame: frame,
+                expanded: expanded,
+                velocity: velocity,
+                hint: beta
+            )
+            closest = approach(velocity, beta)
+        }
+        guard closest <= displayCupPassRadius else {
+            return ShootingSeed(velocity: velocity, betaDegrees: beta)
+        }
+        let fittedVelocity = speed(at: beta, overrun: frame.overrunDistance)
+        let fittedBeta = direction(at: fittedVelocity)
+        if approach(fittedVelocity, fittedBeta) <= displayCupPassRadius {
+            return ShootingSeed(velocity: fittedVelocity, betaDegrees: fittedBeta)
+        }
+        return ShootingSeed(velocity: velocity, betaDegrees: beta)
+    }
+
+    private static func denseCupBeta<Terrain: TerrainField>(
+        terrain: Terrain,
+        greenSpeed: Double,
+        holeDistance: Double,
+        holeDirectionDegrees: Double,
+        frame: SearchFrame,
+        expanded: (
+            minimumVelocity: Double,
+            maximumVelocity: Double,
+            minimumDirectionDegrees: Double,
+            maximumDirectionDegrees: Double
+        ),
+        velocity: Double,
+        hint: Double
+    ) -> Double {
+        let span = expanded.maximumDirectionDegrees - expanded.minimumDirectionDegrees
+        let count = 21
+        var bestBeta = hint
+        var bestClosest = Double.greatestFiniteMagnitude
+        for index in 0..<count {
+            let t = Double(index) / Double(count - 1)
+            let beta = expanded.minimumDirectionDegrees + t * span
+            let geometry = closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: frame.holePosition,
+                direction: frame.direction,
+                velocity: velocity,
+                betaDegrees: beta
+            )
+            let closest = geometry.reached ? geometry.closest : .greatestFiniteMagnitude
+            if closest < bestClosest {
+                bestClosest = closest
+                bestBeta = beta
+            }
+        }
+        return binarySearchDirection(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            holePosition: frame.holePosition,
+            direction: frame.direction,
+            velocity: velocity,
+            minimumDirectionDegrees: max(expanded.minimumDirectionDegrees, bestBeta - 6),
+            maximumDirectionDegrees: min(expanded.maximumDirectionDegrees, bestBeta + 6)
+        )
     }
 
     /// 물리 적분까지 실패해도 볼→홀+0.35m 직선 후보는 남긴다. 빈 화면 금지.
@@ -703,7 +1178,8 @@ public enum CandidateSelector {
             secondary: ranked,
             overrunTarget: frame.overrunTarget,
             usedRelaxedCaptureRadius: false,
-            searchTier: .flatHeuristic
+            searchTier: .flatHeuristic,
+            overrunPolicy: frame.policy
         )
     }
 
@@ -718,28 +1194,22 @@ public enum CandidateSelector {
         tier: CandidateSearchTier,
         requireReachHole: Bool
     ) -> RankedPuttCandidate? {
-        let captured = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: velocity,
-                initialDirectionDegrees: betaDegrees,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees
-            ),
+        let captured = searchSimulate(
             terrain: terrain,
-            recordTrajectory: false,
-            captureRadius: holeInCaptureRadius
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            velocity: velocity,
+            betaDegrees: betaDegrees,
+            ignoreCapture: false
         )
-        let overrun = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: velocity,
-                initialDirectionDegrees: betaDegrees,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees
-            ),
+        let overrun = searchSimulate(
             terrain: terrain,
-            recordTrajectory: false,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            velocity: velocity,
+            betaDegrees: betaDegrees,
             ignoreCapture: true
         )
         let pastHoleX = overrun.finalPosition.x - frame.holePosition.x
@@ -802,6 +1272,7 @@ public enum CandidateSelector {
         return hi
     }
 
+    /// 홀을 지날 때의 좌우 미스. 정지점 좌우가 아니다(휘는 퍼트에서 컵을 놓친다).
     private static func binarySearchDirection<Terrain: TerrainField>(
         terrain: Terrain,
         greenSpeed: Double,
@@ -813,12 +1284,14 @@ public enum CandidateSelector {
         minimumDirectionDegrees: Double,
         maximumDirectionDegrees: Double
     ) -> Double {
-        var lo = minimumDirectionDegrees
-        var hi = maximumDirectionDegrees
-        var best = 0.0
-        for _ in 0..<14 {
-            let mid = (lo + hi) * 0.5
-            let lateral = coastLateralMiss(
+        let coarseCount = 11
+        var samples: [(beta: Double, lateral: Double, reached: Bool, closest: Double)] = []
+        samples.reserveCapacity(coarseCount)
+        for index in 0..<coarseCount {
+            let t = Double(index) / Double(coarseCount - 1)
+            let beta = minimumDirectionDegrees
+                + t * (maximumDirectionDegrees - minimumDirectionDegrees)
+            let probe = closestApproachToHole(
                 terrain: terrain,
                 greenSpeed: greenSpeed,
                 holeDistance: holeDistance,
@@ -826,17 +1299,104 @@ public enum CandidateSelector {
                 holePosition: holePosition,
                 direction: direction,
                 velocity: velocity,
-                betaDegrees: mid
+                betaDegrees: beta
             )
-            best = mid
-            // +β = +local X. 홀 오른쪽(+) 미스면 조준을 왼쪽으로.
-            if lateral > 0 {
-                hi = mid
-            } else {
-                lo = mid
+            samples.append((beta, probe.lateral, probe.reached, probe.closest))
+        }
+
+        let nearest = samples.min(by: { $0.closest < $1.closest })
+        var lo = max(minimumDirectionDegrees, (nearest?.beta ?? 0) - 8)
+        var hi = min(maximumDirectionDegrees, (nearest?.beta ?? 0) + 8)
+
+        var signLo: Double?
+        var signHi: Double?
+        if let nearest {
+            for index in 0..<(samples.count - 1) {
+                let a = samples[index]
+                let b = samples[index + 1]
+                guard a.reached, b.reached, a.lateral * b.lateral <= 0 else { continue }
+                let midBeta = 0.5 * (a.beta + b.beta)
+                guard abs(midBeta - nearest.beta) <= 10 else { continue }
+                if abs(a.lateral) < 1e-4 {
+                    return a.beta
+                }
+                signLo = a.beta
+                signHi = b.beta
+                break
             }
         }
-        return best
+        if let signLo, let signHi, signHi >= lo - 1e-9, signLo <= hi + 1e-9 {
+            lo = max(lo, signLo)
+            hi = min(hi, signHi)
+            var best = 0.5 * (lo + hi)
+            for _ in 0..<12 {
+                let mid = 0.5 * (lo + hi)
+                let probe = closestApproachToHole(
+                    terrain: terrain,
+                    greenSpeed: greenSpeed,
+                    holeDistance: holeDistance,
+                    holeDirectionDegrees: holeDirectionDegrees,
+                    holePosition: holePosition,
+                    direction: direction,
+                    velocity: velocity,
+                    betaDegrees: mid
+                )
+                best = mid
+                if !probe.reached {
+                    if mid > 0 { hi = mid } else { lo = mid }
+                    continue
+                }
+                if probe.lateral > 0 {
+                    hi = mid
+                } else {
+                    lo = mid
+                }
+            }
+            return best
+        }
+
+        var bestBeta = nearest?.beta ?? 0
+        var bestClosest = nearest?.closest ?? Double.greatestFiniteMagnitude
+        for _ in 0..<10 {
+            let third = (hi - lo) / 3
+            guard third > 0.05 else { break }
+            let m1 = lo + third
+            let m2 = hi - third
+            let c1 = closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: holePosition,
+                direction: direction,
+                velocity: velocity,
+                betaDegrees: m1
+            )
+            let c2 = closestApproachToHole(
+                terrain: terrain,
+                greenSpeed: greenSpeed,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: holeDirectionDegrees,
+                holePosition: holePosition,
+                direction: direction,
+                velocity: velocity,
+                betaDegrees: m2
+            )
+            if c1.closest < bestClosest {
+                bestClosest = c1.closest
+                bestBeta = m1
+            }
+            if c2.closest < bestClosest {
+                bestClosest = c2.closest
+                bestBeta = m2
+            }
+            if c1.closest < c2.closest {
+                hi = m2
+            } else {
+                lo = m1
+            }
+        }
+        return bestBeta
     }
 
     private static func coastAlongHole<Terrain: TerrainField>(
@@ -849,16 +1409,13 @@ public enum CandidateSelector {
         velocity: Double,
         betaDegrees: Double
     ) -> Double {
-        let coast = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: velocity,
-                initialDirectionDegrees: betaDegrees,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees
-            ),
+        let coast = searchSimulate(
             terrain: terrain,
-            recordTrajectory: false,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            velocity: velocity,
+            betaDegrees: betaDegrees,
             ignoreCapture: true
         )
         let dx = coast.finalPosition.x - holePosition.x
@@ -866,7 +1423,7 @@ public enum CandidateSelector {
         return dx * direction.x + dy * direction.y + holeDistance
     }
 
-    private static func coastLateralMiss<Terrain: TerrainField>(
+    private static func closestApproachToHole<Terrain: TerrainField>(
         terrain: Terrain,
         greenSpeed: Double,
         holeDistance: Double,
@@ -875,23 +1432,75 @@ public enum CandidateSelector {
         direction: PuttVector2,
         velocity: Double,
         betaDegrees: Double
-    ) -> Double {
-        let coast = MultibreakPuttPhysics.simulate(
-            configuration: MultibreakPuttConfiguration(
-                greenSpeed: greenSpeed,
-                initialVelocity: velocity,
-                initialDirectionDegrees: betaDegrees,
-                holeDistance: holeDistance,
-                holeDirectionDegrees: holeDirectionDegrees
-            ),
+    ) -> (lateral: Double, reached: Bool, closest: Double) {
+        let coast = searchSimulate(
             terrain: terrain,
-            recordTrajectory: false,
-            ignoreCapture: true
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            holeDirectionDegrees: holeDirectionDegrees,
+            velocity: velocity,
+            betaDegrees: betaDegrees,
+            ignoreCapture: true,
+            recordTrajectory: true
         )
+        var positions = coast.trajectory.map(\.position)
+        if positions.last.map({ $0 != coast.finalPosition }) ?? true {
+            positions.append(coast.finalPosition)
+        }
+        return holeAimGeometry(
+            positions: positions,
+            holePosition: holePosition,
+            direction: direction,
+            holeDistance: holeDistance
+        )
+    }
+
+    private static func holeAimGeometry(
+        positions: [PuttVector2],
+        holePosition: PuttVector2,
+        direction: PuttVector2,
+        holeDistance: Double
+    ) -> (lateral: Double, reached: Bool, closest: Double) {
         let right = PuttVector2(x: direction.y, y: -direction.x)
-        let dx = coast.finalPosition.x - holePosition.x
-        let dy = coast.finalPosition.y - holePosition.y
-        return dx * right.x + dy * right.y
+        func along(_ point: PuttVector2) -> Double {
+            point.x * direction.x + point.y * direction.y
+        }
+        func lateral(_ point: PuttVector2) -> Double {
+            (point.x - holePosition.x) * right.x + (point.y - holePosition.y) * right.y
+        }
+        func distance(_ point: PuttVector2) -> Double {
+            hypot(point.x - holePosition.x, point.y - holePosition.y)
+        }
+
+        var closest = Double.greatestFiniteMagnitude
+        var closestLateral = 0.0
+        var previous: PuttVector2?
+        for point in positions {
+            let currentDistance = distance(point)
+            if currentDistance < closest {
+                closest = currentDistance
+                closestLateral = lateral(point)
+            }
+            if let previous {
+                let along0 = along(previous)
+                let along1 = along(point)
+                if along0 <= holeDistance && along1 >= holeDistance {
+                    let span = max(along1 - along0, 1e-12)
+                    let t = (holeDistance - along0) / span
+                    let crossed = PuttVector2(
+                        x: previous.x + t * (point.x - previous.x),
+                        y: previous.y + t * (point.y - previous.y)
+                    )
+                    return (
+                        lateral(crossed),
+                        true,
+                        min(closest, distance(crossed))
+                    )
+                }
+            }
+            previous = point
+        }
+        return (closestLateral, false, closest)
     }
 
     private static func expandedSearchBounds(

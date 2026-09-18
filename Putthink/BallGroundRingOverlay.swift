@@ -93,15 +93,35 @@ final class PlacementRingOverlayView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        stroke(ballPoints, color: .white, lineWidth: 4, dashed: false, in: ctx)
-        stroke(holePoints, color: Self.accentUIColor, lineWidth: 3.5, dashed: true, in: ctx)
+        // 야외: 흰 단선은 잔디·하이라이트에 묻힌다. 십자선과 같이 검정 외곽+앰버.
+        stroke(
+            ballPoints,
+            color: Self.accentUIColor,
+            lineWidth: 5,
+            outlineWidth: 2.4,
+            dashed: false,
+            in: ctx
+        )
+        stroke(
+            holePoints,
+            color: Self.accentUIColor,
+            lineWidth: 5.5,
+            outlineWidth: 2.8,
+            dashed: true,
+            // 긴 막대 점선. round cap으로 개별 점선 끝이 동그랗게(캡슐).
+            // 갭은 선 굵기보다 커야 실선처럼 붙지 않는다.
+            dashPattern: [16, 12],
+            in: ctx
+        )
     }
 
     private func stroke(
         _ points: [CGPoint],
         color: UIColor,
         lineWidth: CGFloat,
+        outlineWidth: CGFloat,
         dashed: Bool,
+        dashPattern: [CGFloat] = [6, 5],
         in ctx: CGContext
     ) {
         guard points.count >= 3 else { return }
@@ -113,24 +133,31 @@ final class PlacementRingOverlayView: UIView {
             path.addLine(to: point)
         }
         path.closeSubpath()
-        if dashed {
-            ctx.setStrokeColor(UIColor.black.withAlphaComponent(0.45).cgColor)
-            ctx.setLineWidth(lineWidth + 1.6)
-            ctx.setLineCap(.round)
-            ctx.setLineJoin(.round)
-            ctx.setLineDash(phase: 0, lengths: [6, 5])
-            ctx.addPath(path)
-            ctx.strokePath()
-        }
-        ctx.setStrokeColor(color.cgColor)
-        ctx.setLineWidth(lineWidth)
+
+        // 점선도 round — 개별 막대 끝이 동그란 캡슐 모양.
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
         if dashed {
-            ctx.setLineDash(phase: 0, lengths: [6, 5])
+            ctx.setLineDash(phase: 0, lengths: dashPattern)
         } else {
             ctx.setLineDash(phase: 0, lengths: [])
         }
+
+        // 외곽(야외 대비) → 흰 중간선(잔디 위 분리) → 앰버 본선.
+        ctx.setStrokeColor(UIColor.black.withAlphaComponent(0.82).cgColor)
+        ctx.setLineWidth(lineWidth + outlineWidth)
+        ctx.addPath(path)
+        ctx.strokePath()
+
+        if dashed {
+            ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.92).cgColor)
+            ctx.setLineWidth(lineWidth + 1.0)
+            ctx.addPath(path)
+            ctx.strokePath()
+        }
+
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(lineWidth)
         ctx.addPath(path)
         ctx.strokePath()
     }

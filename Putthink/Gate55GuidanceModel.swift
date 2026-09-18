@@ -110,6 +110,24 @@ final class Gate55GuidanceModel: ObservableObject {
         statusMessage = L10n.holeDistance(scan.holeDistance)
     }
 
+    /// 언어 변경 시 이미 만든 상태 문구를 현재 locale로 다시 쓴다.
+    func refreshLocalizedCopy() {
+        if let rec = recommendation, rec.primary != nil {
+            statusMessage = L10n.status(
+                tier: rec.searchTier,
+                candidateCount: rec.candidateCount,
+                corridorCount: rec.corridorCandidates.count,
+                gridNote: ""
+            )
+        } else if isComputing, let context {
+            statusMessage = L10n.computingForHole(context.holeDistance)
+        } else if let context {
+            statusMessage = L10n.holeDistance(context.holeDistance)
+        } else {
+            statusMessage = L10n.statusWaiting
+        }
+    }
+
     private func applyScanContext(
         scan: CompletedScan,
         physicsBall: ScanPose,
@@ -182,7 +200,8 @@ final class Gate55GuidanceModel: ObservableObject {
                 )
                 let keepRefining = !CandidateSelector.meetsServiceLine(
                     searchTier: shoot.searchTier,
-                    overrunDistance: shoot.overrunDistance
+                    overrunDistance: shoot.overrunDistance,
+                    policy: shoot.overrunPolicy
                 )
                 await MainActor.run {
                     self.applyRecommend(
@@ -298,13 +317,6 @@ final class Gate55GuidanceModel: ObservableObject {
         guard count >= 1 else { return }
         let clamped = min(max(index, 0), count - 1)
         let ranked = rec.corridorCandidates[clamped]
-        // 평탄 노이즈 후보는 코리도에서 이미 걸러지지만, 선택 시에도 경로로 올리지 않는다.
-        if Gate55Validation.isLikelyFlatNoiseAim(
-            elevationDelta: rec.elevationDelta,
-            directionDegrees: ranked.candidate.directionDegrees
-        ) {
-            return
-        }
         guard clamped != corridorIndex || abs(rec.initialVelocity - ranked.candidate.initialVelocity) > 1e-9 else {
             corridorIndex = clamped
             return

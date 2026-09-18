@@ -255,4 +255,239 @@ final class CandidateSelectorFallbackTests: XCTestCase {
             "fallback/shooting must not recommend dying short of the 34cm band"
         )
     }
+
+    /// 옆경사: 정지점 좌우가 아니라 홀 평면을 맞춰 컵 근처를 지난다.
+    func testShootingPassesNearHoleOnSideSlope() throws {
+        let terrain = DualPlaneTerrainField(
+            alphaADegrees: 4,
+            orientationADegrees: 0,
+            alphaBDegrees: 4,
+            orientationBDegrees: 0,
+            boundaryY: 2.0
+        )
+        let holeDistance = 4.1
+        let selection = CandidateSelector.select(
+            terrain: terrain,
+            greenSpeed: greenSpeed,
+            holeDistance: holeDistance,
+            strategy: .shooting
+        )
+        let primary = try XCTUnwrap(selection.primary)
+        let forward = MultibreakPuttPhysics.simulate(
+            configuration: MultibreakPuttConfiguration(
+                greenSpeed: greenSpeed,
+                initialVelocity: primary.candidate.initialVelocity,
+                initialDirectionDegrees: primary.candidate.directionDegrees,
+                holeDistance: holeDistance,
+                holeDirectionDegrees: 0
+            ),
+            terrain: terrain,
+            recordTrajectory: true,
+            ignoreCapture: true
+        )
+        XCTAssertLessThan(
+            closestApproach(forward.trajectory, holeDistance: holeDistance),
+            CandidateSelector.holeInCaptureRadius,
+            "estimate/shooting path must thread the 108mm cup; β=\(primary.candidate.directionDegrees)"
+        )
+        XCTAssertTrue(
+            selection.overrunPolicy.contains(primary.actualOverrunDistance),
+            "cup-crossing speed should land in slope band \(selection.overrunPolicy.minMeters)–\(selection.overrunPolicy.maxMeters); overrun=\(primary.actualOverrunDistance)"
+        )
+    }
+
+    func testSideSlopeCorridorNotDroppedForElevationOnlyNoiseFilter() throws {
+        let terrain = DualPlaneTerrainField(
+            alphaADegrees: 3.5,
+            orientationADegrees: 0,
+            alphaBDegrees: 3.5,
+            orientationBDegrees: 0,
+            boundaryY: 1.5
+        )
+        let holeDistance = 4.1
+        let cellSize = 0.2
+        let width = 21
+        let height = 28
+        let originX = -2.0
+        let originY = -0.4
+        var heights = [Double](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                heights[y * width + x] = terrain.height(
+                    at: PuttVector2(
+                        x: originX + Double(x) * cellSize,
+                        y: originY + Double(y) * cellSize
+                    )
+                )
+            }
+        }
+        let context = try Gate55Validation.contextFromMeasuredGrid(
+            cellSize: cellSize,
+            originX: originX,
+            originY: originY,
+            width: width,
+            height: height,
+            heights: heights,
+            holeDistance: holeDistance
+        )
+        XCTAssertLessThan(abs(context.field.height(at: context.holeLocal) - context.field.height(at: context.ballLocal)), 0.025)
+        let rec = Gate55Validation.recommend(
+            context: context,
+            greenSpeed: greenSpeed,
+            searchStrategy: .shooting
+        )
+        XCTAssertFalse(
+            rec.corridorCandidates.isEmpty,
+            "side-break service band must not be stripped as flat-noise; β=\(rec.directionDegrees) elev=\(rec.elevationDelta)"
+        )
+        for c in rec.corridorCandidates {
+            XCTAssertTrue(
+                rec.overrunPolicy.contains(c.actualOverrunDistance),
+                "corridor \(c.actualOverrunDistance) outside \(rec.overrunPolicy.minMeters)–\(rec.overrunPolicy.maxMeters)"
+            )
+        }
+        let approach = closestApproach(rec.trajectory, holeDistance: holeDistance)
+        XCTAssertLessThan(
+            approach,
+            CandidateSelector.holeInCaptureRadius,
+            "β=\(rec.directionDegrees) tier=\(rec.searchTier) overrun=\(rec.overrunDistance) closest=\(approach)"
+        )
+    }
+
+    func testOverrunPolicyShrinksOnDownhillAndSideSlope() {
+        let downhill = DualPlaneTerrainField(
+            alphaADegrees: atan(0.03) * 180 / .pi,
+            orientationADegrees: 90,
+            alphaBDegrees: atan(0.03) * 180 / .pi,
+            orientationBDegrees: 90,
+            boundaryY: 20
+        )
+        let down = ServiceOverrunPolicy.make(terrain: downhill, holeDistance: 4)
+        XCTAssertGreaterThan(down.alongDownhillPercent, 2.5)
+        XCTAssertLessThan(down.preferredMeters, 0.25)
+        XCTAssertGreaterThan(down.preferredMeters, 0.10)
+        XCTAssertFalse(down.isRestLimit)
+        XCTAssertTrue(down.contains(down.preferredMeters))
+        XCTAssertFalse(down.contains(0.35))
+
+        let side = DualPlaneTerrainField(
+            alphaADegrees: atan(0.05) * 180 / .pi,
+            orientationADegrees: 0,
+            alphaBDegrees: atan(0.05) * 180 / .pi,
+            orientationBDegrees: 0,
+            boundaryY: 20
+        )
+        let across = ServiceOverrunPolicy.make(terrain: side, holeDistance: 4)
+        XCTAssertGreaterThan(across.crossSlopePercent, 4.0)
+        XCTAssertLessThan(abs(across.alongDownhillPercent), 0.6)
+        XCTAssertLessThan(across.preferredMeters, 0.22)
+        XCTAssertGreaterThan(across.preferredMeters, 0.08)
+        XCTAssertFalse(across.contains(0.35))
+    }
+
+    func testOverrunPolicyRestLimitOnSteepDownhill() {
+        let steep = DualPlaneTerrainField(
+            alphaADegrees: atan(0.08) * 180 / .pi,
+            orientationADegrees: 90,
+            alphaBDegrees: atan(0.08) * 180 / .pi,
+            orientationBDegrees: 90,
+            boundaryY: 20
+        )
+        let policy = ServiceOverrunPolicy.make(terrain: steep, holeDistance: 4)
+        XCTAssertTrue(policy.isRestLimit)
+        XCTAssertEqual(policy.preferredMeters, 0, accuracy: 1e-9)
+        XCTAssertTrue(policy.contains(0.0))
+        XCTAssertTrue(policy.contains(0.08))
+        XCTAssertFalse(policy.contains(0.35))
+    }
+
+    func testUphillKeepsFlatOverrunBand() {
+        let uphill = DualPlaneTerrainField(
+            alphaADegrees: atan(0.04) * 180 / .pi,
+            orientationADegrees: 270,
+            alphaBDegrees: atan(0.04) * 180 / .pi,
+            orientationBDegrees: 270,
+            boundaryY: 20
+        )
+        let policy = ServiceOverrunPolicy.make(terrain: uphill, holeDistance: 4)
+        XCTAssertEqual(policy.preferredMeters, CandidateSelector.preferredOverrunMeters, accuracy: 1e-9)
+        XCTAssertTrue(policy.contains(0.35))
+        XCTAssertTrue(policy.contains(0.44))
+        XCTAssertFalse(policy.isRestLimit)
+    }
+
+    func testDownhillRecommendCorridorFollowsShorterTarget() throws {
+        let percent = 3.0
+        let alpha = atan(percent / 100) * 180 / .pi
+        let terrain = DualPlaneTerrainField(
+            alphaADegrees: alpha,
+            orientationADegrees: 90,
+            alphaBDegrees: alpha,
+            orientationBDegrees: 90,
+            boundaryY: 20
+        )
+        let holeDistance = 4.0
+        let cellSize = 0.2
+        let width = 21
+        let height = 28
+        let originX = -2.0
+        let originY = -0.4
+        var heights = [Double](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                heights[y * width + x] = terrain.height(
+                    at: PuttVector2(
+                        x: originX + Double(x) * cellSize,
+                        y: originY + Double(y) * cellSize
+                    )
+                )
+            }
+        }
+        let context = try Gate55Validation.contextFromMeasuredGrid(
+            cellSize: cellSize,
+            originX: originX,
+            originY: originY,
+            width: width,
+            height: height,
+            heights: heights,
+            holeDistance: holeDistance
+        )
+        let rec = Gate55Validation.recommend(
+            context: context,
+            greenSpeed: greenSpeed,
+            searchStrategy: .shooting
+        )
+        XCTAssertLessThan(rec.overrunPolicy.preferredMeters, 0.25)
+        XCTAssertGreaterThan(rec.overrunPolicy.preferredMeters, 0.10)
+        XCTAssertFalse(rec.corridorCandidates.isEmpty)
+        for c in rec.corridorCandidates {
+            XCTAssertTrue(rec.overrunPolicy.contains(c.actualOverrunDistance))
+            XCTAssertLessThan(c.actualOverrunDistance, 0.30)
+        }
+    }
+
+    private func closestApproach(_ trajectory: [TrajectorySample], holeDistance: Double) -> Double {
+        let hole = PuttVector2(x: 0, y: holeDistance)
+        var best = Double.greatestFiniteMagnitude
+        var previous: PuttVector2?
+        for sample in trajectory {
+            let point = sample.position
+            best = min(best, hypot(point.x - hole.x, point.y - hole.y))
+            if let previous {
+                let along0 = previous.y
+                let along1 = point.y
+                if along0 <= holeDistance && along1 >= holeDistance {
+                    let span = max(along1 - along0, 1e-12)
+                    let t = (holeDistance - along0) / span
+                    let crossed = PuttVector2(
+                        x: previous.x + t * (point.x - previous.x),
+                        y: previous.y + t * (point.y - previous.y)
+                    )
+                    best = min(best, hypot(crossed.x - hole.x, crossed.y - hole.y))
+                }
+            }
+            previous = point
+        }
+        return best
+    }
 }

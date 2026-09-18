@@ -59,6 +59,7 @@ struct Gate55GuidanceView: View {
     @EnvironmentObject private var subscriptions: SubscriptionStore
     @EnvironmentObject private var freeRuns: FreeRunsStore
     @EnvironmentObject private var devMode: DevModeStore
+    @EnvironmentObject private var language: AppLanguageStore
     @StateObject private var model = Gate55GuidanceModel()
     @State private var aimRevision = 0
     @State private var greenVizMode: GreenSurfaceVizMode? = nil
@@ -83,7 +84,12 @@ struct Gate55GuidanceView: View {
     private static let guidanceButtonChromeHeight: CGFloat = 92
 
     var body: some View {
+        let _ = language.displayEpoch
         guidanceRoot
+            .environment(\.locale, language.locale)
+            .onChange(of: language.displayEpoch) { _, _ in
+                model.refreshLocalizedCopy()
+            }
             .onChange(of: model.recommendation?.primary != nil) { _, hasPrimary in
                 guard hasPrimary,
                       !didConsumeFreeRunForCurrentScan,
@@ -287,6 +293,7 @@ struct Gate55GuidanceView: View {
                 }
                 Spacer(minLength: 8)
                 GreenVizModePicker(selection: $greenVizMode)
+                    .id(language.displayEpoch)
             }
             guidanceBottomOSD
         }
@@ -330,6 +337,8 @@ struct Gate55GuidanceView: View {
             if showsBallAimReticle {
                 // 배치 raycast(centerGroundPose)는 화면 중앙 광축. 십자선도 동일 위치여야 한다.
                 OSDAmberReticle(dashedRing: true)
+                    .opacity(controller.ballRingWorldPose == nil ? 1 : 0.2)
+                    .animation(.easeOut(duration: 0.15), value: controller.ballRingWorldPose == nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
@@ -354,6 +363,11 @@ struct Gate55GuidanceView: View {
                         .tint(OSDPalette.accent)
                 } else {
                     recommendationSection
+                    if model.recommendation?.overrunPolicy.isRestLimit == true {
+                        Text(L10n.corridorRestLimit)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(OSDPalette.accent.opacity(0.85))
+                    }
                     if model.isComputing {
                         HStack(spacing: 8) {
                             ProgressView().tint(OSDPalette.accent)
@@ -362,8 +376,6 @@ struct Gate55GuidanceView: View {
                                 .foregroundStyle(OSDPalette.textSecondary)
                         }
                     }
-                    OSDSectionDivider()
-                    speedCorridorSection
                 }
             }
         }
@@ -440,29 +452,11 @@ struct Gate55GuidanceView: View {
                     flatEquivalentDistance: rec.flatEquivalentDistance
                 )
             )
-
-            if !rec.searchTier.isHoleInVerified {
-                Text(L10n.tierLabel(rec.searchTier))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-            }
         } else {
             Text(L10n.aimWaiting)
                 .font(.system(size: 13))
                 .foregroundStyle(OSDPalette.accent)
         }
-    }
-
-    private var speedCorridorSection: some View {
-        OSDSpeedCorridorSection(
-            corridorIndex: model.corridorIndex,
-            corridorCount: model.corridorCandidateCount,
-            overrunDistance: model.recommendation?.overrunDistance,
-            isComputing: model.isComputing,
-            isApplying: model.isApplyingCorridor,
-            statusMessage: model.statusMessage,
-            onSelectIndex: { model.selectCorridorIndex($0) }
-        )
     }
 }
 
@@ -470,8 +464,10 @@ struct Gate55GuidanceView: View {
 
 private struct GreenVizModePicker: View {
     @Binding var selection: GreenSurfaceVizMode?
+    @EnvironmentObject private var language: AppLanguageStore
 
     var body: some View {
+        let _ = language.displayEpoch
         HStack(spacing: 2) {
             ForEach(GreenSurfaceVizMode.allCases) { mode in
                 let selected = selection == mode
@@ -508,6 +504,7 @@ private struct GreenVizModePicker: View {
         .background(OSDPalette.glass, in: Capsule())
         .overlay(Capsule().strokeBorder(OSDPalette.glassBorder, lineWidth: 1))
         .animation(nil, value: selection)
+        .environment(\.locale, language.locale)
     }
 }
 
@@ -1088,18 +1085,25 @@ struct Gate55ARAimView: UIViewRepresentable {
                     lockedBallPose = scan.ballAnchor
                     lockedScanTransform = scan.scanTransform
                 } else if shouldSoftFollowGuidancePose(lockedBallPose, with: scan.ballAnchor) {
-                    // cm 추적/재지정: 볼 앵커를 옮기고 격자는 그린 높이에 다시 심는다.
-                    ARReferenceMarkers.moveRealityWorldFixed(
-                        to: incomingBall,
-                        existingEntity: ballAnchorEntity
+                    // 이동(move)은 한 프레임 옛 월드 포즈에 자식 궤적이 남아 홀 반대로 보인다.
+                    // 선을 걷고 볼 앵커를 새 위치에 다시 심은 뒤 같은 패스에서 다시 그린다.
+                    clearContours()
+                    clearGridFlow()
+                    clearTrajectory()
+                    clearOverlayRoot()
+                    zeroLineEntity = nil
+                    aimEntity = nil
+                    ARReferenceMarkers.replaceRealityWorldFixed(
+                        entityFactory: { ARReferenceMarkers.makeBallEntity() },
+                        at: incomingBall,
+                        in: view,
+                        existingEntity: &ballAnchorEntity
                     )
                     lockedBallPose = scan.ballAnchor
                     lockedScanTransform = scan.scanTransform
                     lastZeroHoleDistance = .nan
                     lastAimBeta = .nan
                     lastTrajectoryRevision = -1
-                    clearContours()
-                    clearGridFlow()
                 }
             }
             if shouldReplaceGuidancePose(lockedHolePose, with: scan.holeAnchor) {
@@ -1299,6 +1303,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     samples: trajectory,
                     scan: scan,
                     displayTransform: transform,
+                    displayBallWorld: ballWorld,
                     lift: trajLift,
                     pathWidth: pathWidth * pathWidthScale,
                     pathAlpha: proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall),
@@ -2320,11 +2325,18 @@ struct Gate55ARAimView: UIViewRepresentable {
                   let ballEntity = ballAnchorEntity else { return }
             let overlays = ensureOverlayRoot(under: ballEntity)
             let transform = lockedScanTransform ?? cached.scan.scanTransform
+            let renderBall = lockedBallPose ?? cached.scan.ballAnchor
+            let displayBallWorld = SIMD3<Float>(
+                Float(renderBall.worldX),
+                Float(renderBall.worldY),
+                Float(renderBall.worldZ)
+            )
             let effectiveWidth = Self.standingPathWidth * widthScale
             updateTrajectory(
                 samples: cached.trajectory,
                 scan: cached.scan,
                 displayTransform: transform,
+                displayBallWorld: displayBallWorld,
                 lift: lastPathLift > 0 ? lastPathLift : 0.006,
                 pathWidth: effectiveWidth,
                 pathAlpha: pathAlpha,
@@ -2962,6 +2974,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             samples: [TrajectorySample],
             scan: CompletedScan,
             displayTransform: ScanCoordinateTransform,
+            displayBallWorld: SIMD3<Float>,
             lift: Float,
             pathWidth: Float,
             pathAlpha: CGFloat,
@@ -2973,9 +2986,9 @@ struct Gate55ARAimView: UIViewRepresentable {
             // displayTransform: 궤적은 물리(terrain) 샘플을 쓰므로 XZ에 미사용. 호출부 시그니처 유지.
             _ = displayTransform
 
-            // 물리 샘플은 terrainTransform(스캔 볼) 기준.
-            // 부모는 표시 AR 볼. 첫 점을 실볼에 억지 삽입하면 스캔 볼 궤적과 직선이 꺾인다.
-            // 곡선을 실볼 원점으로 평행이동해 실볼에서 출발하게 한다(홀 끝은 지정 오차만큼 이동).
+            // 물리 샘플은 terrainTransform(스캔 볼·지정 홀) 기준.
+            // 부모는 표시 AR 볼. 실볼 추적 중 부모만 움직이면 컵이 같이 밀린다.
+            // 월드에 고정해 지정 홀을 지난다.
             let physicsTransform = scan.terrainTransform
             let physicsOrigin = SIMD3(
                 Float(physicsTransform.origin.worldX),
@@ -2987,6 +3000,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                 Float(scan.terrainHoleAnchor.worldY),
                 Float(scan.terrainHoleAnchor.worldZ)
             )
+            // AnchorEntity 포즈는 move 직후 convert가 한 프레임 늦을 수 있음.
+            // 확정 볼 월드 좌표를 직접 써서 홀 반대 방향으로 잠깐 그려지지 않게 한다.
+            let parentWorld = displayBallWorld
             let terrainOriginY = physicsOrigin.y
             let map = scan.result.smoothed
             let holeDistance = max(
@@ -3001,6 +3017,8 @@ struct Gate55ARAimView: UIViewRepresentable {
             _ = alongBiasMeters
 
             var pathPositions: [SIMD3<Float>] = []
+            var nearestHoleIndex: Int?
+            var nearestHoleLocal = Double.greatestFiniteMagnitude
             for sample in samples {
                 let p = sample.position
                 let xz = physicsTransform.worldXZ(
@@ -3015,10 +3033,36 @@ struct Gate55ARAimView: UIViewRepresentable {
                     worldY = physicsOrigin.y + (holeWorld.y - physicsOrigin.y) * progress + lift
                 }
                 let worldPoint = SIMD3(Float(xz.worldX), worldY, Float(xz.worldZ))
-                pathPositions.append(worldPoint - physicsOrigin)
+                pathPositions.append(worldPoint - parentWorld)
+                let holeLocal = hypot(p.x, p.y - holeDistance)
+                if holeLocal < nearestHoleLocal {
+                    nearestHoleLocal = holeLocal
+                    nearestHoleIndex = pathPositions.count - 1
+                }
             }
 
             guard pathPositions.count >= 2 else { return }
+
+            // 표시 볼에서 출발·홀은 유지. 오프셋이 클 때 시작점만 스냅하면
+            // 첫 구간이 홀 반대로 나가 실볼 확정 순간 한 프레임 튀어 보인다.
+            let startShift = SIMD3(pathPositions[0].x, 0, pathPositions[0].z)
+            if simd_length(startShift) > 0.002 {
+                var along: [Float] = [0]
+                along.reserveCapacity(pathPositions.count)
+                for index in 1..<pathPositions.count {
+                    along.append(
+                        along[index - 1] + simd_length(pathPositions[index] - pathPositions[index - 1])
+                    )
+                }
+                let holeIndex = nearestHoleIndex ?? (pathPositions.count - 1)
+                let holeAlong = max(along[holeIndex], 1e-4)
+                for index in pathPositions.indices {
+                    let t = min(along[index] / holeAlong, 1)
+                    pathPositions[index] -= startShift * (1 - t)
+                }
+            }
+            pathPositions[0].x = 0
+            pathPositions[0].z = 0
 
             let root = Entity()
             root.name = "trajectory"
