@@ -1,7 +1,8 @@
 import Foundation
 
-/// 십자선 주변 소형 ROI에서 디스크-고리 대비로 공을 찾는다.
-/// CC 라벨링보다 작은 창(≤280px)에서 빠르고, 크기 사전(depth→반지름)과 궁합이 좋다.
+/// 십자선·실볼 앵커 주변 소형 ROI에서 디스크-고리 대비로 공을 찾는다.
+/// Step1(aroundReticle)과 OSD 실볼 탐색(aroundWorldAnchor)이 동일 경로.
+/// coarse→fine + 적분영상 루마로 조밀 전수 탐색 비용을 줄인다.
 public enum GolfBallFastDetector {
     public static let minScore = 0.48
 
@@ -27,17 +28,20 @@ public enum GolfBallFastDetector {
         let integral = IntegralGrid.build(luma: image.luma, width: width, x0: x0, y0: y0, x1: x1, y1: y1)
 
         let expectedR = max(3.5, hint.expectedRadiusPixels)
-        let radii = [
+        let coarseStep = max(3, min(6, Int((expectedR * 0.28).rounded())))
+        let fineHalf = max(6, min(12, Int((expectedR * 0.40).rounded())))
+        let fineRadii = [
             expectedR * 0.78,
             expectedR,
             expectedR * 1.22
         ]
-        let step = expectedR >= 14 ? 2 : 1
 
+        // 1) coarse: 큰 step + 단일 반지름 + 적분 루마(박스) + 성긴 색 샘플
         var bestScore = 0.0
-        var bestCX = 0.0
-        var bestCY = 0.0
+        var bestCX = Int(hint.expectedCenterX.rounded())
+        var bestCY = Int(hint.expectedCenterY.rounded())
         var bestR = expectedR
+        var foundCoarse = false
 
         var cy = y0
         while cy <= y1 {
@@ -45,37 +49,81 @@ public enum GolfBallFastDetector {
             while cx <= x1 {
                 let dist = hypot(Double(cx) - hint.expectedCenterX, Double(cy) - hint.expectedCenterY)
                 if dist <= searchR {
-                    for r in radii {
-                        guard let scored = scoreDisk(
-                            cx: cx,
-                            cy: cy,
-                            radius: r,
-                            x0: x0,
-                            y0: y0,
-                            roiW: roiW,
-                            width: width,
-                            image: image,
-                            integral: integral,
-                            hint: hint
-                        ) else { continue }
-                        if scored > bestScore {
-                            bestScore = scored
-                            bestCX = Double(cx)
-                            bestCY = Double(cy)
-                            bestR = r
-                        }
+                    if let scored = scoreDisk(
+                        cx: cx,
+                        cy: cy,
+                        radius: expectedR,
+                        x0: x0,
+                        y0: y0,
+                        roiW: roiW,
+                        width: width,
+                        image: image,
+                        integral: integral,
+                        hint: hint,
+                        sampleStride: 3,
+                        useCircularColor: false
+                    ), scored > bestScore {
+                        bestScore = scored
+                        bestCX = cx
+                        bestCY = cy
+                        bestR = expectedR
+                        foundCoarse = true
                     }
                 }
-                cx += step
+                cx += coarseStep
             }
-            cy += step
+            cy += coarseStep
         }
 
+        // coarse가 완전 실패해도 힌트 근처 fine은 한 번 시도(작은 창·드리프트).
+        let seedCX = foundCoarse ? bestCX : Int(hint.expectedCenterX.rounded())
+        let seedCY = foundCoarse ? bestCY : Int(hint.expectedCenterY.rounded())
+        let fineFloor = foundCoarse ? minScore * 0.72 : minScore * 0.85
+
+        // 2) fine: seed 주변 step1 + 3 반지름 + 원형 색 샘플
+        bestScore = 0
+        foundCoarse = false
+        let fy0 = max(y0, seedCY - fineHalf)
+        let fy1 = min(y1, seedCY + fineHalf)
+        let fx0 = max(x0, seedCX - fineHalf)
+        let fx1 = min(x1, seedCX + fineHalf)
+        for cy in fy0...fy1 {
+            for cx in fx0...fx1 {
+                let dist = hypot(Double(cx) - hint.expectedCenterX, Double(cy) - hint.expectedCenterY)
+                guard dist <= searchR else { continue }
+                for r in fineRadii {
+                    guard let scored = scoreDisk(
+                        cx: cx,
+                        cy: cy,
+                        radius: r,
+                        x0: x0,
+                        y0: y0,
+                        roiW: roiW,
+                        width: width,
+                        image: image,
+                        integral: integral,
+                        hint: hint,
+                        sampleStride: 2,
+                        useCircularColor: true
+                    ) else { continue }
+                    if scored > bestScore {
+                        bestScore = scored
+                        bestCX = cx
+                        bestCY = cy
+                        bestR = r
+                        foundCoarse = true
+                    }
+                }
+            }
+        }
+
+        guard foundCoarse, bestScore >= max(minScore, fineFloor * 0.9) else { return nil }
         guard bestScore >= minScore else { return nil }
+
         let refined = refineCenter(
             image: image,
-            cx: bestCX,
-            cy: bestCY,
+            cx: Double(bestCX),
+            cy: Double(bestCY),
             radius: bestR,
             x0: x0,
             y0: y0,
@@ -94,8 +142,13 @@ public enum GolfBallFastDetector {
 
     private struct IntegralGrid {
         var sums: [Int]
+        /// ROI 원점(이미지 좌표).
+        var originX: Int
+        var originY: Int
         var width: Int
         var height: Int
+        var roiW: Int
+        var roiH: Int
 
         static func build(luma: [UInt8], width: Int, x0: Int, y0: Int, x1: Int, y1: Int) -> IntegralGrid {
             let roiW = x1 - x0 + 1
@@ -113,15 +166,62 @@ public enum GolfBallFastDetector {
                     sums[idx] = sums[prevRow + x + 1] + rowSum
                 }
             }
-            return IntegralGrid(sums: sums, width: roiW + 1, height: roiH + 1)
+            return IntegralGrid(
+                sums: sums,
+                originX: x0,
+                originY: y0,
+                width: roiW + 1,
+                height: roiH + 1,
+                roiW: roiW,
+                roiH: roiH
+            )
         }
 
-        func rectSum(x0: Int, y0: Int, x1: Int, y1: Int) -> Int {
-            let a = y0 * width + x0
-            let b = y0 * width + x1
-            let c = y1 * width + x0
-            let d = y1 * width + x1
-            return sums[d] - sums[b] - sums[c] + sums[a]
+        /// inclusive image-space rect → sum/count. O(1).
+        func rectStats(ix0: Int, iy0: Int, ix1: Int, iy1: Int) -> (sum: Int, count: Int)? {
+            let lx0 = max(0, ix0 - originX)
+            let ly0 = max(0, iy0 - originY)
+            let lx1 = min(roiW - 1, ix1 - originX)
+            let ly1 = min(roiH - 1, iy1 - originY)
+            guard lx1 >= lx0, ly1 >= ly0 else { return nil }
+            let a = ly0 * width + lx0
+            let b = ly0 * width + (lx1 + 1)
+            let c = (ly1 + 1) * width + lx0
+            let d = (ly1 + 1) * width + (lx1 + 1)
+            let sum = sums[d] - sums[b] - sums[c] + sums[a]
+            let count = (lx1 - lx0 + 1) * (ly1 - ly0 + 1)
+            return (sum, count)
+        }
+
+        /// 원 근사 박스 디스크/링 루마. outer·inner는 반지름(px).
+        func diskRingLuma(cx: Int, cy: Int, diskR: Double, ringLo: Double, ringHi: Double) -> (diskMean: Double, ringMean: Double, diskCount: Int, ringCount: Int)? {
+            let dHalf = max(1, Int(diskR.rounded()))
+            guard let disk = rectStats(ix0: cx - dHalf, iy0: cy - dHalf, ix1: cx + dHalf, iy1: cy + dHalf),
+                  disk.count >= 8
+            else { return nil }
+
+            let hi = max(dHalf + 1, Int(ringHi.rounded()))
+            let lo = max(0, Int(ringLo.rounded()))
+            guard let outer = rectStats(ix0: cx - hi, iy0: cy - hi, ix1: cx + hi, iy1: cy + hi) else {
+                return nil
+            }
+            let inner: (sum: Int, count: Int)
+            if lo <= 0 {
+                inner = (0, 0)
+            } else if let stats = rectStats(ix0: cx - lo, iy0: cy - lo, ix1: cx + lo, iy1: cy + lo) {
+                inner = stats
+            } else {
+                inner = (0, 0)
+            }
+            let ringSum = outer.sum - inner.sum
+            let ringCount = outer.count - inner.count
+            guard ringCount >= 10 else { return nil }
+            return (
+                Double(disk.sum) / Double(disk.count),
+                Double(ringSum) / Double(ringCount),
+                disk.count,
+                ringCount
+            )
         }
     }
 
@@ -135,36 +235,45 @@ public enum GolfBallFastDetector {
         width: Int,
         image: GolfBallImageBuffer,
         integral: IntegralGrid,
-        hint: GolfBallDetectionHint
+        hint: GolfBallDetectionHint,
+        sampleStride: Int,
+        useCircularColor: Bool
     ) -> Double? {
         let minR = hint.minRadiusPixels > 0 ? hint.minRadiusPixels : radius * 0.55
         let maxR = hint.maxRadiusPixels > 0 ? hint.maxRadiusPixels : radius * 2.2
         guard radius >= minR, radius <= maxR else { return nil }
 
-        let rInner = max(1.5, radius * 0.72)
         let rOuter = radius * 1.05
         let rRingLo = radius * 1.35
         let rRingHi = radius * 2.15
 
-        let disk = annulusPixelStats(
-            cx: cx, cy: cy, inner: 0, outer: rOuter,
-            x0: x0, y0: y0, roiW: roiW, width: width, image: image, integral: integral
-        )
-        let core = annulusPixelStats(
-            cx: cx, cy: cy, inner: 0, outer: rInner,
-            x0: x0, y0: y0, roiW: roiW, width: width, image: image, integral: integral
-        )
-        let ring = annulusPixelStats(
-            cx: cx, cy: cy, inner: rRingLo, outer: rRingHi,
-            x0: x0, y0: y0, roiW: roiW, width: width, image: image, integral: integral
-        )
-        guard disk.count >= 8, ring.count >= 10, core.count >= 4 else { return nil }
+        guard let luma = integral.diskRingLuma(
+            cx: cx,
+            cy: cy,
+            diskR: rOuter,
+            ringLo: rRingLo,
+            ringHi: rRingHi
+        ) else { return nil }
 
-        let diskMean = disk.lumaSum / Double(disk.count)
-        let ringMean = ring.lumaSum / Double(ring.count)
-        let satMean = disk.satSum / Double(disk.count)
+        let diskMean = luma.diskMean
+        let ringMean = luma.ringMean
+
+        let color = sampleDiskColor(
+            cx: cx,
+            cy: cy,
+            radius: rOuter,
+            x0: x0,
+            y0: y0,
+            roiW: roiW,
+            width: width,
+            image: image,
+            stride: max(1, sampleStride),
+            circular: useCircularColor
+        )
+        guard color.count >= 4 else { return nil }
+        let satMean = color.satSum / Double(color.count)
         let meanHue = GolfBallColorPalette.hueByte(
-            fromDegrees: atan2(disk.hueSin / Double(disk.count), disk.hueCos / Double(disk.count)) * 180 / .pi
+            fromDegrees: atan2(color.hueSin / Double(color.count), color.hueCos / Double(color.count)) * 180 / .pi
         )
         let matched = GolfBallColorPalette.matches(
             luma: Int(diskMean.rounded()),
@@ -188,7 +297,6 @@ public enum GolfBallFastDetector {
 
         let dist = hypot(Double(cx) - hint.expectedCenterX, Double(cy) - hint.expectedCenterY)
         let proximity = 1 - min(1, dist / max(hint.searchRadiusPixels, 6))
-        // 유색 볼은 채도 페널티를 주지 않는다.
         let satPenalty = matched == nil || matched == .white
             ? min(0.35, max(0, (satMean - 55) / 140))
             : 0
@@ -205,54 +313,61 @@ public enum GolfBallFastDetector {
             - satPenalty
     }
 
-    private struct PixelStats {
+    private struct ColorSample {
         var count: Int
-        var lumaSum: Double
         var satSum: Double
         var hueSin: Double
         var hueCos: Double
     }
 
-    private static func annulusPixelStats(
+    private static func sampleDiskColor(
         cx: Int,
         cy: Int,
-        inner: Double,
-        outer: Double,
+        radius: Double,
         x0: Int,
         y0: Int,
         roiW: Int,
         width: Int,
         image: GolfBallImageBuffer,
-        integral: IntegralGrid
-    ) -> PixelStats {
-        let ix0 = max(x0, Int(floor(Double(cx) - outer)))
-        let ix1 = min(x0 + roiW - 1, Int(ceil(Double(cx) + outer)))
-        let iy0 = max(y0, Int(floor(Double(cy) - outer)))
-        let iy1 = min(y0 + (integral.height - 2), Int(ceil(Double(cy) + outer)))
+        stride: Int,
+        circular: Bool
+    ) -> ColorSample {
+        let half = max(1, Int(radius.rounded()))
+        let xMin = max(0, max(x0, cx - half))
+        let xMax = min(image.width - 1, min(x0 + roiW - 1, cx + half))
+        let yMin = max(0, max(y0, cy - half))
+        let yMax = min(image.height - 1, cy + half)
         var count = 0
-        var lumaSum = 0.0
         var satSum = 0.0
         var hueSin = 0.0
         var hueCos = 0.0
-        let inner2 = inner * inner
-        let outer2 = outer * outer
-        for y in iy0...iy1 {
+        let r2 = radius * radius
+        var y = yMin
+        while y <= yMax {
             let row = y * width
-            for x in ix0...ix1 {
-                let dx = Double(x - cx)
-                let dy = Double(y - cy)
-                let d2 = dx * dx + dy * dy
-                guard d2 <= outer2, d2 >= inner2 else { continue }
-                let i = row + x
-                count += 1
-                lumaSum += Double(image.luma[i])
-                satSum += Double(image.saturation[i])
-                let hueDeg = Double(Int(image.hueByte(at: i)) * 2) * .pi / 180
-                hueSin += sin(hueDeg)
-                hueCos += cos(hueDeg)
+            var x = xMin
+            while x <= xMax {
+                let inside: Bool
+                if circular {
+                    let dx = Double(x - cx)
+                    let dy = Double(y - cy)
+                    inside = dx * dx + dy * dy <= r2
+                } else {
+                    inside = true
+                }
+                if inside {
+                    let i = row + x
+                    count += 1
+                    satSum += Double(image.saturation[i])
+                    let hueDeg = Double(Int(image.hueByte(at: i)) * 2) * .pi / 180
+                    hueSin += sin(hueDeg)
+                    hueCos += cos(hueDeg)
+                }
+                x += stride
             }
+            y += stride
         }
-        return PixelStats(count: count, lumaSum: lumaSum, satSum: satSum, hueSin: hueSin, hueCos: hueCos)
+        return ColorSample(count: count, satSum: satSum, hueSin: hueSin, hueCos: hueCos)
     }
 
     private static func refineCenter(
@@ -284,7 +399,6 @@ public enum GolfBallFastDetector {
                     saturation: Int(sat),
                     hueByte: hue
                 )
-                // 흰 공은 밝기, 유색·흑은 팔레트 일치 가중.
                 let w: Double
                 if matched == .black {
                     w = max(0, 70 - luma)

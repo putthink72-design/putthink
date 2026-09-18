@@ -2137,7 +2137,8 @@ extension ARScanSessionController: ARSessionDelegate {
                 phase: .walkCorridor,
                 ball: ball,
                 ballY: ballY,
-                ballXZ: ballXZ
+                ballXZ: ballXZ,
+                burst: true
             ) { [weak self] snapshot in
                 guard let self, self.isCoverageActiveState else { return }
                 self.applyCoverageSnapshot(snapshot)

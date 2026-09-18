@@ -116,7 +116,7 @@ public enum DisplaySurfaceGrid {
         }
     }
 
-    /// 커버리지 상태에 따라 파란 면/선과 흰 선 버퍼를 만든다.
+    /// 커버리지 상태에 따라 미확정(마젠타) 면/선과 흰 선 버퍼를 만든다.
     public static func buildSplitMeshes(
         cells: [Cell],
         coverage: ScanCoverageSnapshot,

@@ -6,9 +6,13 @@ import simd
 /// ARKit sceneDepth → ScanCoverage 순수 코어 브리지.
 /// 배경 큐에서 샘플링하고, 메인에는 스냅샷만 전달한다.
 final class ScanCoverageTracker: @unchecked Sendable {
+    /// 커버리지 표시 기본 주기 (~8 Hz).
     static let processInterval: TimeInterval = 0.12
+    /// 스캔 중(burst) — 바둑판이 발걸음에 더 빨리 채워지게.
+    static let processIntervalBurst: TimeInterval = 0.05
     /// depth 맵 다운샘플 스텝 (픽셀).
     private static let sampleStride = 8
+    private static let sampleStrideBurst = 6
 
     private let coverage = ScanCoverage()
     private let surfaceFusion = TemporalSurfaceFusion(cellSize: 0.02)
@@ -110,6 +114,7 @@ final class ScanCoverageTracker: @unchecked Sendable {
     /// 프레임당 최대 한 번. 결과는 completion으로 메인 호출 권장.
     /// `ballY`가 있으면 볼보다 과도하게 높은 점(발)을 융합에서 제외한다.
     /// `ballXZ`가 있으면 편도 걸을 때 볼→카메라 구간 셀을 우선 보존한다.
+    /// `burst`면 수집·샘플을 촘촘히 해 흰 바둑판 표시가 빨리 따라온다(물리 임계값은 동일).
     func process(
         frame: ARFrame,
         trackingLimited: Bool,
@@ -117,10 +122,12 @@ final class ScanCoverageTracker: @unchecked Sendable {
         ball: ScanPose? = nil,
         ballY: Double? = nil,
         ballXZ: SIMD2<Double>? = nil,
+        burst: Bool = false,
         completion: @escaping @Sendable (ScanCoverageSnapshot) -> Void
     ) {
         let now = frame.timestamp
-        guard now - lastProcessTime >= Self.processInterval else { return }
+        let interval = burst ? Self.processIntervalBurst : Self.processInterval
+        guard now - lastProcessTime >= interval else { return }
         guard !processing else { return }
         // 물리 융합 정밀도를 위해 모션 지연이 없는 raw sceneDepth만 사용한다.
         // (smoothedSceneDepth는 세션 구성에서 요청하지 않음 — 부하 절감)
@@ -134,7 +141,7 @@ final class ScanCoverageTracker: @unchecked Sendable {
         let packed = Self.extractPackedDepthSamples(
             depthMap: depthData.depthMap,
             confidenceMap: depthData.confidenceMap,
-            sampleStep: Self.sampleStride
+            sampleStep: burst ? Self.sampleStrideBurst : Self.sampleStride
         )
         let depthWidth = CVPixelBufferGetWidth(depthData.depthMap)
         let depthHeight = CVPixelBufferGetHeight(depthData.depthMap)

@@ -55,8 +55,12 @@ final class BrightMeshVisualizer {
     private var worldToLocalKey: [Int64: Int64] = [:]
     private var frozenLocalCells: [Int64: DisplaySurfaceGrid.Cell] = [:]
     private var frozenLocalStable: Set<Int64> = []
-    private var originSettle = CoverageOriginSettle()
-    private static let minCoverageRebuildInterval: TimeInterval = 0.12
+    /// 표시용 빠른 안정화 — 기본 0.55s는 첫 바둑판이 너무 늦게 뜬다.
+    private var originSettle = CoverageOriginSettle.quickDisplay
+
+    private var minCoverageRebuildInterval: TimeInterval {
+        burstMode ? 0.05 : 0.12
+    }
 
     /// 워밍업 모드 — 지오메트리는 계속 빌드하되 화면에는 표시하지 않음.
     /// 스캔 시작 시 false로 바꾸면 이미 빌드된 메시가 즉시 나타난다.
@@ -73,7 +77,8 @@ final class BrightMeshVisualizer {
         coverageStickEntity?.isEnabled = visible
     }
 
-    private static let tentativeColor = UIColor(red: 1.0, green: 176 / 255, blue: 32 / 255, alpha: 1)
+    /// 그린 잔디 보색 — 노랑/파랑보다 야외에서 잘 읽힘.
+    private static let tentativeColor = UIColor(red: 1.0, green: 45 / 255, blue: 149 / 255, alpha: 1)
     private static let tentativeFillOpacity: Float = 0.5
     private static let stableColor = UIColor.white
     private static let depthGridColor = UIColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 0.95)
@@ -163,7 +168,7 @@ final class BrightMeshVisualizer {
         }
     }
 
-    /// 표시용 커버리지 리본과 동일 토폴로지(노란/흰 선 청크)를 합성한다.
+    /// 표시용 커버리지 리본과 동일 토폴로지(마젠타/흰 선 청크)를 합성한다.
     private static func buildPrewarmCoverageMeshes(gridSide: Int) -> (yellow: [MeshResource], white: [MeshResource]) {
         let side = max(2, gridSide)
         var cells: [DisplaySurfaceGrid.Cell] = []
@@ -241,7 +246,7 @@ final class BrightMeshVisualizer {
         lockedCoveragePlaneY = nil
         lastCoverageDisplaySignature = 0
         coverageStickPlantBallXZ = nil
-        originSettle = CoverageOriginSettle()
+        originSettle = .quickDisplay
         clearFrozenCoverageCells()
     }
 
@@ -257,7 +262,7 @@ final class BrightMeshVisualizer {
         lockedCoveragePlaneY = nil
         lastCoverageDisplaySignature = 0
         coverageStickPlantBallXZ = nil
-        originSettle = CoverageOriginSettle()
+        originSettle = .quickDisplay
         coverageBuilding = false
         coverageRebuildPending = false
         clearFrozenCoverageCells()
@@ -400,7 +405,7 @@ final class BrightMeshVisualizer {
             coverageRebuildPending = true
             return
         }
-        if now - lastCoverageRebuildTime < Self.minCoverageRebuildInterval {
+        if now - lastCoverageRebuildTime < minCoverageRebuildInterval {
             coverageRebuildPending = true
             return
         }

@@ -540,7 +540,8 @@ private struct PlacementARView: UIViewRepresentable {
             }
             brightMesh.contentHidden = false
             brightMesh.lineWidthPixels = lineWidthPixels
-            brightMesh.burstMode = controller?.meshCaptureBurstActive ?? true
+            // 커버리지 표시 중에는 메시 버스트 종료 후에도 바둑판 재빌드를 촘촘히 유지.
+            brightMesh.burstMode = true
             if let controller {
                 brightMesh.coverageSnapshot = controller.meshCoverageSnapshot
                 if let ball = controller.ballAnchor {
@@ -569,14 +570,15 @@ private struct PlacementARView: UIViewRepresentable {
                 brightMesh.resetCoverageDisplayLock(in: view)
             }
             guard meshEnabled else { return }
-            let burst = controller.meshCaptureBurstActive && !meshHidden
+            // 흰 바둑판은 스캔 표시가 켜진 동안 계속 burst. ARMesh 정점 burst와 분리.
+            let burst = !meshHidden
             if burst != burstRateApplied {
                 link.preferredFrameRateRange = burst
                     ? CAFrameRateRange(minimum: 24, maximum: 45, preferred: 30)
                     : CAFrameRateRange(minimum: 12, maximum: 24, preferred: 18)
                 burstRateApplied = burst
             }
-            // 숨김 워밍업은 여유 있게, 첫 공개 burst는 촘촘히 갱신.
+            // 숨김 워밍업은 여유 있게, 표시 중에는 촘촘히 갱신.
             let tickInterval: TimeInterval = meshHidden ? 0.08 : (burst ? 0.033 : 0.06)
             guard link.timestamp - lastMeshTick >= tickInterval else { return }
             lastMeshTick = link.timestamp

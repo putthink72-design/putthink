@@ -753,13 +753,14 @@ struct Gate55ARAimView: UIViewRepresentable {
         /// 서서 볼 때 경로·조준선 알파. 하안에서 `proximityLineAlpha`로 0.5까지 보간.
         private static let standingLineAlpha: CGFloat = 0.9
 
-        /// 볼 뒤·멀리서 AR 홀/궤적이 짧게 보이는 시각 보정은 쓰지 않는다.
-        /// 홀 앞을 컵에 닿은 것처럼 늘리면 짧은 공을 가린다.
+        /// 볼 뒤·멀리서 궤적·깃대가 지정 홀과 어긋나 보이지 않게,
+        /// 표시 홀 원점을 공유한다(홀 앞 stretch로 짧은 공을 가리지는 않음).
 
         private var lastZeroWidth: Float = 0
         private var lastZeroHoleDistance: Double = .nan
         private var lastTrajectoryRevision: Int = -1
         private var lastAlongDisplayBiasMeters: Float = 0
+        private var lastSyncedHoleFlagWorld: SIMD3<Float>?
         var onFloorAddressModeChanged: ((Bool) -> Void)?
         weak var scanController: ARScanSessionController?
         weak var floorHUDView: FloorAddressWorldHUDView?
@@ -994,6 +995,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lockedBallPose = nil
                 lockedHolePose = nil
                 lockedScanTransform = nil
+                lastSyncedHoleFlagWorld = nil
                 lastAimBeta = .nan
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
@@ -1040,6 +1042,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                 lockedHolePose = nil
                 lockedScanTransform = nil
                 overlayScanID = scan.id
+                lastSyncedHoleFlagWorld = nil
                 lastAimBeta = .nan
                 lastZeroHoleDistance = .nan
                 lastTrajectoryRevision = -1
@@ -1126,6 +1129,7 @@ struct Gate55ARAimView: UIViewRepresentable {
                     existingEntity: &holeAnchorEntity
                 )
                 lockedHolePose = scan.holeAnchor
+                lastSyncedHoleFlagWorld = incomingHole
             }
 
             guard let ballEntity = ballAnchorEntity else { return }
@@ -1161,16 +1165,10 @@ struct Gate55ARAimView: UIViewRepresentable {
                 smoothedCamBallDistance += (target - smoothedCamBallDistance) * alpha
             }
 
-            // 홀 앞을 컵에 닿은 것처럼 늘리지 않는다. 짧은 공을 가린다.
-            let alongBias: Float = 0
+            // 지정 홀 = 깃대·궤적 공통 표시 원점. 홀 앞 stretch는 쓰지 않는다(짧은 공 가림).
             let displayHoleWorld = holeWorld
-            if lastAlongDisplayBiasMeters > 1e-4 {
-                ARReferenceMarkers.moveRealityWorldFixed(
-                    to: displayHoleWorld,
-                    existingEntity: holeAnchorEntity
-                )
-            }
-            lastAlongDisplayBiasMeters = alongBias
+            syncHoleFlagstick(to: displayHoleWorld)
+            lastAlongDisplayBiasMeters = 0
 
             // 레이어(아래→위): 직교 → 빨간 궤적(지면 추종) → 흰 조준.
             // 조준은 하안 최대 50% 반투명. 궤적을 조준 아래로 누르지 않는다(서서 짧게 보이는 원인).
@@ -1294,7 +1292,8 @@ struct Gate55ARAimView: UIViewRepresentable {
                 trajectory,
                 pathWidth: pathWidth * proximityLineWidthScale(heightAboveBall: address.heightAboveBall),
                 lift: trajLift,
-                alongBiasMeters: alongBias
+                alongBiasMeters: 0,
+                displayHoleWorld: displayHoleWorld
             )
             var trajectoryRebuilt = false
             if trajSig != lastTrajectoryRevision {
@@ -1304,10 +1303,10 @@ struct Gate55ARAimView: UIViewRepresentable {
                     scan: scan,
                     displayTransform: transform,
                     displayBallWorld: ballWorld,
+                    displayHoleWorld: displayHoleWorld,
                     lift: trajLift,
                     pathWidth: pathWidth * pathWidthScale,
                     pathAlpha: proximityLineAlpha(base: Self.standingLineAlpha, heightAboveBall: address.heightAboveBall),
-                    alongBiasMeters: alongBias,
                     parent: overlays
                 )
                 lastTrajectoryRevision = trajSig
@@ -2236,11 +2235,24 @@ struct Gate55ARAimView: UIViewRepresentable {
             )
         }
 
+        private func syncHoleFlagstick(to world: SIMD3<Float>) {
+            if let previous = lastSyncedHoleFlagWorld,
+               simd_length(world - previous) < 0.002 {
+                return
+            }
+            ARReferenceMarkers.moveRealityWorldFixed(
+                to: world,
+                existingEntity: holeAnchorEntity
+            )
+            lastSyncedHoleFlagWorld = world
+        }
+
         private func trajectorySignature(
             _ samples: [TrajectorySample],
             pathWidth: Float,
             lift: Float,
-            alongBiasMeters: Float = 0
+            alongBiasMeters: Float = 0,
+            displayHoleWorld: SIMD3<Float>? = nil
         ) -> Int {
             guard let first = samples.first, let last = samples.last else { return 0 }
             var hasher = Hasher()
@@ -2252,6 +2264,11 @@ struct Gate55ARAimView: UIViewRepresentable {
             hasher.combine(Int((pathWidth * 10_000).rounded()))
             hasher.combine(Int((lift * 10_000).rounded()))
             hasher.combine(Int((alongBiasMeters * 1_000).rounded()))
+            if let hole = displayHoleWorld {
+                hasher.combine(Int((hole.x * 1_000).rounded()))
+                hasher.combine(Int((hole.y * 1_000).rounded()))
+                hasher.combine(Int((hole.z * 1_000).rounded()))
+            }
             return hasher.finalize()
         }
 
@@ -2331,23 +2348,32 @@ struct Gate55ARAimView: UIViewRepresentable {
                 Float(renderBall.worldY),
                 Float(renderBall.worldZ)
             )
+            let renderHole = lockedHolePose ?? cached.scan.holeAnchor
+            let displayHoleWorld = SIMD3<Float>(
+                Float(renderHole.worldX),
+                Float(renderHole.worldY),
+                Float(renderHole.worldZ)
+            )
             let effectiveWidth = Self.standingPathWidth * widthScale
+            let lift = lastPathLift > 0 ? lastPathLift : 0.006
             updateTrajectory(
                 samples: cached.trajectory,
                 scan: cached.scan,
                 displayTransform: transform,
                 displayBallWorld: displayBallWorld,
-                lift: lastPathLift > 0 ? lastPathLift : 0.006,
+                displayHoleWorld: displayHoleWorld,
+                lift: lift,
                 pathWidth: effectiveWidth,
                 pathAlpha: pathAlpha,
-                alongBiasMeters: lastAlongDisplayBiasMeters,
                 parent: overlays
             )
+            syncHoleFlagstick(to: displayHoleWorld)
             lastTrajectoryRevision = trajectorySignature(
                 cached.trajectory,
                 pathWidth: effectiveWidth,
-                lift: lastPathLift > 0 ? lastPathLift : 0.006,
-                alongBiasMeters: lastAlongDisplayBiasMeters
+                lift: lift,
+                alongBiasMeters: 0,
+                displayHoleWorld: displayHoleWorld
             )
             lastAppliedPathAlpha = pathAlpha
             applyGuidanceLineStacking(in: overlays)
@@ -2975,10 +3001,10 @@ struct Gate55ARAimView: UIViewRepresentable {
             scan: CompletedScan,
             displayTransform: ScanCoordinateTransform,
             displayBallWorld: SIMD3<Float>,
+            displayHoleWorld: SIMD3<Float>,
             lift: Float,
             pathWidth: Float,
             pathAlpha: CGFloat,
-            alongBiasMeters: Float = 0,
             parent: Entity
         ) {
             clearTrajectory()
@@ -2988,20 +3014,18 @@ struct Gate55ARAimView: UIViewRepresentable {
 
             // 물리 샘플은 terrainTransform(스캔 볼·지정 홀) 기준.
             // 부모는 표시 AR 볼. 실볼 추적 중 부모만 움직이면 컵이 같이 밀린다.
-            // 월드에 고정해 지정 홀을 지난다.
+            // 표시 끝점은 깃대와 같은 displayHoleWorld로 맞춘다.
             let physicsTransform = scan.terrainTransform
             let physicsOrigin = SIMD3(
                 Float(physicsTransform.origin.worldX),
                 Float(physicsTransform.origin.worldY),
                 Float(physicsTransform.origin.worldZ)
             )
-            let holeWorld = SIMD3(
+            let terrainHole = SIMD3(
                 Float(scan.terrainHoleAnchor.worldX),
                 Float(scan.terrainHoleAnchor.worldY),
                 Float(scan.terrainHoleAnchor.worldZ)
             )
-            // AnchorEntity 포즈는 move 직후 convert가 한 프레임 늦을 수 있음.
-            // 확정 볼 월드 좌표를 직접 써서 홀 반대 방향으로 잠깐 그려지지 않게 한다.
             let parentWorld = displayBallWorld
             let terrainOriginY = physicsOrigin.y
             let map = scan.result.smoothed
@@ -3012,25 +3036,20 @@ struct Gate55ARAimView: UIViewRepresentable {
                 ),
                 1e-6
             )
-            // 표시 stretch 없음. 홀 앞을 컵에 닿은 것처럼 늘리면 짧은 공을 가린다.
-            let stretch: Float = 1
-            _ = alongBiasMeters
 
             var pathPositions: [SIMD3<Float>] = []
             var nearestHoleIndex: Int?
             var nearestHoleLocal = Double.greatestFiniteMagnitude
+            pathPositions.reserveCapacity(samples.count)
             for sample in samples {
                 let p = sample.position
-                let xz = physicsTransform.worldXZ(
-                    localX: p.x,
-                    localY: Double(Float(p.y) * stretch)
-                )
+                let xz = physicsTransform.worldXZ(localX: p.x, localY: p.y)
                 let progress = Float(min(max(p.y / holeDistance, 0), 1.25))
                 let worldY: Float
                 if let relativeH = sampleHeight(map, localX: p.x, localY: p.y) {
                     worldY = terrainOriginY + Float(relativeH) + lift
                 } else {
-                    worldY = physicsOrigin.y + (holeWorld.y - physicsOrigin.y) * progress + lift
+                    worldY = physicsOrigin.y + (terrainHole.y - physicsOrigin.y) * progress + lift
                 }
                 let worldPoint = SIMD3(Float(xz.worldX), worldY, Float(xz.worldZ))
                 pathPositions.append(worldPoint - parentWorld)
@@ -3043,19 +3062,19 @@ struct Gate55ARAimView: UIViewRepresentable {
 
             guard pathPositions.count >= 2 else { return }
 
-            // 표시 볼에서 출발·홀은 유지. 오프셋이 클 때 시작점만 스냅하면
-            // 첫 구간이 홀 반대로 나가 실볼 확정 순간 한 프레임 튀어 보인다.
+            var along: [Float] = [0]
+            along.reserveCapacity(pathPositions.count)
+            for index in 1..<pathPositions.count {
+                along.append(
+                    along[index - 1] + simd_length(pathPositions[index] - pathPositions[index - 1])
+                )
+            }
+            let holeIndex = nearestHoleIndex ?? (pathPositions.count - 1)
+            let holeAlong = max(along[holeIndex], 1e-4)
+
+            // 표시 볼에서 출발. 오프셋이 클 때 시작점만 스냅하면 첫 구간이 홀 반대로 튀어 보인다.
             let startShift = SIMD3(pathPositions[0].x, 0, pathPositions[0].z)
             if simd_length(startShift) > 0.002 {
-                var along: [Float] = [0]
-                along.reserveCapacity(pathPositions.count)
-                for index in 1..<pathPositions.count {
-                    along.append(
-                        along[index - 1] + simd_length(pathPositions[index] - pathPositions[index - 1])
-                    )
-                }
-                let holeIndex = nearestHoleIndex ?? (pathPositions.count - 1)
-                let holeAlong = max(along[holeIndex], 1e-4)
                 for index in pathPositions.indices {
                     let t = min(along[index] / holeAlong, 1)
                     pathPositions[index] -= startShift * (1 - t)
@@ -3063,6 +3082,29 @@ struct Gate55ARAimView: UIViewRepresentable {
             }
             pathPositions[0].x = 0
             pathPositions[0].z = 0
+
+            // 깃대와 동일 표시 홀: 홀 통과점 XZ를 맞추고, 홀 근처 Y는 시차(옆으로 어긋남) 완화를 위해 블렌드.
+            let holeLocalTarget = displayHoleWorld - parentWorld
+            let atHole = pathPositions[holeIndex]
+            let xzDelta = SIMD3(holeLocalTarget.x - atHole.x, 0, holeLocalTarget.z - atHole.z)
+            if simd_length(xzDelta) > 0.001 {
+                for index in pathPositions.indices {
+                    let t = min(along[index] / holeAlong, 1)
+                    pathPositions[index] += xzDelta * t
+                }
+            }
+            // path Y에는 이미 lift가 들어가 있음 → 목표는 홀 지면 + lift.
+            let holePathY = holeLocalTarget.y + lift
+            let yBlendMeters: Float = 1.25
+            let yBlendStart = max(0, holeAlong - yBlendMeters)
+            let yBlendSpan = max(holeAlong - yBlendStart, 1e-4)
+            for index in pathPositions.indices {
+                let a = along[index]
+                guard a >= yBlendStart else { continue }
+                let u = min(max((a - yBlendStart) / yBlendSpan, 0), 1)
+                let s = u * u * (3 - 2 * u)
+                pathPositions[index].y += (holePathY - pathPositions[index].y) * s
+            }
 
             let root = Entity()
             root.name = "trajectory"

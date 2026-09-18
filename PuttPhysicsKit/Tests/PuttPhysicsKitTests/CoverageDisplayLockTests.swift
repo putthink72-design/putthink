@@ -26,6 +26,13 @@ final class CoverageDisplayLockTests: XCTestCase {
         XCTAssertTrue(jumped.observe(SIMD2(0.053, 0), now: 1.76))
     }
 
+    func testQuickDisplaySettlesFasterThanDefault() {
+        var quick = CoverageOriginSettle.quickDisplay
+        XCTAssertFalse(quick.observe(SIMD2(0, 0), now: 1.0))
+        XCTAssertFalse(quick.observe(SIMD2(0.005, 0), now: 1.05))
+        XCTAssertTrue(quick.observe(SIMD2(0.006, 0), now: 1.13))
+    }
+
     func testPointInsideSameCellDoesNotCreateNeighbor() {
         let lift: Float = 0.004
         let existingKey = CoverageDisplayLock.packedKey(ix: 0, iz: 0)

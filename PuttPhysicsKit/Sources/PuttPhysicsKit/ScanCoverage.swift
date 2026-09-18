@@ -19,7 +19,7 @@ public enum ScanCoverageQuality: String, Sendable, Codable, Equatable {
     public var message: String {
         switch self {
         case .normal:
-            return "천천히 이동하며 파란 격자를 흰색으로 채우세요."
+            return "천천히 이동하며 분홍 격자를 흰색으로 채우세요."
         case .tooFast:
             return "움직임이 빠릅니다. 보행 속도로 천천히 이동하세요."
         case .tooClose:
