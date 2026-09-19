@@ -115,6 +115,7 @@ enum L10n {
     static var lockConfirmReticleHint: String { s("aim.lock.confirm_reticle_hint") }
     static var lockCoachTapHint: String { s("aim.lock.coach_tap_hint") }
     static var lockWaiting: String { s("aim.lock.waiting") }
+    static var lockWalkBehind: String { s("aim.lock.walk_behind") }
     static var lockSearching: String { s("aim.lock.searching") }
     static var lockCandidate: String { s("aim.lock.candidate") }
     static var lockBall: String { s("aim.lock.ball") }
@@ -123,6 +124,8 @@ enum L10n {
     static var lockNeedsConfirm: String { s("aim.lock.needs_confirm") }
     static var lockMatched: String { s("aim.lock.matched") }
     static var lockAligned: String { s("aim.lock.aligned") }
+    static var lockRedeetect: String { s("aim.lock.redetect") }
+    static var lockRedeetectHint: String { s("aim.lock.redetect_hint") }
 
     // MARK: - OSD readout
 

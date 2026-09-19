@@ -56,11 +56,16 @@ enum GolfBallVisualLockSession {
     }
 
     /// delegate 스레드에서 버퍼를 복사한다. 픽셀 버퍼를 넘기지 말 것.
+    /// - Parameter currentBall: 월드 투영 탐색 앵커. `forceReticleSearch`면 무시.
+    /// - Parameter referenceBall: 거리·지면·로컬라이즈 기준(조준 시 Step1 물리 볼). nil이면 currentBall.
+    /// - Parameter forceReticleSearch: true면 Step1과 같이 십자선(화면 중앙)만 탐색.
     static func snapshot(
         frame: ARFrame,
         currentBall: ScanPose?,
         viewport: CGSize,
-        orientation: UIInterfaceOrientation
+        orientation: UIInterfaceOrientation,
+        referenceBall: ScanPose? = nil,
+        forceReticleSearch: Bool = false
     ) -> Snapshot? {
         let camera = frame.camera
         let sourceSize = camera.imageResolution
@@ -73,9 +78,12 @@ enum GolfBallVisualLockSession {
         let bufferScaleX = Double(bufferWidth) / Double(sourceWidth)
         let bufferScaleY = Double(bufferHeight) / Double(sourceHeight)
 
+        let searchAnchor = forceReticleSearch ? nil : currentBall
+        let reference = referenceBall ?? currentBall
+
         let target = aimPointInCapturedImage(
             frame: frame,
-            currentBall: currentBall,
+            currentBall: searchAnchor,
             viewport: viewport,
             orientation: orientation,
             bufferWidth: bufferWidth,
@@ -88,7 +96,7 @@ enum GolfBallVisualLockSession {
             sourceY: target.y / bufferScaleY
         )
         let distance: Double
-        if let ball = currentBall {
+        if let ball = reference {
             let cam = camera.transform.columns.3
             let dx = Double(cam.x) - ball.worldX
             let dy = Double(cam.y) - ball.worldY
@@ -105,14 +113,15 @@ enum GolfBallVisualLockSession {
             focalX: fxBuffer,
             distanceMeters: 1.55
         )
+        let useWorldSearch = searchAnchor != nil
         let patch = placingPatchSize(
             focalX: fxBuffer,
             distanceMeters: distance,
-            worldAnchored: currentBall != nil
+            worldAnchored: useWorldSearch
         )
 
         let makeHint = { (centerX: Double, centerY: Double, width: Int, height: Int, disk: Double, far: Double) in
-            if currentBall != nil {
+            if useWorldSearch {
                 return GolfBallDetectionHint.aroundWorldAnchor(
                     centerX: centerX,
                     centerY: centerY,
@@ -163,7 +172,7 @@ enum GolfBallVisualLockSession {
                     sourceY: target.y / bufferScaleY,
                     radiusSourcePixels: max(24, expectedDisk * 2.8)
                 ),
-                currentBall: currentBall
+                currentBall: reference
             )
         }
 
@@ -196,7 +205,7 @@ enum GolfBallVisualLockSession {
                 sourceY: target.y / bufferScaleY,
                 radiusSourcePixels: max(24, expectedDisk * 2.8)
             ),
-            currentBall: currentBall
+            currentBall: reference
         )
     }
 

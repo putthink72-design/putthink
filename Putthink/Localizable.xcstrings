@@ -289,6 +289,52 @@
         }
       }
     },
+    "aim.lock.redetect" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redetect ball"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボール再検出"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실볼 재감지"
+          }
+        }
+      }
+    },
+    "aim.lock.redetect_hint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aim the crosshair at the ball to realign AR"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クロスヘアをボールに合わせて再整列"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "십자선을 실볼에 맞추면 AR이 다시 붙습니다"
+          }
+        }
+      }
+    },
     "aim.lock.ball" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -537,7 +583,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼 찾는 중"
+            "value" : "십자선으로 찾는 중"
           }
         }
       }
@@ -548,19 +594,42 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aim at the ball"
+            "value" : "Aim crosshair at the ball"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ボールへ向けて"
+            "value" : "クロスヘアをボールへ"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실볼을 비추세요"
+            "value" : "십자선을 실볼에"
+          }
+        }
+      }
+    },
+    "aim.lock.walk_behind" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Walk behind the ball"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボールの後ろへ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "볼 뒤로 오세요"
           }
         }
       }

@@ -18,6 +18,8 @@ public enum GolfBallVisualLock {
     public static let maxOffsetFromARBallMeters = 0.50
     /// 스캔 당시 볼(물리 원점)에서 이보다 멀면 오탐/다른 볼.
     public static let maxOffsetFromPhysicsMeters = 0.60
+    /// 조준 재확정: Step1(물리) 볼과 이 거리 안·링 안정 시에만 AR 이동.
+    public static let guidanceConfirmNearPhysicsMeters = 0.25
 }
 
 public struct GolfBallImageBuffer: Sendable, Equatable {

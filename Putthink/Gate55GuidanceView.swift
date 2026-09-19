@@ -288,8 +288,12 @@ struct Gate55GuidanceView: View {
                 .contentShape(Rectangle())
             }
             HStack(alignment: .center, spacing: 8) {
-                if !controller.visualBallLockStatus.isSettled {
-                    visualBallLockStatusLine
+                if controller.flowState == .complete {
+                    if controller.visualBallLockStatus.isSettled {
+                        visualBallRelockButton
+                    } else {
+                        visualBallLockStatusLine
+                    }
                 }
                 Spacer(minLength: 8)
                 GreenVizModePicker(selection: $greenVizMode)
@@ -387,6 +391,9 @@ struct Gate55GuidanceView: View {
         }
         switch controller.visualBallLockStatus {
         case .waitingForView:
+            if controller.flowState == .complete {
+                return L10n.lockWalkBehind
+            }
             return L10n.lockWaiting
         case .searching:
             return L10n.lockSearching
@@ -401,32 +408,27 @@ struct Gate55GuidanceView: View {
         }
     }
 
-    /// Compact one-line status (secondary). Tap only for manual reanchor fallback.
+    /// Compact one-line status while hunting (표시만 — 확정은 자동).
     private var visualBallLockStatusLine: some View {
-        Button(action: controller.requestBallReanchor) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.orange.opacity(0.95))
-                    .frame(width: 6, height: 6)
-                    .shadow(color: Color.orange.opacity(ballLockPulse ? 0.7 : 0.25), radius: ballLockPulse ? 4 : 1)
-                    .scaleEffect(ballLockPulse ? 1.15 : 1.0)
-                Text(miniBallLockLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(OSDPalette.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(OSDPalette.glass.opacity(0.85), in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
-            )
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.orange.opacity(0.95))
+                .frame(width: 6, height: 6)
+                .shadow(color: Color.orange.opacity(ballLockPulse ? 0.7 : 0.25), radius: ballLockPulse ? 4 : 1)
+                .scaleEffect(ballLockPulse ? 1.15 : 1.0)
+            Text(miniBallLockLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(OSDPalette.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .buttonStyle(.plain)
-        .disabled(blocksNonReanchorPlacementUI)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(OSDPalette.glass.opacity(0.85), in: Capsule())
+        .overlay(
+            Capsule().strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+        )
         .accessibilityLabel(miniBallLockLabel)
-        .accessibilityHint(L10n.lockCoachTapHint)
         .onAppear {
             withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                 ballLockPulse = true
@@ -435,6 +437,31 @@ struct Gate55GuidanceView: View {
         .onDisappear {
             ballLockPulse = false
         }
+    }
+
+    /// 확정 후에도 같은 자리에 두는 재감지 — 십자선 맞추면 Step1처럼 AR만 다시 붙임.
+    private var visualBallRelockButton: some View {
+        Button(action: controller.requestVisualBallRelock) {
+            HStack(spacing: 6) {
+                Image(systemName: "viewfinder")
+                    .font(.caption.weight(.semibold))
+                Text(L10n.lockRedeetect)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(OSDPalette.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(OSDPalette.glass.opacity(0.85), in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(Color.orange.opacity(0.45), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(blocksNonReanchorPlacementUI)
+        .accessibilityLabel(L10n.lockRedeetect)
+        .accessibilityHint(L10n.lockRedeetectHint)
     }
 
     @ViewBuilder
@@ -1174,7 +1201,7 @@ struct Gate55ARAimView: UIViewRepresentable {
             // 조준은 하안 최대 50% 반투명. 궤적을 조준 아래로 누르지 않는다(서서 짧게 보이는 원인).
             let zeroLift: Float = 0.004
             let trajLift: Float = 0.006
-            let aimLift: Float = 0.028
+            let aimClearanceAboveTraj: Float = 0.014
             let pathWidth = Self.standingPathWidth
             let aimWidth = Self.standingAimWidth
             let aimAlphaNow = proximityLineAlpha(
@@ -1321,6 +1348,18 @@ struct Gate55ARAimView: UIViewRepresentable {
             let standingLength = max(1.0, min(scan.holeDistance * 0.45, 2.2))
             let addressLength = max(1.5, min(scan.holeDistance * 0.82, 5.0))
             let length = standingLength + (addressLength - standingLength) * Double(1 - proximityT)
+            let beta = betaDegrees * .pi / 180
+            let aimEndX = sin(beta) * length
+            let aimEndY = cos(beta) * length
+            // 업힐에서 궤적은 지형을 타고 올라오는데 조준은 볼 높이 고정이면 빨간 리본 아래로 깔린다.
+            let aimLift = aimClearanceLift(
+                scan: scan,
+                displayTransform: transform,
+                toLocalX: aimEndX,
+                toLocalY: aimEndY,
+                trajLift: trajLift,
+                clearance: aimClearanceAboveTraj
+            )
             if trajectoryRebuilt
                 || aimEntity == nil
                 || abs(lastAimBeta - betaDegrees) > 0.05
@@ -1328,10 +1367,9 @@ struct Gate55ARAimView: UIViewRepresentable {
                 || abs(lastAimWidth - aimWidth) > 0.0008
                 || abs(lastAimLift - aimLift) > 0.0015
                 || arVisibilityChanged {
-                let beta = betaDegrees * .pi / 180
                 placeBallLocalSegment(
-                    toLocalX: sin(beta) * length,
-                    toLocalY: cos(beta) * length,
+                    toLocalX: aimEndX,
+                    toLocalY: aimEndY,
                     lift: aimLift,
                     width: aimWidth,
                     thickness: 0.0035,
@@ -2946,6 +2984,39 @@ struct Gate55ARAimView: UIViewRepresentable {
                 added = true
             }
             return added
+        }
+
+        /// 조준 선분 구간에서 궤적(지면+trajLift)보다 항상 위에 오도록 볼 로컬 lift를 잡는다.
+        private func aimClearanceLift(
+            scan: CompletedScan,
+            displayTransform: ScanCoordinateTransform,
+            toLocalX: Double,
+            toLocalY: Double,
+            trajLift: Float,
+            clearance: Float
+        ) -> Float {
+            let map = scan.result.smoothed
+            let terrain = scan.terrainTransform
+            let ballY = Float(scan.ballAnchor.worldY)
+            var lift = trajLift + clearance
+            let steps = 10
+            for step in 0...steps {
+                let t = Double(step) / Double(steps)
+                let lx = toLocalX * t
+                let ly = toLocalY * t
+                let xz = displayTransform.worldXZ(localX: lx, localY: ly)
+                let local = terrain.localFromWorld(worldX: xz.worldX, worldZ: xz.worldZ)
+                guard let relativeH = sampleHeight(map, localX: local.x, localY: local.y) else {
+                    continue
+                }
+                let groundY = Float(terrain.origin.worldY + relativeH)
+                let needed = groundY + trajLift + clearance - ballY
+                if needed > lift {
+                    lift = needed
+                }
+            }
+            // 평지·결측 폴백 — 예전 고정 28mm와 비슷한 하한.
+            return max(lift, trajLift + clearance)
         }
 
         private func sampleHeight(_ map: HeightMap, localX: Double, localY: Double) -> Double? {
